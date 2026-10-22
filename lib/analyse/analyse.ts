@@ -1,5 +1,6 @@
 import { arrondir, estValeurVide, statistiquesNumeriques, versNumeriques, type Cellule } from "./utils";
 import { calculerFrequences, calculerTendance, correlationPearson, interpreterCorrelation } from "./stats";
+import { calculerMesures } from "./mesures";
 import { convertirDate, detecterTypeColonne, normaliser, type TypeColonne } from "./detection";
 
 const MAX_COLS_CORR = 12;
@@ -78,5 +79,10 @@ export function analyserColonnes(entetes: string[], corps: Cellule[][], choisies
     }
   }
 
-  return { nbLignes: corps.length, statistiques, correlations };
+  return {
+    nbLignes: corps.length,
+    statistiques,
+    correlations,
+    mesures: calculerMesures(entetes, corps, statistiques),
+  };
 }

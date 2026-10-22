@@ -1,26 +1,269 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Tailwind v4 : le mode sombre suit la classe "dark" posée sur <html> (voir Paramètres). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+   DATENZA v2.0 — Theme & Variables CSS Globales
+   ============================================================ */
+
+:root,
+body.theme-clair {
+  --bg-principal: #ffffff;
+  --bg-secondaire: #faf9fb;
+  --bg-carte: #ffffff;
+  --texte-principal: #201a26;
+  --texte-secondaire: #6b6470;
+  --bordure: #eae7ec;
+
+  --violet: #7c3aed;
+  --violet-hover: #6d28d9;
+  --violet-clair: #f2eafe;
+  --rouge: #e11d48;
+  --rouge-hover: #be123c;
+  --rouge-clair: #fde8ec;
+
+  --accent: var(--violet);
+  --accent-hover: var(--violet-hover);
+  --accent-secondaire: var(--rouge);
+  --succes: #16a34a;
+  --erreur: var(--rouge);
+  --ombre: 0 1px 3px rgba(32, 26, 38, 0.08);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+body.theme-sombre {
+  --bg-principal: #17131c;
+  --bg-secondaire: #1f1a26;
+  --bg-carte: #221d29;
+  --texte-principal: #f4f2f6;
+  --texte-secondaire: #ada6b3;
+  --bordure: #322b3a;
+
+  --violet: #a78bfa;
+  --violet-hover: #c4b5fd;
+  --violet-clair: #2c2438;
+  --rouge: #fb7185;
+  --rouge-hover: #fda4af;
+  --rouge-clair: #3a1f27;
+
+  --accent: var(--violet);
+  --accent-hover: var(--violet-hover);
+  --accent-secondaire: var(--rouge);
+  --succes: #22c55e;
+  --erreur: var(--rouge);
+  --ombre: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-principal);
+  color: var(--texte-principal);
+  font-family: 'Google Sans', Roboto, Arial, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  display: flex;
+}
+
+.carte {
+  background-color: var(--bg-carte);
+  border: 1px solid var(--bordure);
+  border-radius: 10px;
+  box-shadow: var(--ombre);
+  padding: 16px;
+}
+
+.bouton-accent {
+  background-color: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 18px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.bouton-accent:hover {
+  background-color: var(--accent-hover);
+}
+
+.bouton-secondaire {
+  background-color: transparent;
+  color: var(--accent-secondaire);
+  border: 1px solid var(--accent-secondaire);
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.bouton-secondaire:hover {
+  background-color: var(--rouge-clair);
+}
+
+select {
+  background-color: var(--bg-carte);
+  color: var(--texte-principal);
+  border: 1px solid var(--bordure);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  min-width: 160px;
+}
+
+/* ============================================================
+   Layout général & Sidebar
+   ============================================================ */
+
+.app-layout {
+  display: flex;
+  width: 100%;
+  min-height: 100vh;
+}
+
+.barre-laterale {
+  width: 230px;
+  flex-shrink: 0;
+  background-color: var(--bg-carte);
+  border-right: 1px solid var(--bordure);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.contenu-principal {
+  flex: 1;
+  padding: 24px;
+  max-width: 1100px;
+  margin-left: 230px;
+}
+
+/* ============================================================
+   Graphiques, TCD & Cartes Géographiques DATENZA
+   ============================================================ */
+
+#grille-graphiques {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 18px;
+  align-items: stretch;
+}
+
+.carte-graphique {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+.carte-geographique {
+  flex-basis: 100%;
+  min-width: 100%;
+}
+
+.carte-geographique__map {
+  width: 100%;
+  height: 100%;
+  min-height: 360px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-secondaire);
+}
+
+@media (min-width: 801px) {
+  #grille-graphiques .carte-geographique {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+  }
+}
+
+/* ============================================================
+   Tableau Croisé Dynamique (TCD Grille)
+   ============================================================ */
+
+.tdc-table--vrai,
+.ia-table--tdc-grille {
+  border-collapse: collapse !important;
+  border-spacing: 0 !important;
+  background: var(--bg-carte);
+}
+
+.tdc-table--vrai th,
+.tdc-table--vrai td,
+.ia-table--tdc-grille th,
+.ia-table--tdc-grille td {
+  border: 1px solid var(--bordure) !important;
+  box-sizing: border-box;
+}
+
+.tdc-table--vrai thead th,
+.ia-table--tdc-grille thead th {
+  background: var(--bg-secondaire);
+  text-align: center !important;
+  vertical-align: middle !important;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.tdc-table--vrai tbody td.tdc-row-label,
+.ia-table--tdc-grille tbody td.ia-tdc-colonne-titre {
+  text-align: left !important;
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--bg-carte);
+}
+
+.tdc-table--vrai .tdc-total-cell,
+.ia-table--tdc-grille .ia-tdc-total {
+  font-weight: 800;
+  position: sticky;
+  right: 0;
+  z-index: 5;
+  background: var(--bg-secondaire) !important;
+  border-left: 2px solid var(--bordure) !important;
+}
+
+/* ============================================================
+   Optimisation Mobile (Mobile-first)
+   ============================================================ */
+
+@media (max-width: 720px) {
+  body {
+    display: block;
+    font-size: 14px;
+    padding-bottom: 74px;
+  }
+
+  .barre-laterale {
+    width: 100%;
+    height: 64px;
+    min-height: 64px;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    padding: 0;
+    border-right: 0;
+    border-top: 1px solid var(--bordure);
+    position: fixed;
+    z-index: 1000;
+  }
+
+  .contenu-principal {
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+    padding: 12px;
+  }
 }

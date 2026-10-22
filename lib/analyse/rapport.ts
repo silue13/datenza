@@ -1,11 +1,13 @@
 import { arrondir } from "./utils";
 import { interpreterCorrelation } from "./stats";
+import { estPseudoMesure } from "./mesures";
+import { creerFormateurs, natureValeur } from "./format";
 import type { analyserColonnes } from "./analyse";
 
 type Resultat = ReturnType<typeof analyserColonnes>;
 export type Langue = "fr" | "en";
 export interface BlocRapport {
-  type: "intro" | "qualite" | "categorie" | "numerique" | "booleen" | "date" | "correlation";
+  type: "intro" | "qualite" | "mesure" | "categorie" | "numerique" | "booleen" | "date" | "correlation";
   texte: string;
 }
 
@@ -35,7 +37,29 @@ export function genererRapport(res: Resultat, langue: Langue = "fr"): BlocRappor
     const d = (st[n].stats as Cat).nbCategoriesDistinctes;
     return (st[n].role === "statut" ? 100 : 40) + (d >= 2 && d <= 15 ? 30 : 0) - (d > 50 ? 40 : 0);
   };
-  de("categorielle").sort((a, b) => score(b) - score(a)).slice(0, 6).forEach((n) => {
+  // Répartition des mesures numériques par catégorie : c'est la lecture utile, plus que les simples effectifs.
+  const couvertes = new Set<string>();
+  const F = creerFormateurs(langue);
+  for (const mesure of res.mesures) {
+    const op = mesure.operation === "somme" ? L("total", "total") : L("moyenne", "average");
+    const nf = F.pour(natureValeur(mesure.colonne));
+    if (mesure.totalGlobal !== null) {
+      blocs.push({ type: "mesure", texte: L(`${mesure.colonne} : ${nf(mesure.totalGlobal)} au total.`, `${mesure.colonne}: ${nf(mesure.totalGlobal)} in total.`) });
+    }
+    for (const r of mesure.repartitions) {
+      if (!r.lignes.length) continue;
+      couvertes.add(r.dimension);
+      const liste = r.lignes.map((x) => `${x.valeur} (${nf(x.total)}${x.part !== null ? `, ${F.pourcent(x.part)}` : ""})`).join(", ");
+      blocs.push({
+        type: "mesure",
+        texte: L(`${mesure.colonne} (${op}) par ${r.dimension} : ${liste}.`, `${mesure.colonne} (${op}) by ${r.dimension}: ${liste}.`),
+      });
+    }
+  }
+  const mp = res.mesures.length > 0;
+
+  // Sans mesure exploitable, on retombe sur les fréquences ; les statuts gardent toujours leurs effectifs.
+  de("categorielle").filter((n) => !couvertes.has(n) || st[n].role === "statut").sort((a, b) => score(b) - score(a)).slice(0, mp ? 3 : 6).forEach((n) => {
     const s = st[n].stats as Cat;
     const top = s.topValeurs[0];
     if (!top) return;
@@ -48,7 +72,7 @@ export function genererRapport(res: Resultat, langue: Langue = "fr"): BlocRappor
     blocs.push({ type: "categorie", texte: t });
   });
 
-  de("numerique").slice(0, 8).forEach((n) => {
+  de("numerique").filter((n) => !estPseudoMesure(n)).slice(0, 8).forEach((n) => {
     const s = st[n].stats as Num;
     if (!s.n) return;
     let t = L(
