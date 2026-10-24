@@ -1,8 +1,8 @@
-// Préférences locales (navigateur) : thème et mode géographique strict.
+// Préférences locales (navigateur) : thème et moteur IA choisi.
 export type Theme = "clair" | "sombre" | "systeme";
 
 const CLE_THEME = "datenza-theme";
-const CLE_GEO_STRICT = "datenza-geo-strict";
+const CLE_IA = "datenza-fournisseur-ia";
 
 function lire(cle: string): string | null {
   try {
@@ -37,10 +37,10 @@ export function appliquerTheme(theme: Theme) {
   document.body.classList.toggle("theme-clair", !sombre);
 }
 
-export function lireGeoStrict(): boolean {
-  return lire(CLE_GEO_STRICT) !== "0";
+export function lireFournisseur(): string {
+  return lire(CLE_IA) ?? "auto";
 }
 
-export function enregistrerGeoStrict(actif: boolean) {
-  ecrire(CLE_GEO_STRICT, actif ? "1" : "0");
+export function enregistrerFournisseur(id: string) {
+  ecrire(CLE_IA, id);
 }

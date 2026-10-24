@@ -3,7 +3,7 @@ export const GEO_CI_EXHAUSTIF: Record<string, [number, number]> = {
   "Abidjan": [5.359952, -4.008256],
   "Yamoussoukro": [6.8861, -5.2728],
 
-  // --- 31 RÉGIONS DE CÔTE D'IVOIRE ---
+  // --- LES 31 RÉGIONS OFFICIELLES DE CÔTE D'IVOIRE ---
   "Agnéby-Tiassa": [5.926, -4.218],
   "Bafing": [8.271, -7.531],
   "Bagoué": [9.845, -6.148],
@@ -25,18 +25,20 @@ export const GEO_CI_EXHAUSTIF: Record<string, [number, number]> = {
   "La Mé": [5.842, -3.881],
   "Lôh-Djiboua": [5.841, -5.361],
   "Marahoué": [7.091, -5.941],
+  "Nawa": [5.786, -6.602],
   "Poro": [9.458, -5.629],
   "San-Pédro": [4.748, -6.636],
   "Sud-Comoé": [5.481, -3.211],
   "Tchologo": [9.591, -5.191],
   "Tonkpi": [7.412, -7.553],
   "Worodougou": [8.151, -6.601],
-  "Ghô": [6.131, -5.951],
+  "Gôh": [6.131, -5.951],
+  "Ghô": [6.131, -5.951], // Tolérance coquille
   "Moronou": [6.651, -4.331],
   "Hambol": [8.141, -5.101],
   "Bounkani / Gontougo": [8.033, -2.802],
 
-  // --- MACRO-RÉGIONS / ORIENTATIONS HISTORIQUES ---
+  // --- MACRO-RÉGIONS / ORIENTATIONS HISTORIQUES CI ---
   "Sud": [5.359952, -4.008256],
   "Nord": [9.458, -5.629],
   "Est": [6.75, -3.48],
@@ -58,16 +60,25 @@ export const GEO_CI_EXHAUSTIF: Record<string, [number, number]> = {
   "Bingerville": [5.356, -3.887],
   "Songon": [5.316, -4.256],
 
-  // --- VILLES ET CHEFS-LIEUX ---
+  // --- PRINCIPALES VILLES ET TOUS LES CHEFS-LIEUX DE RÉGION ---
   "Grand-Bassam": [5.211, -3.738],
   "Bouaké": [7.69, -5.03],
   "Daloa": [6.877, -6.45],
   "Korhogo": [9.458, -5.629],
   "Gagnoa": [6.131, -5.951],
   "Man": [7.412, -7.553],
+  "San-Pedro": [4.748, -6.636],
   "Abengourou": [6.73, -3.48],
   "Agboville": [5.928, -4.214],
   "Divo": [5.837, -5.357],
+  "Soubré": [5.786, -6.602],
+  "Dimbokro": [6.646, -4.705],
+  "Bongouanou": [6.65, -4.333],
+  "Boundiali": [9.521, -6.487],
+  "Daoukro": [7.059, -3.963],
+  "Touba": [8.283, -7.683],
+  "Mankono": [8.059, -6.189],
+  "Minignan": [10.0, -7.833],
   "Sinfra": [6.618, -5.912],
   "Katiola": [8.138, -5.101],
   "Bondoukou": [8.04, -2.8],
@@ -87,8 +98,10 @@ export const GEO_CI_EXHAUSTIF: Record<string, [number, number]> = {
   "Danané": [7.259, -8.155],
   "Issia": [6.492, -6.586],
   "M'Bahiakro": [7.452, -4.338],
+  "Tiassalé": [5.898, -4.823],
+  "Grand-Lahou": [5.136, -5.024],
 
-  // --- AÉROPORTS ET INFRASTRUCTURES CI ---
+  // --- AÉROPORTS ET INFRASTRUCTURES MAJEURES ---
   "Aéroport Félix Houphouët-Boigny": [5.261, -3.926],
   "Aéroport d'Abidjan": [5.261, -3.926],
   "Aéroport de Bouaké": [7.738, -5.074],
@@ -98,7 +111,7 @@ export const GEO_CI_EXHAUSTIF: Record<string, [number, number]> = {
   "Port de San-Pédro": [4.745, -6.612],
 };
 
-/** Clé de recherche tolérante : minuscules, sans accents, tirets/apostrophes/espaces unifiés. */
+/** Clé de recherche tolérante : minuscules, sans accents, tirets/apostrophes/espaces unifiés */
 export function cleGeo(texte: string): string {
   return texte
     .toLowerCase()
@@ -113,7 +126,11 @@ const INDEX_GEO = new Map<string, [number, number]>(
   Object.entries(GEO_CI_EXHAUSTIF).map(([nom, coord]) => [cleGeo(nom), coord])
 );
 
-/** Retourne [latitude, longitude] si le lieu figure dans le référentiel ivoirien. */
+/**
+ * Retourne [latitude, longitude] si le lieu figure dans le référentiel ivoirien.
+ * Tolérant aux variations de tirets, accents et majuscules.
+ */
 export function trouverLieuCI(nom: string): [number, number] | null {
+  if (!nom || typeof nom !== "string") return null;
   return INDEX_GEO.get(cleGeo(nom)) ?? null;
 }

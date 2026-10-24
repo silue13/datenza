@@ -1,7 +1,8 @@
-import { arrondir, estValeurVide, statistiquesNumeriques, versNumeriques, type Cellule } from "./utils";
+import { arrondir, estValeurVide, statistiquesNumeriques, versNombre, versNumeriques, type Cellule } from "./utils";
 import { calculerFrequences, calculerTendance, correlationPearson, interpreterCorrelation } from "./stats";
 import { calculerMesures } from "./mesures";
 import { convertirDate, detecterTypeColonne, normaliser, type TypeColonne } from "./detection";
+import { analyserNettoyage, appliquerCorrections } from './nettoyage';
 
 const MAX_COLS_CORR = 12;
 const MAX_LIGNES_CORR = 50000;
@@ -18,14 +19,44 @@ export interface InfoColonne {
   tendance?: ReturnType<typeof calculerTendance>;
 }
 
-const nombre = (v: Cellule) => Number(typeof v === "string" ? v.trim().replace(",", ".") : v);
-
 export function analyserColonnes(entetes: string[], corps: Cellule[][], choisies: string[]) {
+  // 1. Convertir en objets pour détecter et harmoniser la casse (EST/ESt -> Est, NORD/NOrd -> Nord, etc.)
+  const donneesObjets = corps.map((ligne) => {
+    const obj: Record<string, any> = {};
+    entetes.forEach((h, idx) => {
+      obj[h] = ligne[idx];
+    });
+    return obj;
+  });
+
+  // 2. Détection et application automatique des corrections
+  const rapportNettoyage = analyserNettoyage(donneesObjets);
+  const corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[] = [];
+
+  Object.values(rapportNettoyage.suggestionsParColonne).forEach((suggestions) => {
+    suggestions.forEach((s) => {
+      if (s.colonne && s.valeurOriginale && s.valeurSuggeree) {
+        corrections.push({
+          colonne: s.colonne,
+          valeurOriginale: s.valeurOriginale,
+          valeurSuggeree: s.valeurSuggeree,
+        });
+      }
+    });
+  });
+
+  let corpsNettoye = corps;
+  if (corrections.length > 0) {
+    const donneesPropres = appliquerCorrections(donneesObjets, corrections);
+    corpsNettoye = donneesPropres.map((obj) => entetes.map((h) => obj[h]));
+  }
+
+  // 3. Suite du traitement avec les données nettoyées
   const statistiques: Record<string, InfoColonne> = {};
   const numeriques: string[] = [];
   const valeursDe = (nom: string) => {
     const i = entetes.indexOf(nom);
-    return corps.map((ligne) => ligne[i]);
+    return corpsNettoye.map((ligne) => ligne[i]);
   };
 
   for (const nom of choisies) {
@@ -69,10 +100,9 @@ export function analyserColonnes(entetes: string[], corps: Cellule[][], choisies
       const x: number[] = [];
       const y: number[] = [];
       for (let k = 0; k < Math.min(va.length, MAX_LIGNES_CORR); k++) {
-        if (estValeurVide(va[k]) || estValeurVide(vb[k])) continue;
-        const a = nombre(va[k]);
-        const b = nombre(vb[k]);
-        if (Number.isFinite(a) && Number.isFinite(b)) { x.push(a); y.push(b); }
+        const a = versNombre(va[k]);
+        const b = versNombre(vb[k]);
+        if (a !== null && b !== null) { x.push(a); y.push(b); }
       }
       const r = correlationPearson(x, y);
       correlations.push({ colonneA: cols[i], colonneB: cols[j], coefficient: r, interpretation: interpreterCorrelation(r) });
@@ -80,9 +110,9 @@ export function analyserColonnes(entetes: string[], corps: Cellule[][], choisies
   }
 
   return {
-    nbLignes: corps.length,
+    nbLignes: corpsNettoye.length,
     statistiques,
     correlations,
-    mesures: calculerMesures(entetes, corps, statistiques),
+    mesures: calculerMesures(entetes, corpsNettoye, statistiques),
   };
 }

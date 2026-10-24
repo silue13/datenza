@@ -25,6 +25,36 @@ export const NB_MAX_COLONNES_TDC = 10;
 
 const arrondir = (v: number): number => Math.round(v * 100) / 100;
 
+export function parseNombreTdc(val: Cell): number | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return isNaN(val) ? null : val;
+
+  let str = String(val).trim();
+  if (str === '') return null;
+
+  if (str.startsWith('(') && str.endsWith(')')) {
+    str = '-' + str.slice(1, -1);
+  }
+
+  // Nettoyage des devises et du symbole pourcentage %
+  str = str.replace(/(FCFA|CFA|EUR|USD|GBP|[€$£Ff%])/gi, '').trim();
+  str = str.replace(/[\s\u00A0\u202F]+/g, '');
+
+  if (str === '' || str === '-' || str === '+') return null;
+
+  if (str.includes(',') && str.includes('.')) {
+    if (str.indexOf(',') < str.indexOf('.')) {
+      str = str.replace(/,/g, '');
+    } else {
+      str = str.replace(/\./g, '').replace(',', '.');
+    }
+  } else if (str.includes(',')) {
+    str = str.replace(',', '.');
+  }
+
+  const num = Number(str);
+  return isNaN(num) ? null : num;
+}
 export function valeurTdcInvalide(v: Cell): boolean {
   if (v === null || v === undefined) return true;
   return ['', 'n/a', 'na', 'n.a.', '#n/a', 'null', 'undefined', '-', '—'].includes(
@@ -115,13 +145,14 @@ export function calculerTdc(
         ajouter(accs[k], 1);
         continue;
       }
-      const n = Number(typeof brut === 'string' ? brut.trim().replace(',', '.') : brut);
-      if (!Number.isNaN(n)) ajouter(accs[k], n);
+      const n = parseNombreTdc(brut);
+      if (n !== null && Number.isFinite(n)) ajouter(accs[k], n);
     }
   }
 
-  const lignes = Array.from(lignesVues).sort();
-  const colsBase = avecColonnes ? Array.from(colsVues).sort() : [VALEUR_UNIQUE];
+  const tri = (a: string, b: string) => a.localeCompare(b, 'fr', { numeric: true });
+  const lignes = Array.from(lignesVues).sort(tri);
+  const colsBase = avecColonnes ? Array.from(colsVues).sort(tri) : [VALEUR_UNIQUE];
   const colonnes: ColonneTdc[] = colsBase.flatMap((colonneBase) =>
     champsVal.map((champValeur) => ({ colonneBase, champValeur }))
   );

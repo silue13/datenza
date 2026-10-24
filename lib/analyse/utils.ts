@@ -16,9 +16,96 @@ export interface StatsNumeriques {
   iqr: number | null;
   atypiques: number;
 }
+/**
+ * Détecte l'unité monétaire ou le pourcentage dominant dans un échantillon de valeurs brutes d'une colonne.
+ */
+export function detecterUniteColonne(valeursBrutes: Cellule[]): string | null {
+  const echantillon = valeursBrutes
+    .filter((v) => !estValeurVide(v))
+    .slice(0, 50)
+    .map((v) => String(v).trim().toUpperCase());
+
+  if (echantillon.length === 0) return null;
+
+  let comptePourcentage = 0;
+  let compteFCFA = 0;
+  let compteEuro = 0;
+  let compteDollar = 0;
+
+  for (const v of echantillon) {
+    if (v.includes('%')) comptePourcentage++;
+    else if (v.includes('FCFA') || v.includes('CFA')) compteFCFA++;
+    else if (v.includes('€') || v.includes('EUR')) compteEuro++;
+    else if (v.includes('$') || v.includes('USD')) compteDollar++;
+  }
+
+  const seuil = echantillon.length * 0.5; // Doit être présent dans 50% des lignes non vides
+
+  if (comptePourcentage >= seuil) return '%';
+  if (compteFCFA >= seuil) return 'FCFA';
+  if (compteEuro >= seuil) return '€';
+  if (compteDollar >= seuil) return '$';
+
+  return null;
+}
+
+/**
+ * Formate un nombre selon l'unité détectée
+ */
+export function formaterValeurAvecUnite(valeur: number, unite: string | null): string {
+  // On s'assure d'avoir max 2 décimales pour l'affichage
+  const valArrondie = Math.round(valeur * 100) / 100;
+  
+  // Formatage avec séparateur de milliers (ex: 14 155)
+  const chaineFormatee = valArrondie.toLocaleString('fr-FR');
+
+  if (!unite) return chaineFormatee;
+  
+  if (unite === '%') return `${chaineFormatee} %`;
+  if (unite === 'FCFA') return `${chaineFormatee} FCFA`;
+  if (unite === '€') return `${chaineFormatee} €`;
+  if (unite === '$') return `$ ${chaineFormatee}`;
+  
+  return chaineFormatee;
+}
 
 export function arrondir(v: number): number {
   return Math.round(v * 100) / 100;
+}
+
+export function parseNombre(val: any): number | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return isNaN(val) ? null : val;
+
+  let str = String(val).trim();
+  if (str === '') return null;
+
+  // Gestion des formats comptables entre parenthèses : (15%) -> -15%
+  if (str.startsWith('(') && str.endsWith(')')) {
+    str = '-' + str.slice(1, -1);
+  }
+
+  // 1. Nettoyage des devises, du symbole % et des symboles monétaires
+  str = str.replace(/(FCFA|CFA|EUR|USD|GBP|[€$£Ff%])/gi, '').trim();
+
+  // 2. Remplacer les espaces insécables et espaces normaux
+  str = str.replace(/[\s\u00A0\u202F]+/g, '');
+
+  if (str === '' || str === '-' || str === '+') return null;
+
+  // 3. Gestion des virgules comme séparateur décimal
+  if (str.includes(',') && str.includes('.')) {
+    if (str.indexOf(',') < str.indexOf('.')) {
+      str = str.replace(/,/g, '');
+    } else {
+      str = str.replace(/\./g, '').replace(',', '.');
+    }
+  } else if (str.includes(',')) {
+    str = str.replace(',', '.');
+  }
+
+  const num = Number(str);
+  return isNaN(num) ? null : num;
 }
 
 /** Vrai pour null, undefined, chaîne vide ou marqueurs courants (N/A, null, vide...). */
@@ -28,13 +115,15 @@ export function estValeurVide(v: Cellule): boolean {
   return s === "" || /^(n\/?a|na|nan|null|undefined|none|vide|missing)$/i.test(s);
 }
 
-/** Convertit une colonne brute en nombres (accepte la virgule décimale). */
+/** Convertit une cellule en nombre : délègue à parseNombre pour supporter devises, espaces insécables et formats FR/US. */
+export function versNombre(v: Cellule): number | null {
+  if (v === null || v === undefined || typeof v === "boolean") return null;
+  return parseNombre(v);
+}
+
+/** Convertit une colonne brute en nombres (ignore les cellules vides ou non numériques). */
 export function versNumeriques(valeurs: Cellule[]): number[] {
-  return valeurs
-    .map((v) => (typeof v === "string" ? v.trim().replace(",", ".") : v))
-    .filter((v) => v !== "" && v !== null && v !== undefined)
-    .map(Number)
-    .filter((v) => !Number.isNaN(v));
+  return valeurs.map(versNombre).filter((n): n is number => n !== null);
 }
 
 /** Percentile par interpolation linéaire sur un tableau déjà trié. */

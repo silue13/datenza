@@ -1,107 +1,111 @@
 "use client";
 import { useState } from "react";
-import {
-  appliquerTheme,
-  enregistrerGeoStrict,
-  enregistrerTheme,
-  lireGeoStrict,
-  lireTheme,
-  type Theme,
-} from "../../lib/prefs";
+import { Check, Monitor, Moon, Palette, Sun, type LucideIcon } from "lucide-react";
+import { appliquerTheme, enregistrerTheme, lireTheme, type Theme } from "../../lib/prefs";
 
-const THEMES: { id: Theme; icone: string; nom: string }[] = [
-  { id: "clair", icone: "☀️", nom: "Clair" },
-  { id: "sombre", icone: "🌙", nom: "Sombre" },
-  { id: "systeme", icone: "💻", nom: "Système" },
+const THEMES: { id: Theme; nom: string; aide: string; Icone: LucideIcon }[] = [
+  { id: "clair", nom: "Clair", aide: "Fond blanc, idéal en plein jour", Icone: Sun },
+  { id: "sombre", nom: "Sombre", aide: "Fond sombre, moins de lumière", Icone: Moon },
+  { id: "systeme", nom: "Système", aide: "Suit le réglage de votre appareil", Icone: Monitor },
 ];
+
+const FOCUS =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900";
+
+/** Mini-tableau de bord qui montre à quoi ressemblera le thème. */
+function Apercu({ id }: { id: Theme }) {
+  const fond =
+    id === "clair" ? "bg-white" : id === "sombre" ? "bg-slate-900" : "bg-gradient-to-r from-white from-50% to-slate-900 to-50%";
+  return (
+    <div className={`flex h-24 w-full gap-2 overflow-hidden rounded-lg border border-slate-200 p-2.5 dark:border-slate-700 ${fond}`}>
+      <div className="flex w-5 flex-col gap-1.5 rounded bg-purple-500/80 p-1">
+        <div className="h-1 rounded bg-white/70" />
+        <div className="h-1 rounded bg-white/50" />
+        <div className="h-1 rounded bg-white/50" />
+      </div>
+      <div className="flex flex-1 flex-col gap-2">
+        <div className="h-1.5 w-2/5 rounded bg-slate-400/70" />
+        <div className="flex flex-1 items-end gap-1.5">
+          {[40, 70, 55, 90].map((h, i) => (
+            <div key={i} className="flex-1 rounded-sm bg-purple-500/60" style={{ height: `${h}%` }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function ParametresPage() {
   // Initialisation paresseuse : ce composant n'est rendu que côté navigateur après hydratation du layout.
   const [theme, setTheme] = useState<Theme>(() => (typeof window === "undefined" ? "systeme" : lireTheme()));
-  const [strictGeoCI, setStrictGeoCI] = useState<boolean>(() => (typeof window === "undefined" ? true : lireGeoStrict()));
-  const [sauvegardeOk, setSauvegardeOk] = useState(false);
+  const [confirme, setConfirme] = useState(false);
 
+  // Le thème s'applique et s'enregistre dès le clic : pas de bouton à valider.
   function choisirTheme(t: Theme) {
     setTheme(t);
-    appliquerTheme(t); // aperçu immédiat
-  }
-
-  function enregistrer() {
-    enregistrerTheme(theme);
-    enregistrerGeoStrict(strictGeoCI);
-    setSauvegardeOk(true);
-    setTimeout(() => setSauvegardeOk(false), 3000);
+    appliquerTheme(t);
+    enregistrerTheme(t);
+    setConfirme(true);
+    setTimeout(() => setConfirme(false), 2500);
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-12 font-sans text-slate-800 dark:text-slate-100">
-      <div>
-        <span className="text-xs font-bold uppercase tracking-wider text-purple-600">CONFIGURATION</span>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white mt-0.5">Paramètres de l&apos;application</h1>
-        <p className="text-slate-500 text-sm">Gérez vos préférences d&apos;affichage et la géolocalisation.</p>
-      </div>
+    <div className="mx-auto max-w-3xl pb-12 font-sans text-slate-800 dark:text-slate-100">
+      <header className="mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">Paramètres</h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Personnalisez l’affichage de DATENZA.</p>
+      </header>
 
-      {sauvegardeOk && (
-        <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 text-emerald-800 dark:text-emerald-200 text-xs font-semibold rounded-xl">
-          ✓ Paramètres enregistrés sur cet appareil.
-        </div>
-      )}
-
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-4 shadow-sm">
-        <h2 className="text-base font-bold border-b border-slate-100 dark:border-slate-800 pb-3">Apparence &amp; Thème</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-          {THEMES.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => choisirTheme(t.id)}
-              className={`p-4 rounded-xl border text-xs font-semibold flex flex-col items-center gap-2 transition ${
-                theme === t.id
-                  ? "border-purple-600 bg-purple-50/50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300"
-                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              }`}
-            >
-              <span className="text-lg">{t.icone}</span>
-              <span>{t.nom}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-4 shadow-sm">
-        <h2 className="text-base font-bold border-b border-slate-100 dark:border-slate-800 pb-3">Géolocalisation</h2>
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={strictGeoCI}
-            onChange={(e) => setStrictGeoCI(e.target.checked)}
-            className="accent-purple-600 h-4 w-4 rounded mt-0.5"
-          />
-          <div className="text-xs space-y-0.5">
-            <span className="font-bold block">Limiter la recherche en ligne à la Côte d&apos;Ivoire</span>
-            <p className="text-slate-500">
-              Le référentiel ivoirien intégré est toujours utilisé en premier. Quand un lieu n&apos;y figure pas, la recherche
-              OpenStreetMap est restreinte à la Côte d&apos;Ivoire (décoche pour autoriser le monde entier).
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-8">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Palette className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden />
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">Apparence</h2>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+              Choisissez le thème de l’interface. Votre choix s’applique tout de suite et reste enregistré sur cet appareil.
             </p>
           </div>
-        </label>
-      </div>
+          <p aria-live="polite" className="h-5 shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+            {confirme && (
+              <span className="flex items-center gap-1">
+                <Check className="h-4 w-4" aria-hidden /> Enregistré
+              </span>
+            )}
+          </p>
+        </div>
 
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-2 shadow-sm">
-        <h2 className="text-base font-bold border-b border-slate-100 dark:border-slate-800 pb-3">Assistant IA</h2>
-        <p className="text-xs text-slate-500">
-          Les clés des services IA sont configurées côté serveur (variables d&apos;environnement) et ne sont jamais saisies ni
-          affichées dans l&apos;application.
-        </p>
-      </div>
-
-      <div className="flex justify-end pt-2">
-        <button
-          onClick={enregistrer}
-          className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs rounded-xl shadow transition"
-        >
-          Enregistrer les modifications
-        </button>
-      </div>
+        <div role="radiogroup" aria-label="Thème" className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {THEMES.map(({ id, nom, aide, Icone }) => {
+            const actif = theme === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={actif}
+                onClick={() => choisirTheme(id)}
+                className={`rounded-xl border p-3 text-left transition ${FOCUS} ${
+                  actif
+                    ? "border-purple-600 bg-purple-50/60 ring-1 ring-purple-600 dark:bg-purple-950/30"
+                    : "border-slate-200 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800/50"
+                }`}
+              >
+                <Apercu id={id} />
+                <div className="mt-3 flex items-center justify-between gap-2 px-0.5">
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-white">
+                    <Icone className="h-4 w-4" aria-hidden />
+                    {nom}
+                  </div>
+                  {actif && <Check className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden />}
+                </div>
+                <p className="mt-1 px-0.5 text-xs leading-snug text-slate-500 dark:text-slate-400">{aide}</p>
+              </button>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }

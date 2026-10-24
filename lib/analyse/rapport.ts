@@ -22,15 +22,16 @@ export function genererRapport(res: Resultat, langue: Langue = "fr"): BlocRappor
   const st = res.statistiques;
   const noms = Object.keys(st);
   const de = (type: string) => noms.filter((n) => st[n].type === type);
+  const F = creerFormateurs(langue);
   const cellules = res.nbLignes * noms.length;
   const manquants = noms.reduce((s, n) => s + st[n].nbVides, 0);
 
-  blocs.push({ type: "intro", texte: L(`${res.nbLignes} lignes analysées sur ${noms.length} champ(s).`, `${res.nbLignes} rows analyzed across ${noms.length} field(s).`) });
+  blocs.push({ type: "intro", texte: L(`${F.nombre(res.nbLignes)} lignes analysées sur ${noms.length} champ(s).`, `${F.nombre(res.nbLignes)} rows analyzed across ${noms.length} field(s).`) });
   blocs.push({
     type: "qualite",
     texte: manquants
-      ? L(`${manquants} valeur(s) manquante(s) sur ${cellules} cellules (${arrondir((100 * manquants) / cellules)} %).`, `${manquants} missing value(s) out of ${cellules} cells (${arrondir((100 * manquants) / cellules)} %).`)
-      : L(`Aucune valeur manquante sur ${cellules} cellules.`, `No missing values across ${cellules} cells.`),
+      ? L(`${F.nombre(manquants)} valeur(s) manquante(s) sur ${F.nombre(cellules)} cellules (${F.pourcent(arrondir((100 * manquants) / cellules))}).`, `${F.nombre(manquants)} missing value(s) out of ${F.nombre(cellules)} cells (${F.pourcent(arrondir((100 * manquants) / cellules))}).`)
+      : L(`Aucune valeur manquante sur ${F.nombre(cellules)} cellules.`, `No missing values across ${F.nombre(cellules)} cells.`),
   });
 
   const score = (n: string) => {
@@ -39,7 +40,6 @@ export function genererRapport(res: Resultat, langue: Langue = "fr"): BlocRappor
   };
   // Répartition des mesures numériques par catégorie : c'est la lecture utile, plus que les simples effectifs.
   const couvertes = new Set<string>();
-  const F = creerFormateurs(langue);
   for (const mesure of res.mesures) {
     const op = mesure.operation === "somme" ? L("total", "total") : L("moyenne", "average");
     const nf = F.pour(natureValeur(mesure.colonne));
@@ -76,8 +76,8 @@ export function genererRapport(res: Resultat, langue: Langue = "fr"): BlocRappor
     const s = st[n].stats as Num;
     if (!s.n) return;
     let t = L(
-      `${n} : moyenne ${s.moyenne}, médiane ${s.mediane}, minimum ${s.min}, maximum ${s.max}.`,
-      `${n}: average ${s.moyenne}, median ${s.mediane}, minimum ${s.min}, maximum ${s.max}.`
+      `${n} : moyenne ${F.nombre(s.moyenne)}, médiane ${F.nombre(s.mediane)}, minimum ${F.nombre(s.min)}, maximum ${F.nombre(s.max)}.`,
+      `${n}: average ${F.nombre(s.moyenne)}, median ${F.nombre(s.mediane)}, minimum ${F.nombre(s.min)}, maximum ${F.nombre(s.max)}.`
     );
     if (s.atypiques) t += L(` ${s.atypiques} valeur(s) atypique(s) à examiner.`, ` ${s.atypiques} potential outlier(s) to review.`);
     blocs.push({ type: "numerique", texte: t });

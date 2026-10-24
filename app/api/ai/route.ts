@@ -1,10 +1,9 @@
 // app/api/ai/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, connection } from "next/server";
 import { verifierQuestionLieeAuxFichier } from "../../../lib/ia/ai-guard";
 import { construireMessagesIA, determinerLangueConversation } from "../../../lib/ia/prompts";
-import { appelerFournisseur, candidatsIA, IA_CONFIG } from "../../../lib/ia/ai-providers";
+import { appelerFournisseur, candidatsIA, fournisseursConfigures, IA_CONFIG } from "../../../lib/ia/ai-providers";
 
-export const runtime = "nodejs";
 export const maxDuration = 60; // à ajuster selon ton plan Vercel
 
 interface CorpsRequete {
@@ -14,6 +13,7 @@ interface CorpsRequete {
   langueConversation?: string;
   langueApp?: string;
   historique?: unknown;
+  mode?: unknown; // "monchamp" : le contexte est un projet agricole calculé, pas un fichier importé
 }
 
 const erreur = (message: string, status: number) => NextResponse.json({ error: message }, { status });
@@ -39,6 +39,12 @@ function depasseLimite(ip: string): boolean {
   return c.n > LIMITE;
 }
 
+/** Moteurs réellement configurés sur le serveur (pour le sélecteur de la page Assistant IA). */
+export async function GET() {
+  await connection(); // lecture à chaque requête, jamais figée au build
+  return NextResponse.json({ fournisseurs: fournisseursConfigures().map((id) => ({ id, nom: IA_CONFIG[id].nom })) });
+}
+
 export async function POST(req: Request) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "inconnue";
   if (depasseLimite(ip)) return erreur("Limite atteinte : 30 questions par heure.", 429);
@@ -58,14 +64,15 @@ export async function POST(req: Request) {
   if (contexte.length > 300_000) return erreur("Contexte trop volumineux.", 413);
 
   // 1) Garde-fou AVANT tout appel fournisseur : aucun token consommé si hors sujet.
-  const garde = verifierQuestionLieeAuxFichier(question, contexte, body?.langueConversation);
+  const mode = body?.mode === "monchamp" ? "monchamp" : "fichier";
+  const garde = verifierQuestionLieeAuxFichier(question, contexte, body?.langueConversation, mode);
   if (!garde.ok) return erreur(garde.message, 422);
 
   const candidats = candidatsIA(String(body?.fournisseur ?? "auto"));
   if (!candidats.length) return erreur("Aucun service IA n’est configuré sur le serveur.", 503);
 
   const langue = determinerLangueConversation(question, body?.langueConversation, body?.langueApp);
-  const messages = construireMessagesIA(question, contexte, langue, body?.historique);
+  const messages = construireMessagesIA(question, contexte, langue, body?.historique, mode);
 
   const erreurs: string[] = [];
   for (const nom of candidats) {

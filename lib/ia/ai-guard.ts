@@ -20,42 +20,88 @@ const HORS_SUJET: RegExp[] = [
   /\b(ignore|ignorer)\b.*\b(instructions|consignes)\b/i,
 ];
 
+// Dictionnaire enrichi avec prise en compte du mode benchmark, des écarts et des termes analytiques
 const SIGNAUX = [
-  "fichier","fichiers","donnée","données","dataset","tableau","tdc","pivot","colonne","colonnes",
-  "ligne","lignes","dossier","dossiers","enregistrement","enregistrements","valeur","valeurs",
-  "champ","champs","statut","statuts","région","régions","departement","département","départements",
-  "sous-préfecture","sous préfecture","village","superficie","surface","code","parcelle","certificat",
-  "analyse","analyser","analyses","comparer","comparaison","compare","répartition","distribution",
-  "moyenne","médiane","somme","total","minimum","maximum","min","max","écart","pourcentage","taux",
-  "manquant","manquants","manquante","manquantes","vide","vides","doublon","doublons","anomalie","anomalies",
-  "corrélation","corrélations","tendance","évolution","progression","qualité","complétude",
-  "prévision","prévisions","prédiction","prédictions","prediction","predictions","prévoir","prevoir",
-  "projection","projections","prospective","futur","future","futures","avenir","prochain","prochaine",
-  "prochains","prochaines","scénario","scénarios","forecast","forecasting","predict",
-  "rentable","rentabilité","rentabiliser","rentabilisation","profit","profits","bénéfice","bénéfices",
-  "marge","marges","revenu","revenus","chiffre d’affaires","chiffre d'affaires","ca","coût","coûts",
-  "cout","couts","prix","performance","performances","opportunité","opportunités","opportunite","opportunites",
-  "risque","risques","menace","menaces","potentiel","potentiels","optimiser","optimisation","améliorer",
-  "amélioration","action","actions","recommandation","recommandations","recommander","conseil","conseils",
-  "décision","décisions","decision","decisions","plan d’action","plan d'action","plan action","stratégie","stratégies",
-  "priorité","priorités","priorite","priorites","quoi faire","que faire","faudra faire","à faire","a faire",
-  "surveiller","indicateur","indicateurs","kpi","objectif","objectifs","alerte","alertes","opportunités futures",
-  "what should","what can","profitability","profitable","revenue","cost","costs",
-  "approved","rejected","missing","records","rows","columns","data","average","median",
-  "sum","percentage","rate","duplicates","anomalies","trend","quality",
-  "risk","opportunity","opportunities","recommendation","recommendations",
-  "strategy","strategies","outlook","decisions",
+  // Données & Fichiers
+  "fichier", "fichiers", "file", "files", "donnée", "données", "donnee", "donnees", "data", "dataset",
+  "tableau", "table", "tdc", "tcd", "pivot", "colonne", "colonnes", "column", "columns",
+  "ligne", "lignes", "row", "rows", "champ", "champs", "cellule", "cellules", "valeur", "valeurs",
+  "enregistrement", "enregistrements", "base", "source", "sources",
+
+  // Benchmark & Comparaison
+  "comparer", "comparaison", "compare", "benchmark", "benchmarks", "comparatif", "comparatifs",
+  "comparative", "comparatives", "versus", "vs", "différence", "differences", "difference",
+  "écart", "écarts", "ecart", "ecarts", "delta", "deltas", "variation", "variations", "confrontation",
+  "évolution", "evolution", "progression", "recul", "hausse", "baisse", "gain", "perte",
+
+  // Corrélations, Liens & Statistiques
+  "corrélation", "corrélations", "correlation", "correlations", "corréler", "correler",
+  "régression", "regression", "liaison", "liaisons", "lien", "liens", "relation", "relations",
+  "dépendance", "dependance", "synergie", "découplage", "decouplage", "inversion", "r", "r2",
+  "coefficient", "pearson", "statistique", "statistiques", "stats",
+
+  // Agrégations & Mesures
+  "moyenne", "médiane", "mediane", "somme", "total", "minimum", "maximum", "min", "max",
+  "pourcentage", "taux", "rate", "percentage", "effectif", "compte", "count", "distribution",
+  "répartition", "repartition", "concentration", "dispersion",
+
+  // Visualisations
+  "graphique", "graphiques", "chart", "charts", "courbe", "courbes", "barre", "barres",
+  "camembert", "anneau", "carte", "cartes", "map", "maps", "géographie", "geographie",
+
+  // Prévisions & Tendances
+  "prévision", "prévisions", "prevision", "previsions", "projection", "projections",
+  "prédiction", "predictions", "prediction", "prospective", "futur", "future", "tendance",
+  "tendances", "trend", "trajectoire", "trajectoires", "horizon", "scénario", "scenarios",
+
+  // Synthèse & Qualité
+  "résumé", "resume", "resumer", "synthèse", "synthese", "bilan", "rapport", "anomalie",
+  "anomalies", "atypique", "atypiques", "outlier", "outliers", "doublon", "doublons",
+  "manquant", "manquants", "manquante", "manquantes", "vide", "vides", "qualité", "qualite",
+  "complétude", "completude",
+
+  // Décisionnel & Business
+  "kpi", "indicateur", "indicateurs", "performance", "performances", "chiffre d'affaires",
+  "chiffre d’affaires", "ca", "marge", "marges", "coût", "cout", "coûts", "couts", "prix",
+  "quantité", "quantite", "vente", "ventes", "recommandation", "recommandations", "conseil",
+  "conseils", "stratégie", "strategie", "priorité", "priorite", "action", "actions", "alerte"
 ];
+
+function normaliserTexte(s: string): string {
+  return String(s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+const SIGNAUX_NORMALISES = Array.from(new Set(SIGNAUX.map(normaliserTexte)));
+const RE_SIGNAUX = SIGNAUX_NORMALISES.map(
+  (m) => new RegExp(`(^|[^a-z0-9])${m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9])`, "i")
+);
 
 export function verifierQuestionLieeAuxFichier(
   question: string,
   contexte: unknown,
-  langueConversation?: string
+  langueConversation?: string,
+  mode?: "fichier" | "monchamp"
 ): ResultatGarde {
   const L = langueConversation === "en" ? "en" : "fr";
-  const q = String(question ?? "").trim().toLowerCase();
-  if (!q) return { ok: false, message: MSG.vide[L] };
+  const qBrute = String(question ?? "").trim();
+  if (!qBrute) return { ok: false, message: MSG.vide[L] };
 
+  // 1. Détection hors-sujet strict
+  for (const re of HORS_SUJET) {
+    if (re.test(qBrute)) return { ok: false, message: MSG.horsSujet[L] };
+  }
+
+  const qNorm = normaliserTexte(qBrute);
+
+  // 2. Détection d'un signal analytique ou comparatif
+  let signal = RE_SIGNAUX.some((re) => re.test(qNorm));
+  if (signal) return { ok: true };
+
+  // 3. Détection via les métadonnées du fichier (colonnes, fichiers comparés, valeurs)
   let ctx: Record<string, unknown> = {};
   try {
     ctx = typeof contexte === "string" ? JSON.parse(contexte || "{}") : contexte || {};
@@ -63,31 +109,51 @@ export function verifierQuestionLieeAuxFichier(
     ctx = {};
   }
 
+  // Vérification des noms des colonnes (avec tolérance sur les accents)
   const colonnes: unknown[] = Array.isArray(ctx.toutesLesColonnes)
     ? ctx.toutesLesColonnes
-    : Array.isArray(ctx.colonnesAnalysees) ? ctx.colonnesAnalysees : [];
-  const textesColonnes = colonnes.map((c) => String(c ?? "").toLowerCase().trim()).filter(Boolean);
+    : Array.isArray(ctx.colonnesAnalysees)
+    ? ctx.colonnesAnalysees
+    : Array.isArray(ctx.colonnes)
+    ? ctx.colonnes
+    : [];
 
-  for (const re of HORS_SUJET) if (re.test(q)) return { ok: false, message: MSG.horsSujet[L] };
+  const textesColonnes = colonnes.map((c) => normaliserTexte(String(c ?? ""))).filter(Boolean);
+  const colonneTrouvee = textesColonnes.some((c) => c.length >= 3 && qNorm.includes(c));
+  if (colonneTrouvee) return { ok: true };
 
-  const colonneTrouvee = textesColonnes.some((c) => c.length >= 3 && q.includes(c));
-  let signal = SIGNAUX.some((m) => q.includes(m));
-
-  if (!signal && ctx.statistiques) {
-    signal = Object.keys(ctx.statistiques as object).some((n) => n.length >= 3 && q.includes(n.toLowerCase()));
+  // Vérification des noms de fichiers comparés
+  if (ctx.fichiers_confrontes && typeof ctx.fichiers_confrontes === "object") {
+    const fc = ctx.fichiers_confrontes as Record<string, unknown>;
+    const s1 = normaliserTexte(String(fc.source_reference ?? ""));
+    const s2 = normaliserTexte(String(fc.source_cible ?? ""));
+    if ((s1.length >= 3 && qNorm.includes(s1)) || (s2.length >= 3 && qNorm.includes(s2))) {
+      return { ok: true };
+    }
   }
-  if (!signal && Array.isArray(ctx.apercuPremieresLignes)) {
+
+  // Vérification dans les clés de statistiques
+  if (ctx.statistiques && typeof ctx.statistiques === "object") {
+    const cleStats = Object.keys(ctx.statistiques).map(normaliserTexte);
+    if (cleStats.some((n) => n.length >= 3 && qNorm.includes(n))) {
+      return { ok: true };
+    }
+  }
+
+  // Vérification dans les premières lignes de données
+  if (Array.isArray(ctx.apercuPremieresLignes)) {
     const textes: string[] = [];
     for (const row of ctx.apercuPremieresLignes.slice(0, 12)) {
       if (!row) continue;
       for (const k of Object.keys(row)) {
-        const v = String(row[k] ?? "").toLowerCase().trim();
+        const v = normaliserTexte(String(row[k] ?? ""));
         if (v.length >= 3 && v.length <= 80) textes.push(v);
       }
     }
-    signal = textes.some((v) => q.includes(v));
+    if (textes.some((v) => qNorm.includes(v))) {
+      return { ok: true };
+    }
   }
 
-  if (!colonneTrouvee && !signal) return { ok: false, message: MSG.horsSujet[L] };
-  return { ok: true };
+  return { ok: false, message: MSG.horsSujet[L] };
 }

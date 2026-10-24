@@ -1,4 +1,4 @@
-import { arrondir, estValeurVide, type Cellule } from "./utils";
+import { arrondir, estValeurVide, versNombre, type Cellule } from "./utils";
 
 export interface LigneRepartition {
   valeur: string;
@@ -53,12 +53,6 @@ function operationPour(nom: string): "somme" | "moyenne" {
 
 function scoreDimension(role: string, nbCat: number): number {
   return (role === "statut" ? 100 : 40) + (nbCat >= 2 && nbCat <= 15 ? 30 : 0) - (nbCat > 50 ? 40 : 0);
-}
-
-function versNombre(v: Cellule): number | null {
-  if (estValeurVide(v)) return null;
-  const n = Number(typeof v === "string" ? v.trim().replace(",", ".") : v);
-  return Number.isFinite(n) ? n : null;
 }
 
 /**

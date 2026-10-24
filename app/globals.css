@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Tailwind v4 : le mode sombre suit la classe "dark" posée sur <html> (voir Paramètres). */
+/* Tailwind v4 : le mode sombre suit la classe "dark" posée sur <html> */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ============================================================
@@ -54,7 +54,9 @@ body.theme-sombre {
   --ombre: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -265,5 +267,97 @@ select {
     max-width: none;
     margin-left: 0;
     padding: 12px;
+  }
+}
+
+/* ============================================================
+   RÈGLES D'EXPORT PDF DATENZA (PRÉSERVATION DU DESIGN PRO)
+   ============================================================ */
+
+/* ============================================================
+   RÈGLES D'EXPORT PDF DATENZA — OPTION B (CONTINU & SANS COUPURE)
+   ============================================================ */
+
+.print-only {
+  display: none !important;
+}
+
+@media print {
+  .print-only {
+    display: block !important;
+  }
+
+  /* 1. Maintien strict des couleurs réelles */
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 12mm 10mm 12mm 10mm;
+  }
+
+  /* 2. Masquage des contrôles interactifs */
+  .no-print,
+  .barre-laterale,
+  header,
+  nav,
+  aside,
+  button,
+  select,
+  input,
+  form {
+    display: none !important;
+  }
+
+  /* 3. Déverrouillage vertical indispensable pour le moteur d'impression */
+  html,
+  body,
+  #__next,
+  main,
+  .app-layout,
+  .contenu-principal {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  /* Annule les grilles à l'impression pour que Chromium respecte les sauts de page */
+  .grid,
+  [class*="grid-cols"] {
+    display: block !important;
+  }
+
+  /* 4. RÈGLE D'OR OPTION B : Le bloc graphique + texte reste indivisible.
+        S'il y a la place sur la page, il s'affiche à la suite.
+        S'il n'y a pas assez de place, tout le bloc glisse au début de la page suivante. */
+  .print-eviter-coupure {
+    display: block !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    margin-bottom: 22px !important;
+  }
+
+  /* 5. Hauteurs proportionnées pour permettre l'enchaînement propre */
+  canvas {
+    max-height: 220px !important;
+  }
+
+  .leaflet-container {
+    height: 250px !important;
+    max-height: 250px !important;
+    border-radius: 10px !important;
   }
 }

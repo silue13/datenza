@@ -22,6 +22,10 @@ describe("analyse/utils", () => {
     expect(versNumeriques(["1,5", " 2 ", "", "abc"])).toEqual([1.5, 2]);
   });
 
+  it("lit les milliers séparés par des espaces", () => {
+    expect(versNumeriques(["1 234,5", "2\u00A0000", "3\u202F500"])).toEqual([1234.5, 2000, 3500]);
+  });
+
   it("reconnaît les valeurs vides", () => {
     expect(estValeurVide("N/A")).toBe(true);
     expect(estValeurVide("  ")).toBe(true);

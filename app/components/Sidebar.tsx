@@ -1,14 +1,13 @@
 "use client";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const navigation: { name: string; href: string; bientot?: boolean }[] = [
   { name: "Accueil", href: "/" },
   { name: "Analyse", href: "/analyse" },
-  { name: "Tableau de bord", href: "/dashboard" },
-  { name: "Données Publiques", href: "/opendata", bientot: true },
-  { name: "MonChamp (Agri)", href: "/monchamp", bientot: true },
   { name: "Assistant IA", href: "/assistant-ia" },
+  { name: "Fusion & Nettoyage", href: "/fusion" }, // <-- Nouveau lien ajouté ici
   { name: "Paramètres", href: "/parametres" },
 ];
 
@@ -32,7 +31,10 @@ export default function Sidebar() {
             const isActive = pathname === item.href;
             if (item.bientot) {
               return (
-                <span key={item.name} className="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 dark:text-slate-600 cursor-not-allowed">
+                <span
+                  key={item.name}
+                  className="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 dark:text-slate-600 cursor-not-allowed"
+                >
                   {item.name}
                   <span className="text-[9px] uppercase tracking-wide">bientôt</span>
                 </span>
