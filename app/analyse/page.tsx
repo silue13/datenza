@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import ModulePrevisions from "../components/ModulePrevisions";
 import { Presentation } from "lucide-react";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
+import { exporterExcelExecutive } from "../../lib/analyse/exportExcel"; // IMPORT AJOUTÉ ICI
 import {
   ChevronDown,
   Printer,
@@ -19,7 +20,6 @@ import {
   Lightbulb,
 } from "lucide-react";
 import Link from "next/link";
-import * as XLSX from "xlsx";
 import { useData } from "../context/DataContext";
 import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
 import CarteGeographique from "../components/CarteGeographique";
@@ -234,6 +234,7 @@ export default function AnalysePage() {
 
   const [sourceRefChoisie, setSourceRefChoisie] = useState<string>("");
   const [exportEnCours, setExportEnCours] = useState(false);
+  
   const refSource = sourcesFichiers.includes(sourceRefChoisie)
     ? sourceRefChoisie
     : sourcesFichiers[0] || "";
@@ -437,80 +438,24 @@ export default function AnalysePage() {
     window.print();
   };
 
-   const telechargerExcelPropre = async () => {
+  // =========================================================================
+  // APPEL DU NOUVEAU MODULE D'EXPORT EXCEL EXECUTIVE
+  // =========================================================================
+  const telechargerExcelPropre = async () => {
     if (!entetes.length || !corps.length || exportEnCours) return;
     setExportEnCours(true);
     await new Promise((r) => setTimeout(r, 50));
     try {
-      const ExcelJS = (await import("exceljs")).default;
-      const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet("Données", {
-        views: [{ state: "frozen", ySplit: 1, showGridLines: false }],
-      });
-
-      // Détection des colonnes numériques et en pourcentage
-      const cols = entetes.map((nom, i) => {
-        const vals = corps.map((l) => l[i]).filter((v) => !estValeurVide(v));
-        const nums = vals.map(parseNombre).filter((n): n is number => n !== null);
-        const numerique = vals.length > 0 && nums.length / vals.length >= 0.9;
-        const estPct = numerique && /pct|pourcent|%/i.test(nom) && nums.every((n) => Math.abs(n) <= 1);
-        const entiers = nums.every((n) => Number.isInteger(n));
-        return { nom, numerique, estPct, entiers };
-      });
-
-      ws.addRow(entetes.map((h) => h.replace(/_/g, " ")));
-      corps.forEach((ligne) =>
-        ws.addRow(
-          entetes.map((_, i) => {
-            const v = ligne[i];
-            if (estValeurVide(v)) return null;
-            if (cols[i].numerique) return parseNombre(v) ?? v;
-            return v;
-          })
-        )
+      // Transmission des données brutes ET de l'analyse IA au module d'export
+      await exporterExcelExecutive(
+        nomFichier || "Analyse",
+        entetes,
+        corps,
+        resultatActif,
+        rapportActif
       );
-
-      // En-tête
-      const entete = ws.getRow(1);
-      entete.height = 28;
-      entete.eachCell((c) => {
-        c.font = { name: "Arial", bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
-        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E293B" } };
-        c.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-      });
-
-      // Formats et largeurs par colonne
-      cols.forEach((c, i) => {
-        const colonne = ws.getColumn(i + 1);
-        const fmt = c.estPct ? "0.0%" : c.entiers ? "#,##0;(#,##0);-" : "#,##0.00;(#,##0.00);-";
-        let largeur = c.nom.length;
-        colonne.eachCell({ includeEmpty: false }, (cell, ligne) => {
-          if (ligne === 1) return;
-          cell.font = { name: "Arial", size: 10 };
-          if (c.numerique) {
-            cell.numFmt = fmt;
-            cell.alignment = { horizontal: "right" };
-          }
-          largeur = Math.max(largeur, String(cell.text ?? "").length);
-        });
-        colonne.width = Math.min(Math.max(largeur + 4, 12), 40);
-      });
-
-      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: entetes.length } };
-      ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
-
-      // Téléchargement
-      const buffer = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const nomBase = (nomFichier || "donnees").replace(/\.[^/.]+$/, "");
-      a.href = url;
-      a.download = `${nomBase}_analyse_datenza.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Erreur lors de l'export Excel :", error);
     } finally {
       setExportEnCours(false);
     }
@@ -519,6 +464,23 @@ export default function AnalysePage() {
   const correlationsStandard = [...(resultatActif?.correlations ?? [])]
     .filter((c) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
     .sort((a, b) => Math.abs(b.coefficient) - Math.abs(a.coefficient));
+
+  if (corps.length === 0) {
+    return (
+      <div className="max-w-4xl mx-auto py-16 text-center space-y-4">
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Analyse des données</h1>
+        <p className="text-slate-500 text-sm">
+          Aucun fichier actif n&apos;est chargé. Veuillez importer des fichiers sur l&apos;accueil ou effectuer une consolidation.
+        </p>
+        <Link
+          href="/"
+          className="inline-block rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-blue-700 transition"
+        >
+          Retour à l&apos;accueil
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-16 text-slate-800 dark:text-slate-100 font-sans">
@@ -615,7 +577,7 @@ export default function AnalysePage() {
               Exporter PDF
             </button>
 
-                        <button
+            <button
               onClick={telechargerExcelPropre}
               disabled={exportEnCours}
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
