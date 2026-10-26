@@ -437,16 +437,80 @@ export default function AnalysePage() {
     window.print();
   };
 
-    const telechargerExcelPropre = async () => {
+   const telechargerExcelPropre = async () => {
     if (!entetes.length || !corps.length || exportEnCours) return;
     setExportEnCours(true);
-    await new Promise((r) => setTimeout(r, 50)); // laisse le navigateur afficher "Export en cours…"
+    await new Promise((r) => setTimeout(r, 50));
     try {
-      const feuille = XLSX.utils.aoa_to_sheet([entetes, ...corps], { dense: true });
-      const classeur = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(classeur, feuille, "Données nettoyées");
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Données", {
+        views: [{ state: "frozen", ySplit: 1, showGridLines: false }],
+      });
+
+      // Détection des colonnes numériques et en pourcentage
+      const cols = entetes.map((nom, i) => {
+        const vals = corps.map((l) => l[i]).filter((v) => !estValeurVide(v));
+        const nums = vals.map(parseNombre).filter((n): n is number => n !== null);
+        const numerique = vals.length > 0 && nums.length / vals.length >= 0.9;
+        const estPct = numerique && /pct|pourcent|%/i.test(nom) && nums.every((n) => Math.abs(n) <= 1);
+        const entiers = nums.every((n) => Number.isInteger(n));
+        return { nom, numerique, estPct, entiers };
+      });
+
+      ws.addRow(entetes.map((h) => h.replace(/_/g, " ")));
+      corps.forEach((ligne) =>
+        ws.addRow(
+          entetes.map((_, i) => {
+            const v = ligne[i];
+            if (estValeurVide(v)) return null;
+            if (cols[i].numerique) return parseNombre(v) ?? v;
+            return v;
+          })
+        )
+      );
+
+      // En-tête
+      const entete = ws.getRow(1);
+      entete.height = 28;
+      entete.eachCell((c) => {
+        c.font = { name: "Arial", bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E293B" } };
+        c.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      });
+
+      // Formats et largeurs par colonne
+      cols.forEach((c, i) => {
+        const colonne = ws.getColumn(i + 1);
+        const fmt = c.estPct ? "0.0%" : c.entiers ? "#,##0;(#,##0);-" : "#,##0.00;(#,##0.00);-";
+        let largeur = c.nom.length;
+        colonne.eachCell({ includeEmpty: false }, (cell, ligne) => {
+          if (ligne === 1) return;
+          cell.font = { name: "Arial", size: 10 };
+          if (c.numerique) {
+            cell.numFmt = fmt;
+            cell.alignment = { horizontal: "right" };
+          }
+          largeur = Math.max(largeur, String(cell.text ?? "").length);
+        });
+        colonne.width = Math.min(Math.max(largeur + 4, 12), 40);
+      });
+
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: entetes.length } };
+      ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+
+      // Téléchargement
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
       const nomBase = (nomFichier || "donnees").replace(/\.[^/.]+$/, "");
-      XLSX.writeFile(classeur, `${nomBase}_analyse_datenza.xlsx`);
+      a.href = url;
+      a.download = `${nomBase}_analyse_datenza.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
     } finally {
       setExportEnCours(false);
     }
