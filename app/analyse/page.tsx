@@ -233,6 +233,7 @@ export default function AnalysePage() {
   const estBenchmarkActif = estModeComparaison && sourcesFichiers.length >= 2;
 
   const [sourceRefChoisie, setSourceRefChoisie] = useState<string>("");
+  const [exportEnCours, setExportEnCours] = useState(false);
   const refSource = sourcesFichiers.includes(sourceRefChoisie)
     ? sourceRefChoisie
     : sourcesFichiers[0] || "";
@@ -436,32 +437,20 @@ export default function AnalysePage() {
     window.print();
   };
 
-  const telechargerExcelPropre = () => {
-    if (!entetes.length || !corps.length) return;
-    const dataAExporter = [entetes, ...corps];
-    const feuille = XLSX.utils.aoa_to_sheet(dataAExporter);
-    const classeur = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(classeur, feuille, "Données nettoyées");
-    const nomBase = (nomFichier || "donnees").replace(/\.[^/.]+$/, "");
-    XLSX.writeFile(classeur, `${nomBase}_analyse_datenza.xlsx`);
+    const telechargerExcelPropre = async () => {
+    if (!entetes.length || !corps.length || exportEnCours) return;
+    setExportEnCours(true);
+    await new Promise((r) => setTimeout(r, 50)); // laisse le navigateur afficher "Export en cours…"
+    try {
+      const feuille = XLSX.utils.aoa_to_sheet([entetes, ...corps], { dense: true });
+      const classeur = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(classeur, feuille, "Données nettoyées");
+      const nomBase = (nomFichier || "donnees").replace(/\.[^/.]+$/, "");
+      XLSX.writeFile(classeur, `${nomBase}_analyse_datenza.xlsx`);
+    } finally {
+      setExportEnCours(false);
+    }
   };
-
-  if (corps.length === 0) {
-    return (
-      <div className="max-w-4xl mx-auto py-16 text-center space-y-4">
-        <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Analyse des données</h1>
-        <p className="text-slate-500 text-sm">
-          Aucun fichier actif n&apos;est chargé. Veuillez importer des fichiers sur l&apos;accueil ou effectuer une consolidation.
-        </p>
-        <Link
-          href="/"
-          className="inline-block rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-blue-700 transition"
-        >
-          Retour à l&apos;accueil
-        </Link>
-      </div>
-    );
-  }
 
   const correlationsStandard = [...(resultatActif?.correlations ?? [])]
     .filter((c) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
@@ -562,12 +551,13 @@ export default function AnalysePage() {
               Exporter PDF
             </button>
 
-            <button
+                        <button
               onClick={telechargerExcelPropre}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
+              disabled={exportEnCours}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-              Télécharger Excel (.xlsx)
+              {exportEnCours ? "Export en cours…" : "Télécharger Excel (.xlsx)"}
             </button>
           </div>
         </div>
