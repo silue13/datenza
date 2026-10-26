@@ -2,6 +2,8 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import ModulePrevisions from "../components/ModulePrevisions";
+import { Presentation } from "lucide-react";
+import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import {
   ChevronDown,
   Printer,
@@ -12,12 +14,8 @@ import {
   TrendingUp,
   Layers,
   Database,
-  Sparkles,
   PieChart,
   Scale,
-  ArrowUpRight,
-  ArrowDownRight,
-  Minus,
   Lightbulb,
 } from "lucide-react";
 import Link from "next/link";
@@ -112,7 +110,6 @@ function calculerStatsComplet(nums: number[]) {
   };
 }
 
-/** Traduction concrète d'une corrélation pour un seul fichier */
 function expliquerCorrelationSimple(colA: string, colB: string, r: number): string {
   if (r >= 0.7) {
     return `Forte synergie directe : lorsque « ${colA} » augmente, « ${colB} » progresse presque systématiquement de façon proportionnelle.`;
@@ -129,7 +126,6 @@ function expliquerCorrelationSimple(colA: string, colB: string, r: number): stri
   return `Forte relation inverse : une progression de « ${colA} » entraîne une chute prononcée et systématique de « ${colB} ».`;
 }
 
-/** Diagnostic métier de l'évolution d'une corrélation entre deux fichiers */
 function expliquerEvolutionCorrelation(
   colA: string,
   colB: string,
@@ -206,7 +202,6 @@ export default function AnalysePage() {
     epinglerGraphique,
   } = useData();
 
-  // 1. AUTO-GUÉRISON : recalcul immédiat si le résultat vient d'une fusion
   const resultatActif = useMemo(() => {
     if (resultat && resultat.statistiques) return resultat;
     if (entetes.length > 0 && corps.length > 0) {
@@ -215,7 +210,6 @@ export default function AnalysePage() {
     return null;
   }, [resultat, entetes, corps]);
 
-  // 2. AUTO-GUÉRISON : rapport de synthèse sécurisé contre les valeurs nulles
   const rapportActif = useMemo(() => {
     if (Array.isArray(rapport) && rapport.length > 0) return rapport;
     if (!resultatActif) return [];
@@ -228,7 +222,6 @@ export default function AnalysePage() {
       }));
   }, [rapport, resultatActif]);
 
-  // Détection du mode benchmark (N fichiers)
   const estModeComparaison = entetes.includes("Fichier Source");
   const idxSource = entetes.indexOf("Fichier Source");
 
@@ -239,7 +232,6 @@ export default function AnalysePage() {
 
   const estBenchmarkActif = estModeComparaison && sourcesFichiers.length >= 2;
 
-  // Fichier étalon de référence
   const [sourceRefChoisie, setSourceRefChoisie] = useState<string>("");
   const refSource = sourcesFichiers.includes(sourceRefChoisie)
     ? sourceRefChoisie
@@ -249,13 +241,11 @@ export default function AnalysePage() {
     return sourcesFichiers.filter((s) => s !== refSource);
   }, [sourcesFichiers, refSource]);
 
-  // Exclusion formelle de "Fichier Source" des statistiques
   const noms = useMemo(() => {
     if (!resultatActif?.statistiques) return [];
     return Object.keys(resultatActif.statistiques).filter((h) => h !== "Fichier Source");
   }, [resultatActif]);
 
-  // Découpage des corps par source
   const corpsParSource = useMemo(() => {
     const map = new Map<string, Cellule[][]>();
     sourcesFichiers.forEach((src) => {
@@ -272,7 +262,6 @@ export default function AnalysePage() {
     });
   }, [noms, entetes, corps]);
 
-  // Métriques globales multi-sources
   const statsGlobalesMulti = useMemo(() => {
     if (!estBenchmarkActif) return null;
 
@@ -304,13 +293,11 @@ export default function AnalysePage() {
     };
   }, [estBenchmarkActif, sourcesFichiers, corpsParSource, noms, entetes, refSource]);
 
-  // Synthèse comparative multi-sources
   const syntheseComparativeCards = useMemo(() => {
     if (!estBenchmarkActif || !statsGlobalesMulti) return [];
 
     const cartes: { type: "numerique" | "categorie" | "qualite"; titre: string; detail: string; deltaBadge?: string; estHausse?: boolean }[] = [];
 
-    // Volumétrie
     if (sourcesFichiers.length === 2) {
       const s1 = sourcesFichiers[0];
       const s2 = sourcesFichiers[1];
@@ -337,7 +324,6 @@ export default function AnalysePage() {
       });
     }
 
-    // Colonnes numériques
     colonnesNumeriques.forEach((nomCol) => {
       const idx = entetes.indexOf(nomCol);
       const perfParSource = sourcesFichiers.map((src) => {
@@ -365,7 +351,6 @@ export default function AnalysePage() {
       }
     });
 
-    // Colonnes catégorielles
     noms.filter((nom) => !colonnesNumeriques.includes(nom)).forEach((nomCol) => {
       const idx = entetes.indexOf(nomCol);
       const topParSource = sourcesFichiers.map((src) => {
@@ -398,7 +383,6 @@ export default function AnalysePage() {
     return cartes;
   }, [estBenchmarkActif, statsGlobalesMulti, sourcesFichiers, refSource, colonnesNumeriques, noms, entetes, corpsParSource]);
 
-  // Corrélations complètes
   const correlationsBenchmark = useMemo(() => {
     if (!estBenchmarkActif || colonnesNumeriques.length < 2) return [];
 
@@ -471,7 +455,7 @@ export default function AnalysePage() {
         </p>
         <Link
           href="/"
-          className="inline-block rounded-xl bg-purple-600 px-5 py-2.5 text-xs font-semibold text-white shadow hover:bg-purple-700 transition"
+          className="inline-block rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-blue-700 transition"
         >
           Retour à l&apos;accueil
         </Link>
@@ -486,12 +470,12 @@ export default function AnalysePage() {
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-16 text-slate-800 dark:text-slate-100 font-sans">
       
-      {/* 1. BANDEAU DE PILOTAGE FUSIONNÉ */}
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 md:p-8 shadow-xl border border-slate-800">
+      {/* 1. BANDEAU DE PILOTAGE COBALT EXECUTIVE */}
+      <section className="bg-slate-900 border border-slate-800 text-white rounded-3xl p-6 md:p-8 shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-xs font-bold tracking-wide uppercase">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 text-xs font-bold tracking-wide uppercase">
+              <span className="w-2 h-2 rounded-full bg-blue-400"></span>
               {estBenchmarkActif
                 ? `DATENZA · Benchmark Multi-Sources (${sourcesFichiers.length} fichiers)`
                 : "DATENZA · Centre de pilotage & Analyse"}
@@ -499,7 +483,7 @@ export default function AnalysePage() {
             <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">
               {estBenchmarkActif ? "Tableau de Bord & Benchmark Comparatif" : "Tableau de bord & Rapport d'analyse"}
             </h1>
-            <p className="text-xs md:text-sm text-slate-300 max-w-2xl leading-relaxed">
+            <p className="text-xs md:text-sm text-slate-400 max-w-2xl leading-relaxed">
               {estBenchmarkActif
                 ? "Confrontation directe des indicateurs clés, profils détaillés par fichier et analyse des dynamiques de séries."
                 : "Vue synthétique, indicateurs clés de qualité et analyses détaillées de votre jeu de données."}
@@ -516,8 +500,8 @@ export default function AnalysePage() {
                       key={src}
                       className={`px-2.5 py-1 rounded-lg border font-mono text-[11px] ${
                         src === refSource
-                          ? "bg-purple-900/80 border-purple-500 text-purple-200 font-bold"
-                          : "bg-slate-800/80 border-slate-700 text-slate-200"
+                          ? "bg-blue-900/60 border-blue-500 text-blue-200 font-bold"
+                          : "bg-slate-800 border-slate-700 text-slate-300"
                       }`}
                     >
                       {src} {src === refSource && "(Réf)"}
@@ -525,20 +509,20 @@ export default function AnalysePage() {
                   ))}
                 </div>
               ) : (
-                <span className="bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700/80 text-cyan-300 font-mono">
+                <span className="bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700 text-blue-300 font-mono">
                   {nomFichier || "Données importées"}
                 </span>
               )}
             </div>
 
-            {/* Sélecteur de fichier de référence interactif */}
+            {/* Sélecteur de référence */}
             {estBenchmarkActif && (
               <div className="flex items-center gap-2 pt-2 text-xs">
                 <span className="font-semibold text-slate-300">Référence étalon (Pivot) :</span>
                 <select
                   value={refSource}
                   onChange={(e) => setSourceRefChoisie(e.target.value)}
-                  className="bg-indigo-950 border border-indigo-700 text-indigo-200 text-xs font-bold rounded-lg px-2.5 py-1 focus:ring-2 focus:ring-purple-400"
+                  className="bg-slate-800 border border-slate-700 text-blue-300 text-xs font-bold rounded-lg px-2.5 py-1 focus:ring-1 focus:ring-blue-500"
                 >
                   {sourcesFichiers.map((src) => (
                     <option key={src} value={src}>{src}</option>
@@ -551,18 +535,36 @@ export default function AnalysePage() {
             )}
           </div>
 
+          {/* Actions d'exportation */}
           <div className="flex flex-wrap items-center gap-3 print:hidden shrink-0">
             <button
+              onClick={() => {
+                exporterRapportPowerPoint({
+                  nomProjet: nomFichier || "Analyse Datenza",
+                  entetes: entetes,
+                  corps: corps,
+                  analyse: resultatActif,
+                  rapport: rapportActif,
+                  graphiquesEpingles: graphiquesEpingles || [],
+                });
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+            >
+              <Presentation className="w-4 h-4" />
+              Exporter PowerPoint (.pptx)
+            </button>
+
+            <button
               onClick={imprimerRapport}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow-lg hover:shadow-purple-500/25 transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              Exporter le rapport PDF
+              Exporter PDF
             </button>
 
             <button
               onClick={telechargerExcelPropre}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
               Télécharger Excel (.xlsx)
@@ -581,7 +583,7 @@ export default function AnalysePage() {
             <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">
               {fmt(corps.length)}
             </h3>
-            <p className="text-[11px] text-cyan-600 dark:text-cyan-400 mt-0.5 font-medium">
+            <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium">
               {estBenchmarkActif ? (
                 <span>
                   Réf {refSource} : <strong>{fmt(corpsParSource.get(refSource)?.length || 0)}</strong> lignes
@@ -591,7 +593,7 @@ export default function AnalysePage() {
               )}
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-cyan-50 dark:bg-cyan-950/40 text-cyan-600 dark:text-cyan-400 flex items-center justify-center font-bold">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
             {estBenchmarkActif ? <Scale className="w-6 h-6" /> : <Database className="w-6 h-6" />}
           </div>
         </div>
@@ -606,7 +608,7 @@ export default function AnalysePage() {
               {estBenchmarkActif ? "• 100 % alignées" : "• Variables exploitables"}
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+          <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold">
             <Layers className="w-6 h-6" />
           </div>
         </div>
@@ -619,11 +621,11 @@ export default function AnalysePage() {
             <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">
               {estBenchmarkActif ? `${sourcesFichiers.length} fichiers` : graphiquesEpingles.length}
             </h3>
-            <p className="text-[11px] text-purple-600 dark:text-purple-400 mt-0.5 font-medium">
+            <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium">
               {estBenchmarkActif ? "• Séries synchronisées" : "• Graphiques épinglés"}
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
             <BarChart3 className="w-6 h-6" />
           </div>
         </div>
@@ -636,7 +638,7 @@ export default function AnalysePage() {
                 ? `${Math.round(statsGlobalesMulti.resumeSources.reduce((a, b) => a + b.completude, 0) / (sourcesFichiers.length || 1))} %`
                 : "100 %"}
             </h3>
-            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 font-medium">
+            <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium">
               {estBenchmarkActif ? (
                 <span>Réf {refSource} : {statsGlobalesMulti?.refInfo.completude} %</span>
               ) : (
@@ -644,8 +646,8 @@ export default function AnalysePage() {
               )}
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
-            <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+          <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
+            <CheckCircle2 className="w-6 h-6" />
           </div>
         </div>
       </section>
@@ -655,9 +657,7 @@ export default function AnalysePage() {
         <BarreOutilsDonnees />
       </div>
 
-      {/* 4. SECTIONS DÉROULANTES */}
-
-      {/* DÉPLIANT 1 : SYNTHÈSE EXÉCUTIVE */}
+      {/* 4. DÉPLIANT 1 : SYNTHÈSE EXÉCUTIVE */}
       <Depliant
         titre={estBenchmarkActif ? `Synthèse exécutive du Benchmark (${sourcesFichiers.length} fichiers)` : "Synthèse exécutive & Faits marquants"}
         detail={estBenchmarkActif ? `${syntheseComparativeCards.length} constats multi-sources` : `${rapportActif.length} points clés identifiés`}
@@ -665,10 +665,10 @@ export default function AnalysePage() {
       >
         <div className="space-y-5">
           {estBenchmarkActif && (
-            <div className="p-4 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-950 dark:text-indigo-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs text-blue-950 dark:text-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <p className="font-bold text-sm text-indigo-900 dark:text-indigo-100 flex items-center gap-1.5">
-                  <Scale className="w-4 h-4 text-indigo-600" />
+                <p className="font-bold text-sm text-blue-900 dark:text-blue-100 flex items-center gap-1.5">
+                  <Scale className="w-4 h-4 text-blue-600" />
                   Confrontation multi-sources · Référence pivot : {refSource}
                 </p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
@@ -676,7 +676,7 @@ export default function AnalysePage() {
                 </p>
               </div>
               <div className="text-right shrink-0">
-                <span className="inline-block px-3 py-1 rounded-full font-bold text-xs bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
+                <span className="inline-block px-3 py-1 rounded-full font-bold text-xs bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-200">
                   {fmt(corps.length)} lignes au total
                 </span>
               </div>
@@ -686,13 +686,13 @@ export default function AnalysePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {estBenchmarkActif
               ? syntheseComparativeCards.map((c, i) => (
-                  <div key={i} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between shadow-sm">
+                  <div key={i} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between shadow-xs">
                     <div>
                       <div className="flex items-center justify-between gap-2 mb-2">
                         <div className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800">
                           {c.type === "numerique" && <BarChart3 className="w-4 h-4 text-blue-600" />}
-                          {c.type === "categorie" && <PieChart className="w-4 h-4 text-purple-600" />}
-                          {c.type === "qualite" && <Scale className="w-4 h-4 text-indigo-600" />}
+                          {c.type === "categorie" && <PieChart className="w-4 h-4 text-slate-600" />}
+                          {c.type === "qualite" && <Scale className="w-4 h-4 text-emerald-600" />}
                         </div>
                         {c.deltaBadge && (
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${c.estHausse ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"}`}>
@@ -726,16 +726,12 @@ export default function AnalysePage() {
             const s = info.stats;
             const colIdx = entetes.indexOf(nom);
 
-            // ==========================================
-            // A. MODE BENCHMARK MULTI-SOURCES (N >= 2)
-            // ==========================================
             if (estBenchmarkActif && colIdx !== -1) {
               const estNum = info.type === "numerique";
               const lignesRef = corpsParSource.get(refSource) || [];
               const valsRef = lignesRef.map((l) => l[colIdx]).filter((v) => !estValeurVide(v));
               const completudeRef = lignesRef.length ? Math.round((valsRef.length / lignesRef.length) * 100) : 0;
 
-              // Cas Numérique
               if (estNum) {
                 const numsRef = valsRef.map(parseNombre).filter((n): n is number => n !== null);
                 const statsRef = calculerStatsComplet(numsRef);
@@ -744,14 +740,13 @@ export default function AnalysePage() {
                   <div key={nom} className={`${carteStyle} p-4 space-y-3`}>
                     <div className="flex justify-between items-center gap-2 border-b pb-2 border-slate-100 dark:border-slate-800">
                       <span className="font-bold text-sm truncate text-slate-900 dark:text-slate-100">{nom}</span>
-                      <span className="text-[10px] font-bold uppercase tracking-wider bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300 px-2 py-0.5 rounded-md whitespace-nowrap">
+                      <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 px-2 py-0.5 rounded-md whitespace-nowrap">
                         Numérique
                       </span>
                     </div>
 
-                    {/* Fichier de référence complet */}
-                    <div className="p-3 rounded-xl bg-purple-50/50 dark:bg-purple-950/30 border border-purple-200/50 dark:border-purple-800/40 text-xs space-y-1">
-                      <div className="flex justify-between font-bold text-purple-900 dark:text-purple-200 pb-1 border-b border-purple-200/40">
+                    <div className="p-3 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-200/50 dark:border-blue-800/40 text-xs space-y-1">
+                      <div className="flex justify-between font-bold text-blue-900 dark:text-blue-200 pb-1 border-b border-blue-200/40">
                         <span>Référence : {refSource}</span>
                         <span className="font-mono">{fmt(statsRef.moy)} (Moy)</span>
                       </div>
@@ -762,7 +757,6 @@ export default function AnalysePage() {
                       <Ligne l="Complétude" v={`${completudeRef} %`} />
                     </div>
 
-                    {/* Autres sources comparées à la référence */}
                     <div className="space-y-2.5 text-xs">
                       {autresSources.map((src) => {
                         const lignesSrc = corpsParSource.get(src) || [];
@@ -802,7 +796,6 @@ export default function AnalysePage() {
                 );
               }
 
-              // Cas Catégoriel
               const freqRef: Record<string, number> = {};
               valsRef.forEach((v) => (freqRef[String(v).trim()] = (freqRef[String(v).trim()] || 0) + 1));
               const topRef = Object.entries(freqRef).sort((a, b) => b[1] - a[1])[0];
@@ -812,14 +805,13 @@ export default function AnalysePage() {
                 <div key={nom} className={`${carteStyle} p-4 space-y-3`}>
                   <div className="flex justify-between items-center gap-2 border-b pb-2 border-slate-100 dark:border-slate-800">
                     <span className="font-bold text-sm truncate text-slate-900 dark:text-slate-100">{nom}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300 px-2 py-0.5 rounded-md whitespace-nowrap">
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 px-2 py-0.5 rounded-md whitespace-nowrap">
                       {info.type}
                     </span>
                   </div>
 
-                  {/* Référence */}
-                  <div className="p-3 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200/50 dark:border-indigo-800/40 text-xs space-y-1">
-                    <div className="flex justify-between font-bold text-indigo-900 dark:text-indigo-200 pb-1 border-b border-indigo-200/40">
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/40 text-xs space-y-1">
+                    <div className="flex justify-between font-bold text-slate-900 dark:text-slate-200 pb-1 border-b border-slate-200/40">
                       <span>Référence : {refSource}</span>
                       <span>{setRef.size} modalité(s)</span>
                     </div>
@@ -833,7 +825,6 @@ export default function AnalysePage() {
                     <Ligne l="Complétude" v={`${completudeRef} %`} />
                   </div>
 
-                  {/* Comparaisons */}
                   <div className="space-y-2 text-xs">
                     {autresSources.map((src) => {
                       const lignesSrc = corpsParSource.get(src) || [];
@@ -864,7 +855,7 @@ export default function AnalysePage() {
                           )}
                           <div className="flex justify-between text-[11px]">
                             <span className="text-slate-500">Nouvelles modalités</span>
-                            <span className={`font-bold ${nouveaux > 0 ? "text-purple-600" : "text-slate-400"}`}>
+                            <span className={`font-bold ${nouveaux > 0 ? "text-blue-600" : "text-slate-400"}`}>
                               {nouveaux > 0 ? `+${nouveaux} apparue(s)` : "Identiques"}
                             </span>
                           </div>
@@ -877,14 +868,11 @@ export default function AnalysePage() {
               );
             }
 
-            // ==========================================
-            // B. MODE FICHIER UNIQUE (100% EXHAUSTIF)
-            // ==========================================
             return (
               <div key={nom} className={`${carteStyle} p-4 space-y-2.5`}>
                 <div className="flex justify-between items-center gap-2 border-b pb-2 border-slate-100 dark:border-slate-800">
                   <span className="font-bold text-sm truncate text-slate-900 dark:text-slate-100">{nom}</span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300 px-2 py-0.5 rounded-md whitespace-nowrap">
+                  <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 px-2 py-0.5 rounded-md whitespace-nowrap">
                     {info.type}
                   </span>
                 </div>
@@ -971,13 +959,13 @@ export default function AnalysePage() {
               ? correlationsBenchmark.map((c) => (
                   <div
                     key={`${c.colA}|${c.colB}`}
-                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3"
+                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3"
                   >
                     <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                       <span className="font-bold text-slate-900 dark:text-slate-100 text-xs">
-                        {c.colA} <span className="text-purple-500 font-normal">↔</span> {c.colB}
+                        {c.colA} <span className="text-blue-500 font-normal">↔</span> {c.colB}
                       </span>
-                      <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 font-bold border border-purple-200/50">
+                      <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-bold border border-blue-200/50">
                         {refSource} (Réf) : {c.rRef ?? "—"}
                       </span>
                     </div>
@@ -1006,8 +994,8 @@ export default function AnalysePage() {
                           </div>
 
                           <div className="text-[11px] space-y-1">
-                            <div className="flex items-center gap-1.5 font-bold text-indigo-700 dark:text-indigo-300">
-                              <Lightbulb className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <div className="flex items-center gap-1.5 font-bold text-blue-700 dark:text-blue-300">
+                              <Lightbulb className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                               <span>{comp.expl.diagnostic}</span>
                             </div>
                             <p className="text-slate-600 dark:text-slate-400 leading-relaxed pl-5">
@@ -1024,11 +1012,11 @@ export default function AnalysePage() {
                   return (
                     <div
                       key={`${c.colonneA}|${c.colonneB}`}
-                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-2.5"
+                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-2.5"
                     >
                       <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
                         <span className="font-bold text-slate-900 dark:text-slate-100 text-xs">
-                          {c.colonneA} <span className="text-purple-500 font-normal">↔</span> {c.colonneB}
+                          {c.colonneA} <span className="text-blue-500 font-normal">↔</span> {c.colonneB}
                         </span>
                         <span className="font-mono font-bold bg-slate-50 dark:bg-slate-800 px-2.5 py-1 rounded-md text-xs border border-slate-200/60 dark:border-slate-700">
                           r = {c.coefficient}{" "}
@@ -1039,7 +1027,7 @@ export default function AnalysePage() {
                       </div>
 
                       <div className="text-[11px] flex items-start gap-1.5 pt-0.5">
-                        <Lightbulb className="w-3.5 h-3.5 text-purple-600 shrink-0 mt-0.5" />
+                        <Lightbulb className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
                         <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
                           {explTexte}
                         </p>
@@ -1068,14 +1056,14 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
   const titre = parties.length > 1 ? parties[0].trim() : "Point clé";
   const contenu = parties.length > 1 ? parties[1].trim() : bloc.texte;
 
-  let icone = <TrendingUp className="w-4 h-4 text-purple-600" />;
+  let icone = <TrendingUp className="w-4 h-4 text-blue-600" />;
   let badgeTexte = "Indicateur";
-  let badgeCouleur = "bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300";
+  let badgeCouleur = "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300";
 
   if (bloc.type === "categorie") {
-    icone = <PieChart className="w-4 h-4 text-indigo-600" />;
+    icone = <PieChart className="w-4 h-4 text-slate-600" />;
     badgeTexte = "Majorité / Catégorie";
-    badgeCouleur = "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300";
+    badgeCouleur = "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
   } else if (bloc.type === "numerique") {
     icone = <BarChart3 className="w-4 h-4 text-blue-600" />;
     badgeTexte = "Distribution chiffrée";
@@ -1089,7 +1077,7 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
   const partiesTexte = contenu.split(/(\d+(?:[.,]\d+)?\s*%)/g);
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between shadow-sm hover:shadow transition-shadow">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between shadow-xs hover:shadow transition-shadow">
       <div>
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800">{icone}</div>
@@ -1105,7 +1093,7 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
             /(\d+(?:[.,]\d+)?\s*%)/.test(morceau) ? (
               <span
                 key={i}
-                className="inline-block px-1.5 py-0.2 mx-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 font-bold text-[11px]"
+                className="inline-block px-1.5 py-0.2 mx-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 font-bold text-[11px]"
               >
                 {morceau}
               </span>
@@ -1132,7 +1120,7 @@ function Depliant({
 }) {
   return (
     <details className={`group ${carteStyle}`} open={parDefautOuvert}>
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-6 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-6 py-4 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 [&::-webkit-details-marker]:hidden">
         <span className="flex items-baseline gap-3">
           <span className="text-base md:text-lg font-bold text-slate-900 dark:text-white">{titre}</span>
           <span className="text-xs text-slate-400 font-medium">{detail}</span>
@@ -1151,7 +1139,7 @@ function Ligne({ l, v, fort }: { l: string; v: string; fort?: boolean }) {
   return (
     <div
       className={`flex justify-between gap-3 ${
-        fort ? "font-bold text-purple-600 dark:text-purple-400" : "text-slate-600 dark:text-slate-400"
+        fort ? "font-bold text-blue-600 dark:text-blue-400" : "text-slate-600 dark:text-slate-400"
       }`}
     >
       <span className="truncate">{l}</span>

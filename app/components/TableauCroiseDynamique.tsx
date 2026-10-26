@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Table, Sparkles, Scale, ArrowUpRight, ArrowDownRight, Minus, Trophy } from "lucide-react";
+import { Table, Sparkles, ArrowUpRight, ArrowDownRight, Trophy } from "lucide-react";
 import { arrondir, estValeurVide, parseNombre, type Cellule } from "../../lib/analyse/utils";
 
 interface Props {

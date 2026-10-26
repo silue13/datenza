@@ -8,10 +8,6 @@ import {
   Plus,
   Trash2,
   Scale,
-  TrendingUp,
-  Trophy,
-  ArrowUpRight,
-  ArrowDownRight,
 } from "lucide-react";
 import CarteGeographique from "./CarteGeographique";
 import "./chartSetup";
@@ -719,7 +715,7 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
       const classementVictoires = Object.entries(victoiresParSource).sort((a, b) => b[1] - a[1]);
 
       return {
-        estComparatif: true,
+        estComparatif: true as const,
         nombreSeries: datasets.length,
         syntheseDatasets,
         classement,
@@ -748,7 +744,7 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
     const ratio = min.valeur > 0 ? Math.round((max.valeur / min.valeur) * 10) / 10 : null;
 
     return {
-      estComparatif: false,
+      estComparatif: false as const,
       max,
       min,
       ecartAbsolu,

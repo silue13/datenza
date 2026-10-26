@@ -2,64 +2,60 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Home, BarChart2, Sparkles, Layers, Settings } from "lucide-react";
+import LogoDatenza from "./LogoDatenza";
 
-const navigation: { name: string; href: string; bientot?: boolean }[] = [
-  { name: "Accueil", href: "/" },
-  { name: "Analyse", href: "/analyse" },
-  { name: "Assistant IA", href: "/assistant-ia" },
-  { name: "Fusion & Nettoyage", href: "/fusion" }, // <-- Nouveau lien ajouté ici
-  { name: "Paramètres", href: "/parametres" },
+const navigation = [
+  { name: "Accueil", href: "/", icon: Home },
+  { name: "Analyse", href: "/analyse", icon: BarChart2 },
+  { name: "Assistant IA", href: "/assistant-ia", icon: Sparkles },
+  { name: "Fusion & Réconciliation", href: "/fusion", icon: Layers },
+  { name: "Paramètres", href: "/parametres", icon: Settings },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="print:hidden w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col justify-between p-4 shrink-0 min-h-screen">
+    <aside className="print:hidden w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex flex-col p-4 shrink-0 min-h-screen">
       <div className="space-y-6">
-        <div className="flex items-center gap-3 px-3 py-2">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white font-black text-xl shadow-md">
-            D
+        {/* En-tête avec LogoDatenza */}
+        <div className="flex items-center gap-3 px-2 py-2">
+          <div className="w-10 h-10 rounded-xl bg-slate-800/90 border border-slate-700/60 flex items-center justify-center shadow-xs">
+            <LogoDatenza taille={26} />
           </div>
-          <span className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-            DATENZA
-          </span>
+          <div>
+            <span className="text-xl font-black tracking-tight text-white block leading-none">
+              DATENZA
+            </span>
+            <span className="text-[10px] uppercase font-bold text-blue-400 tracking-wider">
+              Data Intelligence
+            </span>
+          </div>
         </div>
 
-        <nav className="space-y-1">
+        {/* Navigation */}
+        <nav className="space-y-1.5">
           {navigation.map((item) => {
             const isActive = pathname === item.href;
-            if (item.bientot) {
-              return (
-                <span
-                  key={item.name}
-                  className="flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 dark:text-slate-600 cursor-not-allowed"
-                >
-                  {item.name}
-                  <span className="text-[9px] uppercase tracking-wide">bientôt</span>
-                </span>
-              );
-            }
+            const Icon = item.icon;
+
             return (
               <Link
                 key={item.name}
                 href={item.href}
                 className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
                   isActive
-                    ? "bg-purple-100/70 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300 font-semibold"
-                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-slate-200"
+                    ? "bg-white text-slate-950 font-bold shadow-xs"
+                    : "text-slate-400 hover:bg-slate-800 hover:text-white"
                 }`}
               >
+                <Icon className={`w-4 h-4 ${isActive ? "text-slate-900" : "text-slate-400"}`} />
                 <span>{item.name}</span>
               </Link>
             );
           })}
         </nav>
-      </div>
-
-      <div className="px-3.5 py-3 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-100 dark:border-purple-900/40">
-        <p className="text-xs font-semibold text-purple-900 dark:text-purple-300">DATENZA v2.0</p>
-        <p className="text-[11px] text-purple-600/80 dark:text-purple-400 mt-0.5">Côte d&apos;Ivoire & Open Data</p>
       </div>
     </aside>
   );

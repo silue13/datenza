@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { analyserNettoyage, appliquerCorrections } from './nettoyage';
 
 describe('nettoyage', () => {

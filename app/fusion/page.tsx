@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
+import type { BlocRapport } from "../../lib/analyse/rapport";
 import {
   Files,
   Upload,
@@ -12,13 +13,9 @@ import {
   BarChart2,
   Download,
   ArrowRight,
-  ShieldCheck,
   Settings2,
   Layers,
   GitMerge,
-  Filter,
-  CheckCircle2,
-  ArrowLeftRight,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import {
@@ -189,7 +186,7 @@ export default function FusionNettoyagePage() {
     if (!resultat) return;
 
     const analyseStat = analyserColonnes(resultat.entetes, resultat.corps, resultat.entetes);
-    const rapportDynamique: { type: string; texte: string }[] = [];
+    const rapportDynamique: BlocRapport[] = [];
 
     if (resultat.rapport.mode === "jointure") {
       const typeLabel =

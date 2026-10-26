@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import "leaflet/dist/leaflet.css";
-import { Sparkles, Scale, MapPin, Trophy } from "lucide-react";
+import { Sparkles, MapPin } from "lucide-react";
 import { trouverLieuCI, cleGeo } from "../../lib/geoci/data";
-import { parseNombre, type Cellule, estValeurVide, arrondir } from "../../lib/analyse/utils";
+import { parseNombre, type Cellule, estValeurVide } from "../../lib/analyse/utils";
 
 const MapContainer = dynamic(() => import("react-leaflet").then((m) => m.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import("react-leaflet").then((m) => m.TileLayer), { ssr: false });

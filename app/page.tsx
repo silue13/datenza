@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type DragEvent, type ChangeEvent } from "react";
+import { useState, type ChangeEvent } from "react";
 import * as XLSX from "xlsx";
 import { useData } from "./context/DataContext";
 import { analyserColonnes } from "../lib/analyse/analyse";
@@ -88,7 +88,6 @@ export default function HomePage() {
       const wb = XLSX.read(texte, {
         type: "string",
         raw: false,
-        defval: "",
         FS: separateur,
       });
       const feuille = wb.Sheets[wb.SheetNames[0]];

@@ -81,8 +81,8 @@ function estColonneExclueDeDate(nomCol: string): boolean {
 function normaliserFormatDate(v: Cellule): string | null {
   if (estValeurVide(v)) return null;
 
-  if (v instanceof Date && !isNaN(v.getTime())) {
-    return v.toISOString().slice(0, 10);
+  if ((v as unknown) instanceof Date && !isNaN((v as unknown as Date).getTime())) {
+    return (v as unknown as Date).toISOString().slice(0, 10);
   }
 
   if (typeof v === "number") return null;
@@ -406,7 +406,7 @@ export function fusionnerEtNettoyer(
     rapport: {
       mode: "empilement",
       nbFichiers: fichiers.length,
-      lignesInitialesTotal,
+      lignesInitialesTotal: totalLignesInitiales,
       lignesFinales: corpsNettoyeBrut.length,
       doublonsSupprimes,
       nombresHarmonises: compteurs.nb,

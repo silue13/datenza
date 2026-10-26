@@ -5,8 +5,6 @@ import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  Bot,
-  User,
   Send,
   Sparkles,
   Trash2,
@@ -14,14 +12,12 @@ import {
   ArrowRight,
   Cpu,
   Scale,
-  Trophy,
-  Layers,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import { analyserColonnes } from "../../lib/analyse/analyse";
 import { construireContexte } from "../../lib/analyse/context";
 import { calculerTdcAvecLimite, type Agregation } from "../../lib/analyse/tdc";
-import { parseNombre, estValeurVide, arrondir, type Cellule } from "../../lib/analyse/utils";
+import { parseNombre, arrondir, type Cellule } from "../../lib/analyse/utils";
 import TableTdc from "../components/TableTdc";
 import { enregistrerFournisseur, lireFournisseur } from "../../lib/prefs";
 

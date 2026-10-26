@@ -51,7 +51,7 @@ export default function BanniereNettoyage() {
             Nettoyage recommandé
           </h4>
           <p className="text-amber-800 text-xs mt-0.5">
-            {toutesLesCorrections.length} variante(s) de texte ou casse à harmoniser détectée(s)[cite: 6, 7].
+            {toutesLesCorrections.length} variante(s) de texte ou casse à harmoniser détectée(s).
           </p>
         </div>
       </div>

@@ -23,8 +23,9 @@ export interface GraphiqueEpingle {
     label: string;
     data: number[];
     backgroundColor: string | string[];
-    borderColor: string;
-    borderWidth: number;
+    borderColor?: string;
+    borderWidth?: number;
+    borderRadius?: number;
   }[];
 }
 
@@ -53,6 +54,7 @@ interface DataContextType {
   supprimerFiltre: (index: number) => void;
   reinitialiserFiltres: () => void;
   creerColonneCalculee: (def: DefinitionColonneCalculee) => void;
+  nettoyerDonnees: (corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) => void;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -177,6 +179,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
     regenererDonnees(sources.entetes, sources.corps, maj, filtresActifs);
   }
 
+  // Applique des corrections de variantes (casse, doublons de texte) sur les données sources, puis régénère l'affichage
+  function nettoyerDonnees(corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) {
+    if (!corrections.length) return;
+    const objs = sources.corps.map((ligne) => {
+      const obj: Record<string, any> = {};
+      sources.entetes.forEach((h, idx) => {
+        obj[h] = ligne[idx];
+      });
+      return obj;
+    });
+    const propres = appliquerCorrections(objs, corrections);
+    const corpsPropre: Cellule[][] = propres.map((obj) => sources.entetes.map((h) => obj[h]));
+    setSources({ entetes: sources.entetes, corps: corpsPropre });
+    regenererDonnees(sources.entetes, corpsPropre, definitionsCalculs, filtresActifs);
+  }
+
   function epinglerGraphique(graphique: GraphiqueEpingle) {
     setGraphiquesEpingles((prev) => (prev.some((g) => g.id === graphique.id) ? prev : [graphique, ...prev]));
   }
@@ -206,6 +224,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         supprimerFiltre,
         reinitialiserFiltres,
         creerColonneCalculee,
+        nettoyerDonnees,
       }}
     >
       {children}

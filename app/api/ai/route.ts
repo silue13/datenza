@@ -72,7 +72,7 @@ export async function POST(req: Request) {
   if (!candidats.length) return erreur("Aucun service IA n’est configuré sur le serveur.", 503);
 
   const langue = determinerLangueConversation(question, body?.langueConversation, body?.langueApp);
-  const messages = construireMessagesIA(question, contexte, langue, body?.historique, mode);
+  const messages = construireMessagesIA(question, contexte, langue, body?.historique);
 
   const erreurs: string[] = [];
   for (const nom of candidats) {

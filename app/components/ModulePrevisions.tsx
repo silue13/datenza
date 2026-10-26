@@ -5,16 +5,12 @@ import { Line } from "react-chartjs-2";
 import "./chartSetup";
 import {
   TrendingUp,
-  TrendingDown,
-  Minus,
   Info,
   Calendar,
   ShieldCheck,
-  ChevronDown,
   Sparkles,
   AlertTriangle,
   Lightbulb,
-  CheckCircle2,
   Target,
   ShieldAlert,
   Flame,
