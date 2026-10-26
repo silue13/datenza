@@ -417,8 +417,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       ),
     ];
 
-    slideTable.addTable(lignesTableau, {
-      x: 0.8,
+    slideTable.addTable(lignesTableau.map((ligne) => ligne.map((cellule) => ({ text: cellule }))), {      x: 0.8,
       y: 1.5,
       w: 11.65,
       h: 4.8,
