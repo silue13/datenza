@@ -8,11 +8,12 @@ import {
   Plus,
   Trash2,
   Scale,
+  Presentation,
 } from "lucide-react";
 import CarteGeographique from "./CarteGeographique";
 import "./chartSetup";
 import { arrondir, estValeurVide, parseNombre, type Cellule } from "../../lib/analyse/utils";
-import type { GraphiqueEpingle, TypeGraphique } from "../context/DataContext";
+import { useData, type GraphiqueEpingle, type TypeGraphique } from "../context/DataContext";
 
 type Agregation =
   | "Nombre"
@@ -62,6 +63,9 @@ const selectClasse =
   "w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-purple-500";
 
 export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: GraphiqueGenerateurProps) {
+  const { graphiquesEpingles, epinglerGraphique } = useData();
+  const actionEpingler = onEpingler || epinglerGraphique;
+
   // Détection du mode comparaison multi-sources
   const estModeComparaison = entetes.includes("Fichier Source");
   const idxSource = entetes.indexOf("Fichier Source");
@@ -83,6 +87,11 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
   const [graphiquesGeneres, setGraphiquesGeneres] = useState<GraphiqueEpingle[]>([]);
   const [messageErreur, setMessageErreur] = useState<string>("");
   const compteur = useRef(0);
+
+  // Vérifier si un graphique est déjà ajouté au PowerPoint
+  const estInclusPptx = (id: number | string) => {
+    return (graphiquesEpingles || []).some((g) => g.id === id);
+  };
 
   // 1. RECOMMANDATIONS AUTOMATIQUES (Standard ou Benchmark N)
   const graphiquesRecommandes = useMemo<GraphiqueEpingle[]>(() => {
@@ -440,7 +449,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         </div>
       )}
 
-      {/* 1. SECTION RECOMMANDATIONS */}
+      {/* 1. SECTION RECOMMANDATIONS AUTOMATIQUES */}
       {graphiquesRecommandes.length > 0 && (
         <section className="space-y-4">
           <div className="no-print">
@@ -453,27 +462,44 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {graphiquesRecommandes.map((g, index) => (
-              <div
-                key={g.id}
-                className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm"
-              >
-                <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                    {g.titre}
-                  </h4>
-                  <span className="text-[10px] bg-indigo-50 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded-full font-bold whitespace-nowrap">
-                    {estModeComparaison ? `Benchmark #${index + 1}` : `Recommandation #${index + 1}`}
-                  </span>
-                </div>
+            {graphiquesRecommandes.map((g, index) => {
+              const estEpingle = estInclusPptx(g.id);
+              return (
+                <div
+                  key={g.id}
+                  className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm"
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
+                    <div className="flex items-center gap-2 truncate">
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                        {g.titre}
+                      </h4>
+                      <span className="text-[10px] bg-indigo-50 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded-full font-bold whitespace-nowrap">
+                        {estModeComparaison ? `Benchmark #${index + 1}` : `Recommandation #${index + 1}`}
+                      </span>
+                    </div>
 
-                <div className="h-64 w-full relative">
-                  {g.type === "Courbe" ? <Line data={g} options={options} /> : <Bar data={g} options={options} />}
-                </div>
+                    <button
+                      onClick={() => actionEpingler && actionEpingler(g)}
+                      className={`no-print inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
+                        estEpingle
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
+                      }`}
+                    >
+                      <Presentation className="w-3.5 h-3.5" />
+                      {estEpingle ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
+                    </button>
+                  </div>
 
-                <ExplicationDetailleeGraphique graphique={g} />
-              </div>
-            ))}
+                  <div className="h-64 w-full relative">
+                    {g.type === "Courbe" ? <Line data={g} options={options} /> : <Bar data={g} options={options} />}
+                  </div>
+
+                  <ExplicationDetailleeGraphique graphique={g} />
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -598,44 +624,51 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
           </h4>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {graphiquesGeneres.map((g) => (
-              <div
-                key={g.id}
-                className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm"
-              >
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                    {g.titre}
-                  </h4>
-                  <div className="no-print flex items-center gap-2">
-                    {onEpingler && (
+            {graphiquesGeneres.map((g) => {
+              const estEpingle = estInclusPptx(g.id);
+              return (
+                <div
+                  key={g.id}
+                  className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                      {g.titre}
+                    </h4>
+                    <div className="no-print flex items-center gap-2 shrink-0">
                       <button
-                        onClick={() => onEpingler(g)}
-                        className="text-xs font-semibold text-purple-700 hover:text-purple-900 border border-purple-200 px-2.5 py-1 rounded-lg cursor-pointer"
+                        onClick={() => actionEpingler && actionEpingler(g)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          estEpingle
+                            ? "bg-blue-600 text-white shadow-xs"
+                            : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
+                        }`}
                       >
-                        ★ Épingler
+                        <Presentation className="w-3.5 h-3.5" />
+                        {estEpingle ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
                       </button>
-                    )}
-                    <button
-                      onClick={() => setGraphiquesGeneres((prev) => prev.filter((x) => x.id !== g.id))}
-                      className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                      <button
+                        onClick={() => setGraphiquesGeneres((prev) => prev.filter((x) => x.id !== g.id))}
+                        className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                        title="Supprimer ce graphique"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div className={g.type === "Carte" ? "w-full min-h-[340px]" : "h-64 w-full relative"}>
-                  {g.type === "Carte" && <CarteGeographique entetes={entetes} corps={corps} />}
-                  {g.type === "Barres" && <Bar data={g} options={options} />}
-                  {g.type === "Courbe" && <Line data={g} options={options} />}
-                  {g.type === "Camembert" && <Pie data={g} options={options} />}
-                  {g.type === "Anneau" && <Doughnut data={g} options={{ ...options, cutout: "68%" }} />}
-                </div>
+                  <div className={g.type === "Carte" ? "w-full min-h-[340px]" : "h-64 w-full relative"}>
+                    {g.type === "Carte" && <CarteGeographique entetes={entetes} corps={corps} />}
+                    {g.type === "Barres" && <Bar data={g} options={options} />}
+                    {g.type === "Courbe" && <Line data={g} options={options} />}
+                    {g.type === "Camembert" && <Pie data={g} options={options} />}
+                    {g.type === "Anneau" && <Doughnut data={g} options={{ ...options, cutout: "68%" }} />}
+                  </div>
 
-                <ExplicationDetailleeGraphique graphique={g} />
-              </div>
-            ))}
+                  <ExplicationDetailleeGraphique graphique={g} />
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -654,7 +687,6 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
 
     // SCÉNARIO 1 : ANALYSE COMPARATIVE MULTI-SOURCES (N >= 2)
     if (estComparatifMultiSeries) {
-      // 1. Calcul des totaux et moyennes pour chaque dataset
       const syntheseDatasets = datasets.map((d) => {
         const nums = (d.data || []).map((v) => Number(v) || 0);
         const total = nums.reduce((acc, v) => acc + v, 0);
@@ -667,14 +699,12 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
         };
       });
 
-      // Classement par volume total
       const classement = [...syntheseDatasets].sort((a, b) => b.total - a.total);
       const leader = classement[0];
       const dauphin = classement[1];
       const ecartLeaderDauphin = Math.round((leader.total - dauphin.total) * 100) / 100;
       const pctAvance = dauphin.total > 0 ? Math.round((ecartLeaderDauphin / dauphin.total) * 1000) / 10 : 0;
 
-      // 2. Décompte des victoires par catégorie (qui mène sur quoi ?)
       const victoiresParSource: Record<string, number> = {};
       syntheseDatasets.forEach((d) => (victoiresParSource[d.nom] = 0));
 
@@ -769,7 +799,6 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
 
       {analyse.estComparatif ? (
         <div className="space-y-1.5">
-          {/* Bilan des volumes et leader */}
           <div className="flex items-start gap-1.5">
             <span className="font-bold text-indigo-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
@@ -782,7 +811,6 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
             </p>
           </div>
 
-          {/* Décompte des victoires par catégorie */}
           <div className="flex items-start gap-1.5">
             <span className="font-bold text-indigo-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
@@ -796,7 +824,6 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
             </p>
           </div>
 
-          {/* Plus forte divergence */}
           <div className="flex items-start gap-1.5">
             <span className="font-bold text-indigo-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">

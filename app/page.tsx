@@ -99,7 +99,7 @@ export default function HomePage() {
       });
     } else {
       const buffer = await f.arrayBuffer();
-      const wb = XLSX.read(buffer, { type: "array" });
+      const wb = XLSX.read(new Uint8Array(buffer), { type: "array" });
       const feuille = wb.Sheets[wb.SheetNames[0]];
       if (!feuille) throw new Error(`Le classeur Excel ${f.name} ne contient aucune feuille.`);
       lignes = XLSX.utils.sheet_to_json<Cellule[]>(feuille, {

@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Table, Sparkles, ArrowUpRight, ArrowDownRight, Trophy } from "lucide-react";
+import { Table, Sparkles, ArrowUpRight, ArrowDownRight, Trophy, Presentation } from "lucide-react";
 import { arrondir, estValeurVide, parseNombre, type Cellule } from "../../lib/analyse/utils";
+import type { ElementPptxExport } from "../../lib/analyse/exportPptx";
 
 interface Props {
   entetes: string[];
   corps: Cellule[][];
+  onAjouterPptx?: (element: ElementPptxExport) => void;
 }
 
 type AgregationTCD = "Somme" | "Moyenne" | "Nombre" | "Minimum" | "Maximum";
@@ -19,7 +21,7 @@ function versNombre(v: Cellule): number | null {
 const selectClasse =
   "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-purple-500 text-slate-800 dark:text-slate-200";
 
-export default function TableauCroiseDynamique({ entetes, corps }: Props) {
+export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }: Props) {
   const estModeComparaison = entetes.includes("Fichier Source");
   const colonnesSansSource = useMemo(() => entetes.filter((h) => h !== "Fichier Source"), [entetes]);
 
@@ -35,7 +37,7 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
     return colonnesSansSource.filter((h) => !colonnesNumeriques.includes(h));
   }, [colonnesSansSource, colonnesNumeriques]);
 
-  // Configurations par défaut : en mode comparaison, "Fichier Source" est placé en colonne
+  // Configurations par défaut
   const [colonneLigne, setColonneLigne] = useState<string>(
     colonnesCategorielles[0] || colonnesSansSource[0] || ""
   );
@@ -46,7 +48,7 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
   const [agregation, setAgregation] = useState<AgregationTCD>("Somme");
   const [afficherEcarts, setAfficherEcarts] = useState<boolean>(true);
 
-  // Sélecteurs de référence et de cible pour le calcul des écarts
+  // Sélecteurs de référence pour écarts
   const [sourceRefChoisie, setSourceRefChoisie] = useState<string>("");
   const [sourceCibleChoisie, setSourceCibleChoisie] = useState<string>("");
 
@@ -54,7 +56,11 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
   const idxColonne = entetes.indexOf(colonneColonne);
   const idxMesure = entetes.indexOf(colonneMesure);
 
-  // Calcul de la matrice croisée
+  const [estDejaInclus, setEstDejaInclus] = useState(false);
+
+  // ==========================================
+  // CALCUL DE LA MATRICE CROISÉE
+  // ==========================================
   const { modalitesLignes, modalitesColonnes, grille, totauxLignes, totauxColonnes, totalGeneral } =
     useMemo(() => {
       if (idxLigne === -1) {
@@ -133,6 +139,8 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
         totGen += s;
       }
 
+      setEstDejaInclus(false); // Reset the pin button when data changes
+
       return {
         modalitesLignes: listeLig,
         modalitesColonnes: listeCol,
@@ -152,26 +160,46 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
     return cell.somme;
   };
 
-  // Détection du mode comparatif : au moins 2 colonnes affichées
-  const estComparatifActif =
-    modalitesColonnes.length >= 2 && (colonneColonne === "Fichier Source" || estModeComparaison);
+  const estComparatifActif = modalitesColonnes.length >= 2 && (colonneColonne === "Fichier Source" || estModeComparaison);
+  const colRef = useMemo(() => modalitesColonnes.includes(sourceRefChoisie) ? sourceRefChoisie : modalitesColonnes[0] || "", [modalitesColonnes, sourceRefChoisie]);
+  const colCible = useMemo(() => modalitesColonnes.includes(sourceCibleChoisie) && sourceCibleChoisie !== colRef ? sourceCibleChoisie : modalitesColonnes.filter((c) => c !== colRef)[0] || "", [modalitesColonnes, sourceCibleChoisie, colRef]);
 
-  // Colonne pivot (référence)
-  const colRef = useMemo(() => {
-    if (modalitesColonnes.includes(sourceRefChoisie)) return sourceRefChoisie;
-    return modalitesColonnes[0] || "";
-  }, [modalitesColonnes, sourceRefChoisie]);
+  // Fonction de transmission au PowerPoint
+ const preparerExportPptx = () => {
+    if (!onAjouterPptx) return;
 
-  // Colonne cible (comparée)
-  const colCible = useMemo(() => {
-    if (modalitesColonnes.includes(sourceCibleChoisie) && sourceCibleChoisie !== colRef) {
-      return sourceCibleChoisie;
-    }
-    const autres = modalitesColonnes.filter((c) => c !== colRef);
-    return autres[0] || modalitesColonnes[1] || "";
-  }, [modalitesColonnes, sourceCibleChoisie, colRef]);
+    const entetesTdc = [`${colonneLigne} \\ ${colonneColonne || "Valeur"}`, ...modalitesColonnes, "Total Général"];
+    
+    // Typage explicite (string | number)[] pour accepter à la fois les libellés et les chiffres
+    const lignesTdc: (string | number)[][] = modalitesLignes.map((lig) => {
+      const cellules: (string | number)[] = [lig];
+      modalitesColonnes.forEach((col) => {
+        cellules.push(Math.round(calculerValeur(grille.get(lig)?.get(col))));
+      });
+      cellules.push(Math.round(totauxLignes.get(lig) || 0));
+      return cellules;
+    });
 
-  // Synthèse analytique du benchmark multi-sources
+    lignesTdc.push([
+      "Total Général",
+      ...modalitesColonnes.map((col) => Math.round(totauxColonnes.get(col) || 0)),
+      Math.round(totalGeneral),
+    ]);
+
+    onAjouterPptx({
+      id: `tdc-manuel-${colonneLigne}-${colonneColonne}-${agregation}`,
+      typeVisuel: "tdc",
+      titre: "Tableau Croisé Dynamique (Sélection Manuelle)",
+      sousTitre: `Matrice croisée : ${colonneLigne} × ${colonneColonne} (${agregation} de ${colonneMesure})`,
+      donneesTableau: {
+        entetes: entetesTdc,
+        lignes: lignesTdc,
+      },
+    });
+
+    setEstDejaInclus(true);
+  };
+
   const syntheseComparatif = useMemo(() => {
     if (!estComparatifActif || !colRef || !colCible) return null;
 
@@ -183,7 +211,6 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
     let maxProgression = { nom: "", ecart: -Infinity, pct: 0 };
     let maxRecul = { nom: "", ecart: Infinity, pct: 0 };
 
-    // Décompte des victoires par colonne sur l'ensemble des lignes
     const victoiresParColonne: Record<string, number> = {};
     modalitesColonnes.forEach((c) => (victoiresParColonne[c] = 0));
 
@@ -199,11 +226,8 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
         }
       });
 
-      if (victoiresParColonne[leaderLigne] !== undefined) {
-        victoiresParColonne[leaderLigne]++;
-      }
+      if (victoiresParColonne[leaderLigne] !== undefined) victoiresParColonne[leaderLigne]++;
 
-      // Écart spécifique Cible vs Référence pour cette modalité de ligne
       const v1 = calculerValeur(grille.get(lig)?.get(colRef));
       const v2 = calculerValeur(grille.get(lig)?.get(colCible));
       const diff = Math.round((v2 - v1) * 100) / 100;
@@ -250,55 +274,72 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
           </div>
         </div>
 
-        {/* Sélecteurs de dimensions et de calculs */}
-        <div className="no-print flex flex-wrap items-center gap-2">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Lignes</span>
-            <select value={colonneLigne} onChange={(e) => setColonneLigne(e.target.value)} className={selectClasse}>
-              {colonnesSansSource.map((h) => (
-                <option key={h} value={h}>{h}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Colonnes</span>
-            <select value={colonneColonne} onChange={(e) => setColonneColonne(e.target.value)} className={selectClasse}>
-              <option value="">(Aucune)</option>
-              {entetes.map((h) => (
-                <option key={h} value={h}>{h}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Mesure</span>
-            <select
-              value={colonneMesure}
-              onChange={(e) => setColonneMesure(e.target.value)}
-              disabled={agregation === "Nombre"}
-              className={`${selectClasse} disabled:opacity-40`}
+        {/* Bouton d'export vers le PPTX */}
+        {onAjouterPptx && (
+          <div className="print:hidden">
+            <button
+              onClick={preparerExportPptx}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                estDejaInclus
+                  ? "bg-blue-600 text-white"
+                  : "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800 dark:border"
+              }`}
             >
-              {colonnesNumeriques.map((h) => (
-                <option key={h} value={h}>{h}</option>
-              ))}
-            </select>
+              <Presentation className="w-3.5 h-3.5" />
+              {estDejaInclus ? "✓ Ajouté au PPTX" : "+ Ajouter au PPTX"}
+            </button>
           </div>
+        )}
+      </div>
 
-          <div>
-            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Calcul</span>
-            <select
-              value={agregation}
-              onChange={(e) => setAgregation(e.target.value as AgregationTCD)}
-              className={selectClasse}
-            >
-              <option value="Somme">Somme</option>
-              <option value="Moyenne">Moyenne</option>
-              <option value="Nombre">Nombre (effectif)</option>
-              <option value="Minimum">Minimum</option>
-              <option value="Maximum">Maximum</option>
-            </select>
-          </div>
+      {/* Sélecteurs de dimensions et de calculs */}
+      <div className="no-print flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div>
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Lignes</span>
+          <select value={colonneLigne} onChange={(e) => setColonneLigne(e.target.value)} className={selectClasse}>
+            {colonnesSansSource.map((h) => (
+              <option key={h} value={h}>{h}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Colonnes</span>
+          <select value={colonneColonne} onChange={(e) => setColonneColonne(e.target.value)} className={selectClasse}>
+            <option value="">(Aucune)</option>
+            {entetes.map((h) => (
+              <option key={h} value={h}>{h}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Mesure</span>
+          <select
+            value={colonneMesure}
+            onChange={(e) => setColonneMesure(e.target.value)}
+            disabled={agregation === "Nombre"}
+            className={`${selectClasse} disabled:opacity-40`}
+          >
+            {colonnesNumeriques.map((h) => (
+              <option key={h} value={h}>{h}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Calcul</span>
+          <select
+            value={agregation}
+            onChange={(e) => setAgregation(e.target.value as AgregationTCD)}
+            className={selectClasse}
+          >
+            <option value="Somme">Somme</option>
+            <option value="Moyenne">Moyenne</option>
+            <option value="Nombre">Nombre (effectif)</option>
+            <option value="Minimum">Minimum</option>
+            <option value="Maximum">Maximum</option>
+          </select>
         </div>
       </div>
 
@@ -372,7 +413,6 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
                 );
               })}
 
-              {/* Colonnes d'écart calculées */}
               {estComparatifActif && afficherEcarts && (
                 <>
                   <th className="p-3.5 font-bold text-right text-purple-700 dark:text-purple-300 bg-purple-50/50 dark:bg-purple-950/30 whitespace-nowrap">
@@ -411,7 +451,6 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
                     );
                   })}
 
-                  {/* Affichage des écarts calculés */}
                   {estComparatifActif && afficherEcarts && (
                     <>
                       <td
@@ -447,7 +486,6 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
             })}
           </tbody>
 
-          {/* Ligne des Totaux Généraux */}
           <tfoot>
             <tr className="bg-slate-100/80 dark:bg-slate-800/80 font-bold border-t-2 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white">
               <td className="p-3.5 uppercase tracking-wider text-[11px]">Total général</td>
@@ -457,7 +495,6 @@ export default function TableauCroiseDynamique({ entetes, corps }: Props) {
                 </td>
               ))}
 
-              {/* Total général des écarts */}
               {estComparatifActif && afficherEcarts && syntheseComparatif && (
                 <>
                   <td

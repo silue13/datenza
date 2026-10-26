@@ -2,11 +2,18 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import ModulePrevisions from "../components/ModulePrevisions";
-import { Presentation } from "lucide-react";
+import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
+import CarteGeographique from "../components/CarteGeographique";
+import TableauCroiseDynamique from "../components/TableauCroiseDynamique";
+import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
-import { exporterExcelExecutive } from "../../lib/analyse/exportExcel"; // IMPORT AJOUTÉ ICI
+import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
+import { useData } from "../context/DataContext";
+import { parseNombre, estValeurVide, arrondir, type Cellule } from "../../lib/analyse/utils";
+import { analyserColonnes } from "../../lib/analyse/analyse";
+import Link from "next/link";
 import {
-  ChevronDown,
+  Presentation,
   Printer,
   FileSpreadsheet,
   CheckCircle2,
@@ -18,15 +25,8 @@ import {
   PieChart,
   Scale,
   Lightbulb,
+  ChevronDown,
 } from "lucide-react";
-import Link from "next/link";
-import { useData } from "../context/DataContext";
-import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
-import CarteGeographique from "../components/CarteGeographique";
-import TableauCroiseDynamique from "../components/TableauCroiseDynamique";
-import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
-import { parseNombre, estValeurVide, arrondir, type Cellule } from "../../lib/analyse/utils";
-import { analyserColonnes } from "../../lib/analyse/analyse";
 
 interface Cat {
   total: number;
@@ -202,6 +202,9 @@ export default function AnalysePage() {
     epinglerGraphique,
   } = useData();
 
+  const [exportExcelEnCours, setExportExcelEnCours] = useState(false);
+  const [exportPptxEnCours, setExportPptxEnCours] = useState(false);
+
   const resultatActif = useMemo(() => {
     if (resultat && resultat.statistiques) return resultat;
     if (entetes.length > 0 && corps.length > 0) {
@@ -233,8 +236,6 @@ export default function AnalysePage() {
   const estBenchmarkActif = estModeComparaison && sourcesFichiers.length >= 2;
 
   const [sourceRefChoisie, setSourceRefChoisie] = useState<string>("");
-  const [exportEnCours, setExportEnCours] = useState(false);
-  
   const refSource = sourcesFichiers.includes(sourceRefChoisie)
     ? sourceRefChoisie
     : sourcesFichiers[0] || "";
@@ -438,15 +439,12 @@ export default function AnalysePage() {
     window.print();
   };
 
-  // =========================================================================
-  // APPEL DU NOUVEAU MODULE D'EXPORT EXCEL EXECUTIVE
-  // =========================================================================
+  // 1. Export Excel Multi-onglets (Données + Profiling + Corrélations + Synthèse)
   const telechargerExcelPropre = async () => {
-    if (!entetes.length || !corps.length || exportEnCours) return;
-    setExportEnCours(true);
+    if (!entetes.length || !corps.length || exportExcelEnCours) return;
+    setExportExcelEnCours(true);
     await new Promise((r) => setTimeout(r, 50));
     try {
-      // Transmission des données brutes ET de l'analyse IA au module d'export
       await exporterExcelExecutive(
         nomFichier || "Analyse",
         entetes,
@@ -457,7 +455,28 @@ export default function AnalysePage() {
     } catch (error) {
       console.error("Erreur lors de l'export Excel :", error);
     } finally {
-      setExportEnCours(false);
+      setExportExcelEnCours(false);
+    }
+  };
+
+  // 2. Export PowerPoint avec TDC ajusté & Graphiques
+  const telechargerPowerPoint = async () => {
+    if (!entetes.length || !corps.length || exportPptxEnCours) return;
+    setExportPptxEnCours(true);
+    await new Promise((r) => setTimeout(r, 50));
+    try {
+      await exporterRapportPowerPoint({
+        nomProjet: nomFichier || "Analyse Datenza",
+        entetes: entetes,
+        corps: corps,
+        analyse: resultatActif,
+        rapport: rapportActif,
+        graphiquesEpingles: graphiquesEpingles || [],
+      });
+    } catch (error) {
+      console.error("Erreur lors de l'export PowerPoint :", error);
+    } finally {
+      setExportPptxEnCours(false);
     }
   };
 
@@ -530,7 +549,6 @@ export default function AnalysePage() {
               )}
             </div>
 
-            {/* Sélecteur de référence */}
             {estBenchmarkActif && (
               <div className="flex items-center gap-2 pt-2 text-xs">
                 <span className="font-semibold text-slate-300">Référence étalon (Pivot) :</span>
@@ -553,20 +571,12 @@ export default function AnalysePage() {
           {/* Actions d'exportation */}
           <div className="flex flex-wrap items-center gap-3 print:hidden shrink-0">
             <button
-              onClick={() => {
-                exporterRapportPowerPoint({
-                  nomProjet: nomFichier || "Analyse Datenza",
-                  entetes: entetes,
-                  corps: corps,
-                  analyse: resultatActif,
-                  rapport: rapportActif,
-                  graphiquesEpingles: graphiquesEpingles || [],
-                });
-              }}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+              onClick={telechargerPowerPoint}
+              disabled={exportPptxEnCours}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
             >
               <Presentation className="w-4 h-4" />
-              Exporter PowerPoint (.pptx)
+              {exportPptxEnCours ? "Génération PPTX…" : "Exporter PowerPoint (.pptx)"}
             </button>
 
             <button
@@ -579,11 +589,11 @@ export default function AnalysePage() {
 
             <button
               onClick={telechargerExcelPropre}
-              disabled={exportEnCours}
+              disabled={exportExcelEnCours}
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-              {exportEnCours ? "Export en cours…" : "Télécharger Excel (.xlsx)"}
+              {exportExcelEnCours ? "Export en cours…" : "Télécharger Excel (.xlsx)"}
             </button>
           </div>
         </div>

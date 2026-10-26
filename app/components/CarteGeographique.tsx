@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import "leaflet/dist/leaflet.css";
-import { Sparkles, MapPin } from "lucide-react";
+import { Sparkles, MapPin, Presentation } from "lucide-react";
 import { trouverLieuCI, cleGeo } from "../../lib/geoci/data";
 import { parseNombre, type Cellule, estValeurVide } from "../../lib/analyse/utils";
+import { useData } from "../context/DataContext";
 
 const MapContainer = dynamic(() => import("react-leaflet").then((m) => m.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import("react-leaflet").then((m) => m.TileLayer), { ssr: false });
@@ -16,6 +17,7 @@ const AjusterVue = dynamic(() => import("./AjusterVue"), { ssr: false });
 interface Props {
   entetes: string[];
   corps: Cellule[][];
+  onAjouterPptx?: (element: any) => void;
 }
 
 interface PointComparatif {
@@ -78,7 +80,9 @@ const COORDONNEES_FRANCE: Record<string, [number, number]> = {
   "pays de la loire": [47.21, -1.55],
 };
 
-export default function CarteGeographique({ entetes, corps }: Props) {
+export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Props) {
+  const { graphiquesEpingles, epinglerGraphique } = useData();
+
   // Détection du mode comparaison multi-sources
   const estModeComparaison = entetes.includes("Fichier Source");
   const idxSource = entetes.indexOf("Fichier Source");
@@ -149,6 +153,7 @@ export default function CarteGeographique({ entetes, corps }: Props) {
   const [agregation, setAgregation] = useState<AgregationCarte>("Somme");
   const [externes, setExternes] = useState<Record<string, { lat: number; lng: number } | null>>({});
   const demandes = useRef(new Set<string>());
+  const [estDejaInclus, setEstDejaInclus] = useState(false);
 
   // Détection du territoire d'atterrissage
   const contexteTerritorial = useMemo<"FR" | "CI" | "MONDE">(() => {
@@ -212,6 +217,8 @@ export default function CarteGeographique({ entetes, corps }: Props) {
       if (agregation === "Moyenne") return g.n ? Math.round((g.somme / g.n) * 100) / 100 : 0;
       return Math.round(g.somme * 100) / 100;
     };
+
+    setEstDejaInclus(false);
 
     return Array.from(mapLieux.entries())
       .map(([nom, gLieu]) => {
@@ -384,6 +391,70 @@ export default function CarteGeographique({ entetes, corps }: Props) {
     };
   }, [estBenchmarkActif, sourcesFichiers, points]);
 
+  // ID unique pour le suivi d'inclusion PPTX
+  const idGraphiqueCarte = `carte-geo-${colonneGeo}-${agregation}-${colonneMesure || "compte"}`;
+
+ const estInclusPptx = useMemo(() => {
+    return (
+      (graphiquesEpingles || []).some((g) => String(g.id) === String(idGraphiqueCarte)) || estDejaInclus
+    );
+  }, [graphiquesEpingles, idGraphiqueCarte, estDejaInclus]);
+  // Préparation et conversion automatique de la carte pour PowerPoint
+  const preparerExportPptx = () => {
+    if (!points.length) return;
+    const topPoints = points.slice(0, 10);
+    const labels = topPoints.map((p) => p.nom);
+
+    let datasets: { label: string; data: number[]; backgroundColor?: string; borderColor?: string }[] = [];
+
+    if (estBenchmarkActif && sourcesFichiers.length >= 2) {
+      datasets = sourcesFichiers.map((src, i) => {
+        const couleur = COULEURS_COMPARAISON[i % COULEURS_COMPARAISON.length];
+        return {
+          label: src,
+          data: topPoints.map((p) => p.valeursParSource[src] || 0),
+          backgroundColor: couleur.fill,
+          borderColor: couleur.border,
+        };
+      });
+    } else {
+      datasets = [
+        {
+          label: agregation === "Nombre" ? "Nombre d'enregistrements" : `${agregation} — ${colonneMesure}`,
+          data: topPoints.map((p) => p.totalGlobal),
+          backgroundColor: "#0891b2",
+          borderColor: "#0e7490",
+        },
+      ];
+    }
+
+    const titrePptx = estBenchmarkActif
+      ? `Benchmark Spatial : ${agregation === "Nombre" ? "Effectifs" : agregation + " de " + colonneMesure} par ${colonneGeo}`
+      : `Synthèse Géographique : ${agregation === "Nombre" ? "Effectifs" : agregation + " de " + colonneMesure} par ${colonneGeo}`;
+
+    const interpretation = estBenchmarkActif
+      ? `Confrontation territoriale sur les ${topPoints.length} premiers pôles géographiques.\n\nLeader spatial : « ${analyseBenchmark?.grandGagnant?.[0] || topPoints[0]?.nom || ""} » avec ${analyseBenchmark?.grandGagnant?.[1] || 1} zone(s) dominée(s).`
+      : `Répartition spatiale sur les ${topPoints.length} premiers territoires.\n\nPôle dominant : « ${topPoints[0]?.nom || ""} » avec ${topPoints[0]?.totalGlobal.toLocaleString("fr-FR")} enregistrés.`;
+
+    const objetExport = {
+      id: idGraphiqueCarte,
+      titre: titrePptx,
+      type: "Barres",
+      chartType: "bar",
+      labels,
+      datasets,
+      interpretation,
+    };
+
+    if (onAjouterPptx) {
+      onAjouterPptx(objetExport);
+    }
+    if (epinglerGraphique) {
+      epinglerGraphique(objetExport as any);
+    }
+    setEstDejaInclus(true);
+  };
+
   const centreDefaut: [number, number] = contexteTerritorial === "FR" ? [46.8, 2.5] : [7.54, -5.55];
   const zoomDefaut = contexteTerritorial === "FR" ? 5 : 6;
 
@@ -409,7 +480,7 @@ export default function CarteGeographique({ entetes, corps }: Props) {
           </div>
         </div>
 
-        {/* Sélecteurs de configuration */}
+        {/* Sélecteurs de configuration & Bouton PPTX */}
         <div className="no-print flex flex-wrap items-center gap-2">
           {estBenchmarkActif && (
             <select
@@ -460,6 +531,19 @@ export default function CarteGeographique({ entetes, corps }: Props) {
               ))}
             </select>
           )}
+
+          {/* Bouton d'ajout au PowerPoint */}
+          <button
+            onClick={preparerExportPptx}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
+              estInclusPptx
+                ? "bg-blue-600 text-white shadow-xs"
+                : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
+            }`}
+          >
+            <Presentation className="w-3.5 h-3.5" />
+            {estInclusPptx ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
+          </button>
         </div>
       </div>
 
@@ -502,7 +586,6 @@ export default function CarteGeographique({ entetes, corps }: Props) {
             {/* Rendu des points */}
             {points.map((p) => {
               if (estBenchmarkActif) {
-                // Tri de TOUTES les sources par valeur décroissante pour imbriquer les cercles du plus grand au plus petit
                 const itemsTries = sourcesFichiers
                   .map((src, i) => ({
                     nom: src,
@@ -538,7 +621,6 @@ export default function CarteGeographique({ entetes, corps }: Props) {
                                 </p>
                               </div>
 
-                              {/* Détail de chaque source */}
                               <div className="space-y-1 pt-0.5">
                                 {sourcesFichiers.map((src, i) => {
                                   const v = p.valeursParSource[src] || 0;
@@ -558,7 +640,6 @@ export default function CarteGeographique({ entetes, corps }: Props) {
                                 })}
                               </div>
 
-                              {/* Écart vs Référence */}
                               <div className="pt-1.5 border-t text-[11px] font-bold text-slate-700 flex justify-between items-center">
                                 <span>Leader ({p.leader}) vs {refSource} :</span>
                                 <span className={p.ecartVsRef >= 0 ? "text-emerald-600 font-mono" : "text-rose-600 font-mono"}>
@@ -574,7 +655,6 @@ export default function CarteGeographique({ entetes, corps }: Props) {
                 );
               }
 
-              // Mode Fichier Unique
               return (
                 <CircleMarker
                   key={p.nom}
@@ -618,7 +698,6 @@ export default function CarteGeographique({ entetes, corps }: Props) {
           </p>
 
           <div className="space-y-1.5 pt-0.5">
-            {/* Répartition des victoires */}
             <div className="flex items-start gap-1.5">
               <span className="font-bold text-indigo-600">•</span>
               <p className="text-slate-700 dark:text-slate-300">
@@ -632,7 +711,6 @@ export default function CarteGeographique({ entetes, corps }: Props) {
               </p>
             </div>
 
-            {/* Leader territorial global */}
             <div className="flex items-start gap-1.5">
               <span className="font-bold text-indigo-600">•</span>
               <p className="text-slate-700 dark:text-slate-300">
@@ -641,7 +719,6 @@ export default function CarteGeographique({ entetes, corps }: Props) {
               </p>
             </div>
 
-            {/* Plus forte divergence */}
             <div className="flex items-start gap-1.5">
               <span className="font-bold text-indigo-600">•</span>
               <p className="text-slate-700 dark:text-slate-300">

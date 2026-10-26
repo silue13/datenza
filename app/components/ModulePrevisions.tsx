@@ -18,6 +18,7 @@ import {
   Scale,
   ArrowUpRight,
   Trophy,
+  Presentation,
 } from "lucide-react";
 import {
   agregerSerieGenerique,
@@ -25,10 +26,12 @@ import {
   type TypeAgregationTemporelle,
 } from "@/lib/analyse/prevision";
 import { parseNombre, type Cellule } from "@/lib/analyse/utils";
+import { useData } from "../context/DataContext";
 
 interface ModulePrevisionsProps {
   entetes: string[];
   corps: Cellule[][];
+  onEpingler?: (graphique: any) => void;
 }
 
 interface SourceCalculee {
@@ -50,8 +53,20 @@ const PALETTE_COMPARAISON = [
   { reel: "#ec4899", proj: "#f472b6" }, // Rose
   { reel: "#8b5cf6", proj: "#a78bfa" }, // Violet
 ];
+function hashChaineEnNombre(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
 
-export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsProps) {
+export default function ModulePrevisions({ entetes, corps, onEpingler }: ModulePrevisionsProps) {
+  const { graphiquesEpingles, epinglerGraphique } = useData();
+  const actionEpingler = onEpingler || epinglerGraphique;
+  const [estDejaInclus, setEstDejaInclus] = useState(false);
+
   // 1. Détection du mode benchmark multi-fichiers
   const estModeComparaison = entetes.includes("Fichier Source");
   const idxSource = entetes.indexOf("Fichier Source");
@@ -103,6 +118,17 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
   const [horizon, setHorizon] = useState<number>(3);
   const [ongletExplication, setOngletExplication] = useState<"scenarios" | "calendrier" | "historique" | "guide">("scenarios");
 
+ const idGraphiqueCourant = useMemo(() => {
+  return hashChaineEnNombre(`prevision-${colonneTemps}-${colonneMesure}-${horizon}-${modeAgregation}`);
+}, [colonneTemps, colonneMesure, horizon, modeAgregation]);
+
+ const estInclusPptx = useMemo(() => {
+  return (
+    (graphiquesEpingles || []).some((g) => g.id === idGraphiqueCourant) ||
+    estDejaInclus
+  );
+}, [graphiquesEpingles, idGraphiqueCourant, estDejaInclus]);
+
   // Alerte métier si agrégation inappropriée
   const alerteMetier = useMemo(() => {
     const nom = colonneMesure.toLowerCase();
@@ -121,6 +147,7 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
   // 3. Calcul en mode FICHIER UNIQUE
   const diagnosticOuResultat = useMemo(() => {
     if (estBenchmarkActif) return null;
+    setEstDejaInclus(false);
 
     if (!colonnesDisponibles.temporelles.length) {
       return {
@@ -156,6 +183,7 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
   // 4. Calcul en mode BENCHMARK COMPARATIF (N Sources)
   const calculsComparatifs = useMemo(() => {
     if (!estBenchmarkActif) return null;
+    setEstDejaInclus(false);
 
     if (!colonnesDisponibles.temporelles.length || !colonnesDisponibles.mesurables.length) {
       return { possible: false as const };
@@ -265,7 +293,7 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
     };
   }, [sourceActive]);
 
-  // Moteur de calcul des recommandations opérationnelles chiffrées (Actif pour 1 fichier ET pour N fichiers)
+  // Moteur de calcul des recommandations opérationnelles chiffrées
   const calculsDecisionnels = useMemo(() => {
     if (!sourceActive || sourceActive.historique.length === 0 || sourceActive.projections.length === 0) return null;
     const hist = sourceActive.historique;
@@ -302,30 +330,6 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
       dernierReelVal,
     };
   }, [sourceActive]);
-
-  if (!estBenchmarkActif && diagnosticOuResultat && !diagnosticOuResultat.possible) {
-    return (
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-3">
-        <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
-          <div className="w-3 h-3 rounded-full bg-slate-400"></div>
-          <h3 className="text-base font-bold text-slate-900 dark:text-white">Prévisions & Projections</h3>
-          <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full font-medium">
-            Non disponible
-          </span>
-        </div>
-        <div className="rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 p-4 text-xs space-y-1.5">
-          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 font-bold">
-            <Info className="w-4 h-4 shrink-0" />
-            <span>{diagnosticOuResultat.titre}</span>
-          </div>
-          <p className="text-amber-700/90 dark:text-amber-400">{diagnosticOuResultat.explication}</p>
-          <p className="text-slate-500 dark:text-slate-400 pt-1 border-t border-amber-200/50 dark:border-amber-900/40">
-            <strong>Conseil :</strong> {diagnosticOuResultat.actionConseillee}
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   // Préparation du dataset Chart.js
   let chartData: { labels: string[]; datasets: any[] } = { labels: [], datasets: [] };
@@ -415,6 +419,47 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
     };
   }
 
+  // Export vers PowerPoint
+  // Export vers PowerPoint
+  const preparerExportPptx = () => {
+    if (!chartData || !chartData.labels.length) return;
+
+    const labels = chartData.labels;
+    const datasets = chartData.datasets
+      .filter((d) => !d.label.includes("Borne basse") && !d.label.includes("Intervalle"))
+      .map((d) => ({
+        label: d.label,
+        data: d.data.map((v: any) => (v === null || v === undefined ? 0 : Number(v) || 0)),
+        borderColor: d.borderColor || "#2563EB",
+      }));
+
+    const titrePptx = estBenchmarkActif
+      ? `Benchmark Prévisionnel : ${colonneMesure} par ${colonneTemps} (+${horizon} périodes)`
+      : `Prévisions & Projections : ${colonneMesure} par ${colonneTemps} (+${horizon} périodes)`;
+
+    let interpretation = "";
+    if (estBenchmarkActif && calculsComparatifs && calculsComparatifs.possible) {
+      interpretation = `Confrontation prévisionnelle sur ${sourcesFichiers.length} sources.\nLeader projeté : « ${calculsComparatifs.leader.nomSrc} » (${calculsComparatifs.leader.cibleFinale.toLocaleString("fr-FR")}).\nPlus forte dynamique : « ${calculsComparatifs.plusDynamique.nomSrc} » (${calculsComparatifs.plusDynamique.variationPct >= 0 ? "+" : ""}${calculsComparatifs.plusDynamique.variationPct} %).`;
+    } else if (sourceActive && calculsDecisionnels) {
+      interpretation = `Projection à +${horizon} périodes.\nFiabilité : ${sourceActive.metriques.fiabilite} (R² = ${sourceActive.metriques.r2}).\nAtterrissage projeté : ${calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} (${sourceActive.metriques.variationEstimeePct >= 0 ? "+" : ""}${sourceActive.metriques.variationEstimeePct} %). Seuil d'invalidation J+30 : ${calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}.`;
+    }
+
+    const objetExport: any = {
+      id: idGraphiqueCourant,
+      titre: titrePptx,
+      type: "Courbe",
+      chartType: "line",
+      labels,
+      datasets,
+      interpretation,
+    };
+
+    if (actionEpingler) {
+      actionEpingler(objetExport);
+    }
+    setEstDejaInclus(true);
+  };
+
   const options = {
     responsive: true,
     maintainAspectRatio: false,
@@ -450,6 +495,30 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
     },
   };
 
+  if (!estBenchmarkActif && diagnosticOuResultat && !diagnosticOuResultat.possible) {
+    return (
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-3">
+        <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+          <div className="w-3 h-3 rounded-full bg-slate-400"></div>
+          <h3 className="text-base font-bold text-slate-900 dark:text-white">Prévisions & Projections</h3>
+          <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full font-medium">
+            Non disponible
+          </span>
+        </div>
+        <div className="rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 p-4 text-xs space-y-1.5">
+          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 font-bold">
+            <Info className="w-4 h-4 shrink-0" />
+            <span>{diagnosticOuResultat.titre}</span>
+          </div>
+          <p className="text-amber-700/90 dark:text-amber-400">{diagnosticOuResultat.explication}</p>
+          <p className="text-slate-500 dark:text-slate-400 pt-1 border-t border-amber-200/50 dark:border-amber-900/40">
+            <strong>Conseil :</strong> {diagnosticOuResultat.actionConseillee}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-6 shadow-sm">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
@@ -462,7 +531,7 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
           </h3>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {estBenchmarkActif ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
               <Scale className="w-3.5 h-3.5" />
@@ -488,6 +557,19 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
               </span>
             )
           )}
+
+          {/* Bouton d'export vers PowerPoint */}
+          <button
+            onClick={preparerExportPptx}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+              estInclusPptx
+                ? "bg-blue-600 text-white shadow-xs"
+                : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
+            }`}
+          >
+            <Presentation className="w-3.5 h-3.5" />
+            {estInclusPptx ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
+          </button>
         </div>
       </div>
 
@@ -578,9 +660,7 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
         <Line data={chartData} options={options} />
       </div>
 
-      {/* ============================================================
-          SECTION BENCHMARK COMPARATIF (N SOURCES)
-         ============================================================ */}
+      {/* SECTION BENCHMARK COMPARATIF (N SOURCES) */}
       {estBenchmarkActif && calculsComparatifs && calculsComparatifs.possible && (
         <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-5 bg-slate-50/50 dark:bg-slate-900/60 space-y-4 text-xs">
           <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-800 pb-2">
@@ -688,9 +768,7 @@ export default function ModulePrevisions({ entetes, corps }: ModulePrevisionsPro
         </div>
       )}
 
-      {/* ============================================================
-          SECTION EXPLICATIVE APPROFONDIE (ACTIF EN BENCHMARK & UNIQUE)
-         ============================================================ */}
+      {/* SECTION EXPLICATIVE APPROFONDIE (ACTIF EN BENCHMARK & UNIQUE) */}
       {sourceActive && analyseAvancee && calculsDecisionnels && (
         <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-50/40 dark:bg-slate-900/60">
           
