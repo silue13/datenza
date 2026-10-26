@@ -12,6 +12,7 @@ import { useData } from "../context/DataContext";
 import { parseNombre, estValeurVide, arrondir, type Cellule } from "../../lib/analyse/utils";
 import { analyserColonnes } from "../../lib/analyse/analyse";
 import Link from "next/link";
+import BoutonSupprimerDonnees from "../components/BoutonSupprimerDonnees";
 import {
   Presentation,
   Printer,
@@ -483,7 +484,8 @@ export default function AnalysePage() {
   const correlationsStandard = [...(resultatActif?.correlations ?? [])]
     .filter((c) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
     .sort((a, b) => Math.abs(b.coefficient) - Math.abs(a.coefficient));
-
+  
+  
   if (corps.length === 0) {
     return (
       <div className="max-w-4xl mx-auto py-16 text-center space-y-4">
@@ -578,6 +580,7 @@ export default function AnalysePage() {
               <Presentation className="w-4 h-4" />
               {exportPptxEnCours ? "Génération PPTX…" : "Exporter PowerPoint (.pptx)"}
             </button>
+            <BoutonSupprimerDonnees />
 
             <button
               onClick={imprimerRapport}

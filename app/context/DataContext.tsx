@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import type { BlocRapport } from "../../lib/analyse/rapport";
 import type { analyserColonnes } from "../../lib/analyse/analyse";
 import type { Cellule } from "../../lib/analyse/utils";
@@ -10,6 +10,7 @@ import {
   type ConditionFiltre,
   type DefinitionColonneCalculee,
 } from "../../lib/analyse/filtres";
+import { chargerEtat, sauvegarderEtat, effacerEtat } from "../../lib/persistance";
 
 export type ResultatAnalyse = ReturnType<typeof analyserColonnes>;
 export type TypeGraphique = "Barres" | "Courbe" | "Camembert" | "Anneau" | "Radar" | "Aires" | "Carte";
@@ -55,6 +56,9 @@ interface DataContextType {
   reinitialiserFiltres: () => void;
   creerColonneCalculee: (def: DefinitionColonneCalculee) => void;
   nettoyerDonnees: (corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) => void;
+  supprimerDonnees: () => void;
+  // false tant que la sauvegarde locale n'a pas été relue (évite d'afficher « aucun fichier » une fraction de seconde)
+  restaurationTerminee: boolean;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -70,6 +74,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [graphiquesEpingles, setGraphiquesEpingles] = useState<GraphiqueEpingle[]>([]);
   const [filtresActifs, setFiltresActifs] = useState<ConditionFiltre[]>([]);
   const [definitionsCalculs, setDefinitionsCalculs] = useState<DefinitionColonneCalculee[]>([]);
+  const [restaurationTerminee, setRestaurationTerminee] = useState(false);
 
   // Recalcule le jeu de données affiché à partir des sources, calculs et filtres
   function regenererDonnees(
@@ -195,6 +200,67 @@ export function DataProvider({ children }: { children: ReactNode }) {
     regenererDonnees(sources.entetes, corpsPropre, definitionsCalculs, filtresActifs);
   }
 
+  // Au premier affichage : relit la sauvegarde locale (les données survivent au rechargement de la page)
+  useEffect(() => {
+    let annule = false;
+    chargerEtat().then((etat) => {
+      if (annule) return;
+      if (etat) {
+        setNomFichier(etat.nomFichier);
+        setSources(etat.sources);
+        setDefinitionsCalculs(etat.definitionsCalculs);
+        setFiltresActifs(etat.filtresActifs);
+        regenererDonnees(etat.sources.entetes, etat.sources.corps, etat.definitionsCalculs, etat.filtresActifs);
+        setChoisies(etat.choisies);
+        setRapport(etat.rapport);
+        setResultat(etat.resultat);
+        setGraphiquesEpingles(etat.graphiquesEpingles);
+      }
+      setRestaurationTerminee(true);
+    });
+    return () => {
+      annule = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Sauvegarde automatique à chaque modification (après la restauration, jamais avant)
+  useEffect(() => {
+    if (!restaurationTerminee) return;
+    if (!sources.corps.length) {
+      void effacerEtat();
+      return;
+    }
+    const minuteur = setTimeout(() => {
+      void sauvegarderEtat({
+        nomFichier,
+        sources,
+        choisies,
+        rapport,
+        resultat,
+        graphiquesEpingles,
+        filtresActifs,
+        definitionsCalculs,
+      });
+    }, 600);
+    return () => clearTimeout(minuteur);
+  }, [restaurationTerminee, nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs]);
+
+  // Suppression volontaire : efface les données à l'écran ET la sauvegarde locale
+  function supprimerDonnees() {
+    setNomFichier("");
+    setSources({ entetes: [], corps: [] });
+    setEntetes([]);
+    setCorps([]);
+    setChoisies([]);
+    setRapport([]);
+    setResultat(null);
+    setGraphiquesEpingles([]);
+    setFiltresActifs([]);
+    setDefinitionsCalculs([]);
+    void effacerEtat();
+  }
+
   function epinglerGraphique(graphique: GraphiqueEpingle) {
     setGraphiquesEpingles((prev) => (prev.some((g) => g.id === graphique.id) ? prev : [graphique, ...prev]));
   }
@@ -225,6 +291,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         reinitialiserFiltres,
         creerColonneCalculee,
         nettoyerDonnees,
+        supprimerDonnees,
+        restaurationTerminee,
       }}
     >
       {children}
