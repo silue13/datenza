@@ -1,10 +1,11 @@
 import { parseNombre } from './utils';
+import { convertirDate } from './detection';
 
 export interface ConditionFiltre {
   colonne: string;
   operateur: 'egal' | 'different' | 'contient' | 'superieur' | 'inferieur' | 'entre';
   valeur: any;
-  valeurFin?: any; // Pour l'opérateur 'entre'
+  valeurFin?: any;
 }
 
 export interface DefinitionColonneCalculee {
@@ -17,9 +18,6 @@ export interface DefinitionColonneCalculee {
   tranches?: { min: number; max: number; label: string }[];
 }
 
-/**
- * Applique une liste de filtres sur les données
- */
 export function appliquerFiltres(
   donnees: Record<string, any>[],
   filtres: ConditionFiltre[]
@@ -38,12 +36,19 @@ export function appliquerFiltres(
           return String(valBrute ?? '').toLowerCase() !== String(f.valeur ?? '').toLowerCase();
         case 'contient':
           return String(valBrute ?? '').toLowerCase().includes(String(f.valeur ?? '').toLowerCase());
-        case 'superieur':
-          return valNum !== null && valNum >= Number(f.valeur);
-        case 'inferieur':
-          return valNum !== null && valNum <= Number(f.valeur);
-        case 'entre':
-          return valNum !== null && valNum >= Number(f.valeur) && valNum <= Number(f.valeurFin);
+        case 'superieur': {
+          const seuil = parseNombre(f.valeur);
+          return valNum !== null && seuil !== null && valNum >= seuil;
+        }
+        case 'inferieur': {
+          const seuil = parseNombre(f.valeur);
+          return valNum !== null && seuil !== null && valNum <= seuil;
+        }
+        case 'entre': {
+          const seuilMin = parseNombre(f.valeur);
+          const seuilMax = parseNombre(f.valeurFin);
+          return valNum !== null && seuilMin !== null && seuilMax !== null && valNum >= seuilMin && valNum <= seuilMax;
+        }
         default:
           return true;
       }
@@ -51,9 +56,6 @@ export function appliquerFiltres(
   });
 }
 
-/**
- * Ajoute une colonne calculée au jeu de données
- */
 export function ajouterColonneCalculee(
   donnees: Record<string, any>[],
   definition: DefinitionColonneCalculee
@@ -76,8 +78,9 @@ export function ajouterColonneCalculee(
         }
       }
     } else if (definition.type === 'extraction_date' && definition.uniteDate) {
-      const dateVal = new Date(ligne[definition.colonneA]);
-      if (isNaN(dateVal.getTime())) {
+      const rawDate = ligne[definition.colonneA];
+      const dateVal = convertirDate(rawDate) ?? (rawDate instanceof Date ? rawDate : new Date(rawDate));
+      if (!dateVal || isNaN(dateVal.getTime())) {
         nouvelleLigne[definition.nomNouvelleColonne] = null;
       } else {
         if (definition.uniteDate === 'annee') nouvelleLigne[definition.nomNouvelleColonne] = dateVal.getFullYear();
@@ -86,6 +89,13 @@ export function ajouterColonneCalculee(
         if (definition.uniteDate === 'annee_mois') {
           nouvelleLigne[definition.nomNouvelleColonne] = `${dateVal.getFullYear()}-${String(dateVal.getMonth() + 1).padStart(2, '0')}`;
         }
+      }
+    } else if (definition.type === 'tranches' && definition.tranches) {
+      if (valA === null) {
+        nouvelleLigne[definition.nomNouvelleColonne] = null;
+      } else {
+        const trancheTrouvee = definition.tranches.find((t) => valA >= t.min && valA <= t.max);
+        nouvelleLigne[definition.nomNouvelleColonne] = trancheTrouvee ? trancheTrouvee.label : 'Autre';
       }
     }
 

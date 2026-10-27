@@ -13,6 +13,11 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
+import ChartDataLabels from 'chartjs-plugin-datalabels';
 
-// Enregistrement unique des composants Chart.js (importé par l'analyse ET le tableau de bord).
-ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, ArcElement, RadarController, RadialLinearScale, Filler, Title, Tooltip, Legend);
+// Enregistrement de Chart.js + Plugin DataLabels
+ChartJS.register(
+  CategoryScale, LinearScale, BarElement, PointElement, LineElement, 
+  ArcElement, RadarController, RadialLinearScale, Filler, Title, Tooltip, Legend,
+  ChartDataLabels // <-- Ajout du plugin ici
+);

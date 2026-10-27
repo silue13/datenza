@@ -11,6 +11,21 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 export const metadata: Metadata = {
   title: "DATENZA - Plateforme d'Analyse et Données Publiques",
   description: "Analyse de données, Open Data et Gestion Agricole MonChamp",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "DATENZA",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -20,7 +35,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeInit />
         <DataProvider>
           <Sidebar />
-          <main className="flex-1 overflow-y-auto p-6 md:p-10">{children}</main>
+          <main className="flex-1 w-full min-w-0 overflow-y-auto p-3.5 sm:p-6 md:p-10 pb-24 md:pb-10">
+            {children}
+          </main>
         </DataProvider>
       </body>
     </html>

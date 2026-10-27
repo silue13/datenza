@@ -10,7 +10,17 @@ const MSG = {
     fr: "Cette question ne concerne pas les fichiers importés. Veuillez poser une question en rapport avec vos fichiers ou leurs données.",
     en: "This question is not related to the imported files. Please ask a question about your files or their data.",
   },
+  confidentialite: {
+    fr: "Pour des raisons de sécurité et de confidentialité, l'extraction exhaustive des enregistrements ou des données sensibles brutes n'est pas autorisée.",
+    en: "For security and privacy reasons, full dumps or sensitive raw data extractions are not permitted.",
+  },
 };
+
+const EXTRACTION_SENSIBLE: RegExp[] = [
+  /\b(affiche|donne|liste|montre|extraire?|dump|export(e|er)?)\b.*\b(tout(es)?|l'intégralité|l'ensemble|chaque|brut(es)?)\b.*\b(ligne|lignes|donnée|données|enregistrement|fichier|base)\b/i,
+  /\b(toutes les lignes|tous les enregistrements|dump complet|donne(-moi)? tout|contenu intégral)\b/i,
+  /\b(donne|affiche|liste|trouve)\b.*\b(mot de passe|password|iban|carte bancaire|securite sociale|ssn|salaire brut)\b/i,
+];
 
 const HORS_SUJET: RegExp[] = [
   /\b(quelle?|qui|qu[ée]|combien)\s+(est|sera|a|fait|fut)?\s*(la|le|les)?\s*(capitale|président|roi|reine|acteur|chanteur|film|musique|équipe|score|météo|date du jour)\b/i,
@@ -90,18 +100,23 @@ export function verifierQuestionLieeAuxFichier(
   const qBrute = String(question ?? "").trim();
   if (!qBrute) return { ok: false, message: MSG.vide[L] };
 
-  // 1. Détection hors-sujet strict
+  // 1. Détection des requêtes d'extraction massive ou de données sensibles
+  for (const re of EXTRACTION_SENSIBLE) {
+    if (re.test(qBrute)) return { ok: false, message: MSG.confidentialite[L] };
+  }
+
+  // 2. Détection hors-sujet strict et tentatives d'injection
   for (const re of HORS_SUJET) {
     if (re.test(qBrute)) return { ok: false, message: MSG.horsSujet[L] };
   }
 
   const qNorm = normaliserTexte(qBrute);
 
-  // 2. Détection d'un signal analytique ou comparatif
+  // 3. Détection d'un signal analytique ou comparatif
   let signal = RE_SIGNAUX.some((re) => re.test(qNorm));
   if (signal) return { ok: true };
 
-  // 3. Détection via les métadonnées du fichier (colonnes, fichiers comparés, valeurs)
+  // 4. Détection via les métadonnées du fichier (colonnes, fichiers comparés, valeurs)
   let ctx: Record<string, unknown> = {};
   try {
     ctx = typeof contexte === "string" ? JSON.parse(contexte || "{}") : contexte || {};

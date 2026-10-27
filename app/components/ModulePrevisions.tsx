@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { Line } from "react-chartjs-2";
 import "./chartSetup";
 import {
@@ -19,6 +19,7 @@ import {
   ArrowUpRight,
   Trophy,
   Presentation,
+  RotateCcw,
 } from "lucide-react";
 import {
   agregerSerieGenerique,
@@ -53,6 +54,7 @@ const PALETTE_COMPARAISON = [
   { reel: "#ec4899", proj: "#f472b6" }, // Rose
   { reel: "#8b5cf6", proj: "#a78bfa" }, // Violet
 ];
+
 function hashChaineEnNombre(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -63,7 +65,13 @@ function hashChaineEnNombre(str: string): number {
 }
 
 export default function ModulePrevisions({ entetes, corps, onEpingler }: ModulePrevisionsProps) {
-  const { graphiquesEpingles, epinglerGraphique } = useData();
+  const {
+    graphiquesEpingles,
+    epinglerGraphique,
+    filtresActifs,
+    reinitialiserFiltres,
+  } = useData();
+
   const actionEpingler = onEpingler || epinglerGraphique;
   const [estDejaInclus, setEstDejaInclus] = useState(false);
 
@@ -118,16 +126,31 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   const [horizon, setHorizon] = useState<number>(3);
   const [ongletExplication, setOngletExplication] = useState<"scenarios" | "calendrier" | "historique" | "guide">("scenarios");
 
- const idGraphiqueCourant = useMemo(() => {
-  return hashChaineEnNombre(`prevision-${colonneTemps}-${colonneMesure}-${horizon}-${modeAgregation}`);
-}, [colonneTemps, colonneMesure, horizon, modeAgregation]);
+  // Synchronisation des colonnes si les en-têtes changent
+  useEffect(() => {
+    if (!colonneTemps && colonnesDisponibles.temporelles.length > 0) {
+      setColonneTemps(colonnesDisponibles.temporelles[0]);
+    }
+    if (!colonneMesure && colonnesDisponibles.mesurables.length > 0) {
+      setColonneMesure(colonnesDisponibles.mesurables[0]);
+    }
+  }, [colonnesDisponibles, colonneTemps, colonneMesure]);
 
- const estInclusPptx = useMemo(() => {
-  return (
-    (graphiquesEpingles || []).some((g) => g.id === idGraphiqueCourant) ||
-    estDejaInclus
-  );
-}, [graphiquesEpingles, idGraphiqueCourant, estDejaInclus]);
+  const idGraphiqueCourant = useMemo(() => {
+    return hashChaineEnNombre(`prevision-${colonneTemps}-${colonneMesure}-${horizon}-${modeAgregation}`);
+  }, [colonneTemps, colonneMesure, horizon, modeAgregation]);
+
+  const estInclusPptx = useMemo(() => {
+    return (
+      (graphiquesEpingles || []).some((g) => g.id === idGraphiqueCourant) ||
+      estDejaInclus
+    );
+  }, [graphiquesEpingles, idGraphiqueCourant, estDejaInclus]);
+
+  // Réinitialisation du statut d'épinglage lors d'un changement de paramètres
+  useEffect(() => {
+    setEstDejaInclus(false);
+  }, [idGraphiqueCourant, refSource]);
 
   // Alerte métier si agrégation inappropriée
   const alerteMetier = useMemo(() => {
@@ -147,7 +170,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   // 3. Calcul en mode FICHIER UNIQUE
   const diagnosticOuResultat = useMemo(() => {
     if (estBenchmarkActif) return null;
-    setEstDejaInclus(false);
 
     if (!colonnesDisponibles.temporelles.length) {
       return {
@@ -183,7 +205,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   // 4. Calcul en mode BENCHMARK COMPARATIF (N Sources)
   const calculsComparatifs = useMemo(() => {
     if (!estBenchmarkActif) return null;
-    setEstDejaInclus(false);
 
     if (!colonnesDisponibles.temporelles.length || !colonnesDisponibles.mesurables.length) {
       return { possible: false as const };
@@ -245,6 +266,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           fiabilite: calculsComparatifs.sourceRefData.fiabilite,
           r2: calculsComparatifs.sourceRefData.r2,
           variationEstimeePct: calculsComparatifs.sourceRefData.variationPct,
+          sensTendance: calculsComparatifs.sourceRefData.variationPct >= 0 ? ("hausse" as const) : ("baisse" as const),
         },
       };
     }
@@ -279,7 +301,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
 
     const variance = hist.reduce((acc, p) => acc + Math.pow(p.valeur - moyenneHist, 2), 0) / hist.length;
     const ecartType = Math.sqrt(variance);
-    const volatilitePct = moyenneHist > 0 ? Math.round((ecartType / moyenneHist) * 100) : 0;
+    const volatilitePct = Math.abs(moyenneHist) > 0 ? Math.round((ecartType / Math.abs(moyenneHist)) * 100) : 0;
 
     const derniereProj = sourceActive.projections[sourceActive.projections.length - 1];
 
@@ -304,7 +326,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     const prochainMois = proj[0];
 
     const deltaTotal = cibleFinale.valeurPrevue - dernierReelVal;
-    const effortMensuelMoyen = Math.round((deltaTotal / proj.length) * 100) / 100;
+    const effortMensuelMoyen = proj.length > 0 ? Math.round((deltaTotal / proj.length) * 100) / 100 : 0;
 
     const seuilAlerteJ30 = Math.round(
       prochainMois.valeurPrevue - (prochainMois.valeurPrevue - prochainMois.borneBasse) * 0.4
@@ -420,7 +442,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   }
 
   // Export vers PowerPoint
-  // Export vers PowerPoint
   const preparerExportPptx = () => {
     if (!chartData || !chartData.labels.length) return;
 
@@ -495,40 +516,26 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     },
   };
 
-  if (!estBenchmarkActif && diagnosticOuResultat && !diagnosticOuResultat.possible) {
-    return (
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-3">
-        <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
-          <div className="w-3 h-3 rounded-full bg-slate-400"></div>
-          <h3 className="text-base font-bold text-slate-900 dark:text-white">Prévisions & Projections</h3>
-          <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full font-medium">
-            Non disponible
-          </span>
-        </div>
-        <div className="rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 p-4 text-xs space-y-1.5">
-          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 font-bold">
-            <Info className="w-4 h-4 shrink-0" />
-            <span>{diagnosticOuResultat.titre}</span>
-          </div>
-          <p className="text-amber-700/90 dark:text-amber-400">{diagnosticOuResultat.explication}</p>
-          <p className="text-slate-500 dark:text-slate-400 pt-1 border-t border-amber-200/50 dark:border-amber-900/40">
-            <strong>Conseil :</strong> {diagnosticOuResultat.actionConseillee}
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const estPrevisionPossible = estBenchmarkActif
+    ? Boolean(calculsComparatifs?.possible)
+    : Boolean(diagnosticOuResultat?.possible);
 
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-6 shadow-sm">
+      {/* En-tête du module */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-cyan-600"></div>
+          <div className={`w-3 h-3 rounded-full ${estPrevisionPossible ? "bg-cyan-600" : "bg-slate-400"}`}></div>
           <h3 className="text-base font-bold text-slate-900 dark:text-white">
             {estBenchmarkActif
               ? `Confrontation Prévisionnelle & Projections (${sourcesFichiers.length} fichiers)`
               : "Prévisions & Projections Statistiques"}
           </h3>
+          {!estPrevisionPossible && (
+            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full font-medium">
+              Non disponible
+            </span>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -559,17 +566,19 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           )}
 
           {/* Bouton d'export vers PowerPoint */}
-          <button
-            onClick={preparerExportPptx}
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
-              estInclusPptx
-                ? "bg-blue-600 text-white shadow-xs"
-                : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
-            }`}
-          >
-            <Presentation className="w-3.5 h-3.5" />
-            {estInclusPptx ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
-          </button>
+          {estPrevisionPossible && (
+            <button
+              onClick={preparerExportPptx}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                estInclusPptx
+                  ? "bg-blue-600 text-white shadow-xs"
+                  : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
+              }`}
+            >
+              <Presentation className="w-3.5 h-3.5" />
+              {estInclusPptx ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -580,14 +589,14 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
         </div>
       )}
 
-      {/* Paramétrage */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-800/40 p-4 rounded-xl text-xs">
+      {/* Barre de paramétrage (TOUJOURS VISIBLE, même en cas d'historique court) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 bg-slate-50 dark:bg-slate-800/40 p-3 sm:p-4 rounded-xl text-xs">
         <div>
           <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">Axe temporel / Séquence</label>
           <select
             value={colonneTemps}
             onChange={(e) => setColonneTemps(e.target.value)}
-            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium"
+            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium focus:ring-2 focus:ring-purple-500"
           >
             {colonnesDisponibles.temporelles.map((c) => (
               <option key={c} value={c}>{c}</option>
@@ -600,7 +609,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           <select
             value={colonneMesure}
             onChange={(e) => setColonneMesure(e.target.value)}
-            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium"
+            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium focus:ring-2 focus:ring-purple-500"
           >
             {colonnesDisponibles.mesurables.map((c) => (
               <option key={c} value={c}>{c}</option>
@@ -613,7 +622,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           <select
             value={modeAgregation}
             onChange={(e) => setModeAgregation(e.target.value as TypeAgregationTemporelle)}
-            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium"
+            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium focus:ring-2 focus:ring-purple-500"
           >
             <option value="somme">Somme cumulée</option>
             <option value="moyenne">Moyenne de la période</option>
@@ -625,7 +634,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           <select
             value={horizon}
             onChange={(e) => setHorizon(Number(e.target.value))}
-            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium"
+            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium focus:ring-2 focus:ring-purple-500"
           >
             <option value={3}>+ 3 périodes</option>
             <option value={6}>+ 6 périodes</option>
@@ -655,445 +664,481 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
         </div>
       )}
 
-      {/* Graphique */}
-      <div className="h-80 w-full p-2 bg-gradient-to-b from-slate-50/50 to-white dark:from-slate-800/30 dark:to-slate-900 rounded-xl">
-        <Line data={chartData} options={options} />
-      </div>
-
-      {/* SECTION BENCHMARK COMPARATIF (N SOURCES) */}
-      {estBenchmarkActif && calculsComparatifs && calculsComparatifs.possible && (
-        <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-5 bg-slate-50/50 dark:bg-slate-900/60 space-y-4 text-xs">
-          <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-800 pb-2">
-            <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-            <h4 className="font-bold text-slate-900 dark:text-white">
-              Diagnostic d&apos;atterrissage comparatif (à horizon +{calculsComparatifs.horizon} périodes) :
-            </h4>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
-                <Trophy className="w-3.5 h-3.5 text-amber-500" /> Leader Projeté (1re place)
-              </span>
-              <p className="text-base font-black text-indigo-600 dark:text-indigo-400 truncate">
-                {calculsComparatifs.leader.nomSrc}
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Atterrissage prévu à <strong>{calculsComparatifs.leader.cibleFinale.toLocaleString("fr-FR")}</strong>.
-              </p>
+      {/* CAS D'IMPOSSIBILITÉ OU FILTRES TROP STRICTS */}
+      {!estBenchmarkActif && diagnosticOuResultat && !diagnosticOuResultat.possible && (
+        <div className="rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 p-4 text-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 font-bold">
+              <Info className="w-4 h-4 shrink-0" />
+              <span>{diagnosticOuResultat.titre}</span>
             </div>
-
-            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
-                <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" /> Plus Forte Accélération
-              </span>
-              <p className="text-base font-black text-emerald-600 dark:text-emerald-400 truncate">
-                {calculsComparatifs.plusDynamique.nomSrc}
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Dynamique de <strong>{calculsComparatifs.plusDynamique.variationPct >= 0 ? "+" : ""}{calculsComparatifs.plusDynamique.variationPct} %</strong>.
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Amplitude du Benchmark</span>
-              <p className="text-base font-black text-slate-800 dark:text-slate-100">
-                {calculsComparatifs.amplitudeTotale.toLocaleString("fr-FR")}
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Écart entre {calculsComparatifs.leader.nomSrc} et {calculsComparatifs.dernier.nomSrc}.
-              </p>
-            </div>
+            {filtresActifs && filtresActifs.length > 0 && (
+              <button
+                type="button"
+                onClick={reinitialiserFiltres}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-[11px] transition cursor-pointer shadow-xs self-start sm:self-auto"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Réinitialiser les filtres ({filtresActifs.length} actif(s))</span>
+              </button>
+            )}
           </div>
-
-          <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 mt-2">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 font-bold text-slate-700 dark:text-slate-300">
-                  <th className="p-3">Fichier / Source</th>
-                  <th className="p-3 text-right">Dernier Réalisé</th>
-                  <th className="p-3 text-right font-black text-purple-700 dark:text-purple-300">Atterrissage Projeté</th>
-                  <th className="p-3 text-right">Écart vs Réf ({refSource})</th>
-                  <th className="p-3 text-center">Tendance</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                {calculsComparatifs.sources.map((s, idx) => {
-                  const refCible = calculsComparatifs.sourceRefData.cibleFinale;
-                  const deltaVsRef = Math.round((s.cibleFinale - refCible) * 100) / 100;
-                  const pctVsRef = refCible > 0 ? Math.round((deltaVsRef / refCible) * 1000) / 10 : 0;
-                  const estRef = s.nomSrc === refSource;
-
-                  return (
-                    <tr key={s.nomSrc} className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${estRef ? "bg-purple-50/30 dark:bg-purple-950/20" : ""}`}>
-                      <td className="p-3 font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full"
-                          style={{ backgroundColor: PALETTE_COMPARAISON[idx % PALETTE_COMPARAISON.length].reel }}
-                        ></span>
-                        {s.nomSrc} {estRef && <span className="text-[10px] text-purple-600 font-bold">(Réf)</span>}
-                      </td>
-                      <td className="p-3 text-right font-mono text-slate-600 dark:text-slate-400">
-                        {s.dernierReel.toLocaleString("fr-FR")}
-                      </td>
-                      <td className="p-3 text-right font-mono font-bold text-purple-700 dark:text-purple-300">
-                        {s.cibleFinale.toLocaleString("fr-FR")}
-                      </td>
-                      <td className="p-3 text-right font-mono font-bold">
-                        {estRef ? (
-                          <span className="text-slate-400 font-normal">—</span>
-                        ) : (
-                          <span className={deltaVsRef >= 0 ? "text-emerald-600" : "text-rose-600"}>
-                            {deltaVsRef >= 0 ? "+" : ""}{deltaVsRef.toLocaleString("fr-FR")} ({pctVsRef >= 0 ? "+" : ""}{pctVsRef} %)
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                            s.variationPct >= 0
-                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40"
-                              : "bg-rose-50 text-rose-700 dark:bg-rose-950/40"
-                          }`}
-                        >
-                          {s.variationPct >= 0 ? "+" : ""}{s.variationPct} %
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <p className="text-amber-700/90 dark:text-amber-400 leading-relaxed">
+            {diagnosticOuResultat.explication}
+          </p>
+          <p className="text-slate-500 dark:text-slate-400 pt-2 border-t border-amber-200/50 dark:border-amber-900/40">
+            <strong>Conseil :</strong> Changez l&apos;axe temporel ci-dessus ou désactivez les filtres pour récupérer l&apos;historique complet.
+          </p>
         </div>
       )}
 
-      {/* SECTION EXPLICATIVE APPROFONDIE (ACTIF EN BENCHMARK & UNIQUE) */}
-      {sourceActive && analyseAvancee && calculsDecisionnels && (
-        <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-50/40 dark:bg-slate-900/60">
-          
-          {/* Barre d'onglets */}
-          <div className="flex border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 pt-2 gap-2 text-xs overflow-x-auto">
-            <button
-              onClick={() => setOngletExplication("scenarios")}
-              className={`pb-2.5 px-3 font-bold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
-                ongletExplication === "scenarios"
-                  ? "border-purple-600 text-purple-700 dark:text-purple-300"
-                  : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-              }`}
-            >
-              <Target className="w-3.5 h-3.5" />
-              1. Les 3 Scénarios d&apos;atterrissage
-            </button>
-
-            <button
-              onClick={() => setOngletExplication("calendrier")}
-              className={`pb-2.5 px-3 font-bold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
-                ongletExplication === "calendrier"
-                  ? "border-purple-600 text-purple-700 dark:text-purple-300"
-                  : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-              }`}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              2. Calendrier mois par mois
-            </button>
-
-            <button
-              onClick={() => setOngletExplication("historique")}
-              className={`pb-2.5 px-3 font-bold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
-                ongletExplication === "historique"
-                  ? "border-purple-600 text-purple-700 dark:text-purple-300"
-                  : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-              }`}
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              3. Origine de l&apos;incertitude passée
-            </button>
-
-            <button
-              onClick={() => setOngletExplication("guide")}
-              className={`pb-2.5 px-3 font-bold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
-                ongletExplication === "guide"
-                  ? "border-purple-600 text-purple-700 dark:text-purple-300"
-                  : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-              }`}
-            >
-              <Lightbulb className="w-3.5 h-3.5" />
-              4. Recommandations concrètes
-            </button>
+      {/* GRAPHIQUE ET ANALYSES LORSQUE LES CALCULS SONT VALIDES */}
+      {estPrevisionPossible && (
+        <>
+          {/* Graphique */}
+          <div className="h-60 sm:h-80 w-full p-2 bg-gradient-to-b from-slate-50/50 to-white dark:from-slate-800/30 dark:to-slate-900 rounded-xl">
+            <Line data={chartData} options={options} />
           </div>
 
-          <div className="p-5 text-xs">
-            {/* ONGLET 1 : LES 3 SCÉNARIOS CHIFFRÉS */}
-            {ongletExplication === "scenarios" && (
-              <div className="space-y-4">
-                <p className="text-slate-600 dark:text-slate-400">
-                  À l&apos;horizon <strong>{analyseAvancee.derniereProj.periode}</strong>
-                  {estBenchmarkActif && (
-                    <span> pour la série <strong>{sourceActive.nom}</strong></span>
-                  )}
-                  , voici les trois trajectoires envisageables pour arbitrer vos décisions :
-                </p>
+          {/* SECTION BENCHMARK COMPARATIF (N SOURCES) */}
+          {estBenchmarkActif && calculsComparatifs && calculsComparatifs.possible && (
+            <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-5 bg-slate-50/50 dark:bg-slate-900/60 space-y-4 text-xs">
+              <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-800 pb-2">
+                <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                <h4 className="font-bold text-slate-900 dark:text-white">
+                  Diagnostic d&apos;atterrissage comparatif (à horizon +{calculsComparatifs.horizon} périodes) :
+                </h4>
+              </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Scénario Prudent */}
-                  <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                        <ShieldAlert className="w-4 h-4 text-amber-600" />
-                        Scénario Prudent (Bas)
-                      </span>
-                      <span className="text-[10px] bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold">
-                        Plancher de sécurité
-                      </span>
-                    </div>
-                    <div className="text-xl font-black text-slate-900 dark:text-white">
-                      {analyseAvancee.derniereProj.borneBasse.toLocaleString("fr-FR")}
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                      Le seuil minimal statistique si les aléas défavorables se cumulent. Utilisez ce montant pour sécuriser votre trésorerie ou calibrer un budget strict.
-                    </p>
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="p-3.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                    <Trophy className="w-3.5 h-3.5 text-amber-500" /> Leader Projeté (1re place)
+                  </span>
+                  <p className="text-base font-black text-indigo-600 dark:text-indigo-400 truncate">
+                    {calculsComparatifs.leader.nomSrc}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Atterrissage prévu à <strong>{calculsComparatifs.leader.cibleFinale.toLocaleString("fr-FR")}</strong>.
+                  </p>
+                </div>
 
-                  {/* Scénario Médian */}
-                  <div className="p-4 rounded-xl bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 shadow-sm space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
-                        <Target className="w-4 h-4 text-purple-600" />
-                        Scénario Médian (Cible)
-                      </span>
-                      <span className="text-[10px] bg-purple-200/80 text-purple-800 dark:bg-purple-900 dark:text-purple-200 px-2 py-0.5 rounded-full font-bold">
-                        Projection centrale
-                      </span>
-                    </div>
-                    <div className="text-xl font-black text-purple-700 dark:text-purple-300">
-                      {analyseAvancee.derniereProj.valeurPrevue.toLocaleString("fr-FR")}
-                    </div>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                      L&apos;atterrissage le plus probable d&apos;après le prolongement mathématique de la tendance ({sourceActive.metriques.variationEstimeePct >= 0 ? "+" : ""}{sourceActive.metriques.variationEstimeePct} %). Votre repère d&apos;objectifs.
-                    </p>
-                  </div>
+                <div className="p-3.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                    <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" /> Plus Forte Accélération
+                  </span>
+                  <p className="text-base font-black text-emerald-600 dark:text-emerald-400 truncate">
+                    {calculsComparatifs.plusDynamique.nomSrc}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Dynamique de <strong>{calculsComparatifs.plusDynamique.variationPct >= 0 ? "+" : ""}{calculsComparatifs.plusDynamique.variationPct} %</strong>.
+                  </p>
+                </div>
 
-                  {/* Scénario Favorable */}
-                  <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                        <Flame className="w-4 h-4 text-emerald-600" />
-                        Scénario Favorable (Haut)
-                      </span>
-                      <span className="text-[10px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">
-                        Potentiel maximal
-                      </span>
-                    </div>
-                    <div className="text-xl font-black text-slate-900 dark:text-white">
-                      {analyseAvancee.derniereProj.borneHaute.toLocaleString("fr-FR")}
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                      Le plafond envisageable si l&apos;activité connaît une dynamique particulièrement forte sans à-coups négatifs.
-                    </p>
-                  </div>
+                <div className="p-3.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Amplitude du Benchmark</span>
+                  <p className="text-base font-black text-slate-800 dark:text-slate-100">
+                    {calculsComparatifs.amplitudeTotale.toLocaleString("fr-FR")}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Écart entre {calculsComparatifs.leader.nomSrc} et {calculsComparatifs.dernier.nomSrc}.
+                  </p>
                 </div>
               </div>
-            )}
 
-            {/* ONGLET 2 : DÉCOMPOSITION MOIS PAR MOIS */}
-            {ongletExplication === "calendrier" && (
-              <div className="space-y-3">
-                <p className="text-slate-600 dark:text-slate-400">
-                  Détail de la progression estimée sur chacune des périodes à venir
-                  {estBenchmarkActif && (
-                    <span> pour <strong>{sourceActive.nom}</strong></span>
-                  )} :
-                </p>
+              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 mt-2">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 font-bold text-slate-700 dark:text-slate-300">
+                      <th className="p-3">Fichier / Source</th>
+                      <th className="p-3 text-right">Dernier Réalisé</th>
+                      <th className="p-3 text-right font-black text-purple-700 dark:text-purple-300">Atterrissage Projeté</th>
+                      <th className="p-3 text-right">Écart vs Réf ({refSource})</th>
+                      <th className="p-3 text-center">Tendance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                    {calculsComparatifs.sources.map((s, idx) => {
+                      const refCible = calculsComparatifs.sourceRefData.cibleFinale;
+                      const deltaVsRef = Math.round((s.cibleFinale - refCible) * 100) / 100;
+                      const pctVsRef = Math.abs(refCible) > 0 ? Math.round((deltaVsRef / Math.abs(refCible)) * 1000) / 10 : 0;
+                      const estRef = s.nomSrc === refSource;
 
-                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 font-bold text-slate-700 dark:text-slate-300">
-                        <th className="p-3">Période</th>
-                        <th className="p-3 text-right">Borne Basse (Prudent)</th>
-                        <th className="p-3 text-right font-black text-purple-700 dark:text-purple-300">Projection Médiane</th>
-                        <th className="p-3 text-right">Borne Haute (Favorable)</th>
-                        <th className="p-3 text-center">Incertitude</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                      {sourceActive.projections.map((p, idx) => {
-                        const amplitude = p.borneHaute - p.borneBasse;
-                        return (
-                          <tr key={p.periode} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                              <span className="w-2 h-2 rounded-full bg-cyan-600"></span>
-                              {p.periode} {idx === 0 && <span className="text-[10px] text-slate-400 font-normal">(prochain mois)</span>}
-                            </td>
-                            <td className="p-3 text-right text-slate-600 dark:text-slate-400 font-mono">
-                              {p.borneBasse.toLocaleString("fr-FR")}
-                            </td>
-                            <td className="p-3 text-right font-bold text-purple-700 dark:text-purple-300 font-mono text-sm">
-                              {p.valeurPrevue.toLocaleString("fr-FR")}
-                            </td>
-                            <td className="p-3 text-right text-slate-600 dark:text-slate-400 font-mono">
-                              {p.borneHaute.toLocaleString("fr-FR")}
-                            </td>
-                            <td className="p-3 text-center">
-                              <span className="text-[10px] bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-500">
-                                ± {Math.round(amplitude / 2).toLocaleString("fr-FR")}
+                      return (
+                        <tr key={s.nomSrc} className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${estRef ? "bg-purple-50/30 dark:bg-purple-950/20" : ""}`}>
+                          <td className="p-3 font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                            <span
+                              className="w-2.5 h-2.5 rounded-full"
+                              style={{ backgroundColor: PALETTE_COMPARAISON[idx % PALETTE_COMPARAISON.length].reel }}
+                            ></span>
+                            {s.nomSrc} {estRef && <span className="text-[10px] text-purple-600 font-bold">(Réf)</span>}
+                          </td>
+                          <td className="p-3 text-right font-mono text-slate-600 dark:text-slate-400">
+                            {s.dernierReel.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="p-3 text-right font-mono font-bold text-purple-700 dark:text-purple-300">
+                            {s.cibleFinale.toLocaleString("fr-FR")}
+                          </td>
+                          <td className="p-3 text-right font-mono font-bold">
+                            {estRef ? (
+                              <span className="text-slate-400 font-normal">—</span>
+                            ) : (
+                              <span className={deltaVsRef >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                                {deltaVsRef >= 0 ? "+" : ""}{deltaVsRef.toLocaleString("fr-FR")} ({pctVsRef >= 0 ? "+" : ""}{pctVsRef} %)
                               </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                            )}
+                          </td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                s.variationPct >= 0
+                                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40"
+                                  : "bg-rose-50 text-rose-700 dark:bg-rose-950/40"
+                              }`}
+                            >
+                              {s.variationPct >= 0 ? "+" : ""}{s.variationPct} %
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* ONGLET 3 : DIAGNOSTIC DE L'HISTORIQUE PASSÉ */}
-            {ongletExplication === "historique" && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                    <span className="text-slate-400 block text-[11px]">Creux historique le plus bas</span>
-                    <strong className="text-rose-600 text-sm">{analyseAvancee.pointMin.periode}</strong>
-                    <p className="font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5">
-                      {analyseAvancee.pointMin.valeur.toLocaleString("fr-FR")}
-                    </p>
-                  </div>
+          {/* SECTION EXPLICATIVE APPROFONDIE (ACTIF EN BENCHMARK & UNIQUE) */}
+          {sourceActive && analyseAvancee && calculsDecisionnels && (
+            <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-50/40 dark:bg-slate-900/60">
+              {/* Barre d'onglets */}
+              <div className="flex border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 pt-2 gap-2 text-xs overflow-x-auto">
+                <button
+                  onClick={() => setOngletExplication("scenarios")}
+                  className={`pb-2.5 px-3 font-bold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
+                    ongletExplication === "scenarios"
+                      ? "border-purple-600 text-purple-700 dark:text-purple-300"
+                      : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Target className="w-3.5 h-3.5" />
+                  1. Les 3 Scénarios d&apos;atterrissage
+                </button>
 
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                    <span className="text-slate-400 block text-[11px]">Pic historique le plus haut</span>
-                    <strong className="text-emerald-600 text-sm">{analyseAvancee.pointMax.periode}</strong>
-                    <p className="font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5">
-                      {analyseAvancee.pointMax.valeur.toLocaleString("fr-FR")}
-                    </p>
-                  </div>
+                <button
+                  onClick={() => setOngletExplication("calendrier")}
+                  className={`pb-2.5 px-3 font-bold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
+                    ongletExplication === "calendrier"
+                      ? "border-purple-600 text-purple-700 dark:text-purple-300"
+                      : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  2. Calendrier mois par mois
+                </button>
 
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                    <span className="text-slate-400 block text-[11px]">Volatilité mensuelle constatée</span>
-                    <strong className="text-purple-600 text-sm">± {analyseAvancee.volatilitePct} % de variation</strong>
-                    <p className="text-slate-500 text-[11px] mt-0.5">
-                      Écart max/min de {analyseAvancee.ecartExtremes}×
-                    </p>
-                  </div>
-                </div>
+                <button
+                  onClick={() => setOngletExplication("historique")}
+                  className={`pb-2.5 px-3 font-bold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
+                    ongletExplication === "historique"
+                      ? "border-purple-600 text-purple-700 dark:text-purple-300"
+                      : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  3. Origine de l&apos;incertitude passée
+                </button>
 
-                <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
-                  <h4 className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-amber-500" />
-                    Pourquoi la fourchette est-elle aussi large ?
-                  </h4>
-                  <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                    L&apos;historique de <strong>{sourceActive.nom}</strong> ne suit pas une ligne droite régulière : il a connu un creux prononcé en{" "}
-                    <strong>{analyseAvancee.pointMin.periode}</strong> ({analyseAvancee.pointMin.valeur.toLocaleString("fr-FR")}) avant de rebondir en{" "}
-                    <strong>{analyseAvancee.pointMax.periode}</strong> ({analyseAvancee.pointMax.valeur.toLocaleString("fr-FR")}).
-                  </p>
-                  <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                    Le moteur statistique prend en compte cette forte fluctuation passée (R² = {sourceActive.metriques.r2}). Pour ne pas vous induire en erreur avec une certitude artificielle, il élargit automatiquement la zone d&apos;incertitude.
-                  </p>
-                </div>
+                <button
+                  onClick={() => setOngletExplication("guide")}
+                  className={`pb-2.5 px-3 font-bold border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
+                    ongletExplication === "guide"
+                      ? "border-purple-600 text-purple-700 dark:text-purple-300"
+                      : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Lightbulb className="w-3.5 h-3.5" />
+                  4. Recommandations concrètes
+                </button>
               </div>
-            )}
 
-            {/* ONGLET 4 : RECOMMANDATIONS OPÉRATIONNELLES CHIFFRÉES */}
-            {ongletExplication === "guide" && (
-              <div className="space-y-4">
-                {alerteMetier && (
-                  <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-xs text-amber-900 dark:text-amber-200 space-y-1">
-                    <div className="flex items-center gap-2 font-bold">
-                      <ShieldAlert className="w-4 h-4 text-amber-600" />
-                      <span>Attention à l&apos;interprétation de cette grandeur</span>
+              <div className="p-5 text-xs">
+                {/* ONGLET 1 : LES 3 SCÉNARIOS CHIFFRÉS */}
+                {ongletExplication === "scenarios" && (
+                  <div className="space-y-4">
+                    <p className="text-slate-600 dark:text-slate-400">
+                      À l&apos;horizon <strong>{analyseAvancee.derniereProj.periode}</strong>
+                      {estBenchmarkActif && (
+                        <span> pour la série <strong>{sourceActive.nom}</strong></span>
+                      )}
+                      , voici les trois trajectoires envisageables pour arbitrer vos décisions :
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Scénario Prudent */}
+                      <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                            <ShieldAlert className="w-4 h-4 text-amber-600" />
+                            Scénario Prudent (Bas)
+                          </span>
+                          <span className="text-[10px] bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold">
+                            Plancher de sécurité
+                          </span>
+                        </div>
+                        <div className="text-xl font-black text-slate-900 dark:text-white">
+                          {analyseAvancee.derniereProj.borneBasse.toLocaleString("fr-FR")}
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          Le seuil minimal statistique si les aléas défavorables se cumulent. Utilisez ce montant pour sécuriser votre trésorerie ou calibrer un budget strict.
+                        </p>
+                      </div>
+
+                      {/* Scénario Médian */}
+                      <div className="p-4 rounded-xl bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 shadow-sm space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                            <Target className="w-4 h-4 text-purple-600" />
+                            Scénario Médian (Cible)
+                          </span>
+                          <span className="text-[10px] bg-purple-200/80 text-purple-800 dark:bg-purple-900 dark:text-purple-200 px-2 py-0.5 rounded-full font-bold">
+                            Projection centrale
+                          </span>
+                        </div>
+                        <div className="text-xl font-black text-purple-700 dark:text-purple-300">
+                          {analyseAvancee.derniereProj.valeurPrevue.toLocaleString("fr-FR")}
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                          L&apos;atterrissage le plus probable d&apos;après le prolongement mathématique de la tendance ({sourceActive.metriques.variationEstimeePct >= 0 ? "+" : ""}{sourceActive.metriques.variationEstimeePct} %). Votre repère d&apos;objectifs.
+                        </p>
+                      </div>
+
+                      {/* Scénario Favorable */}
+                      <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                            <Flame className="w-4 h-4 text-emerald-600" />
+                            Scénario Favorable (Haut)
+                          </span>
+                          <span className="text-[10px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                            Potentiel maximal
+                          </span>
+                        </div>
+                        <div className="text-xl font-black text-slate-900 dark:text-white">
+                          {analyseAvancee.derniereProj.borneHaute.toLocaleString("fr-FR")}
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          Le plafond envisageable si l&apos;activité connaît une dynamique particulièrement forte sans à-coups négatifs.
+                        </p>
+                      </div>
                     </div>
-                    <p className="leading-relaxed">{alerteMetier}</p>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* 1. SEUIL D'ALERTE IMMÉDIAT (J+30) */}
-                  <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                        <Target className="w-4 h-4 text-purple-600" />
-                        Seuil d&apos;invalidation à J+30 ({calculsDecisionnels.prochainMois.periode})
-                      </span>
-                      <span className="text-[10px] font-bold bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300 px-2 py-0.5 rounded-full">
-                        Contrôle immédiat
-                      </span>
-                    </div>
-                    <p className="text-xl font-black text-rose-600 dark:text-rose-400 font-mono">
-                      &lt; {calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}
+                {/* ONGLET 2 : DÉCOMPOSITION MOIS PAR MOIS */}
+                {ongletExplication === "calendrier" && (
+                  <div className="space-y-3">
+                    <p className="text-slate-600 dark:text-slate-400">
+                      Détail de la progression estimée sur chacune des périodes à venir
+                      {estBenchmarkActif && (
+                        <span> pour <strong>{sourceActive.nom}</strong></span>
+                      )} :
                     </p>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                      La cible prévue pour le mois prochain sur <strong>{sourceActive.nom}</strong> est de <strong>{calculsDecisionnels.prochainMois.valeurPrevue.toLocaleString("fr-FR")}</strong>. 
-                      Si vous clôturez le mois prochain en dessous de <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong>, la dynamique haussière est compromise : réajustez immédiatement vos objectifs sans attendre la fin du trimestre.
-                    </p>
-                  </div>
 
-                  {/* 2. CADENCE OPÉRATIONNELLE REQUISE */}
-                  <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                        <TrendingUp className="w-4 h-4 text-emerald-600" />
-                        Cadence mensuelle requise
-                      </span>
-                      <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 px-2 py-0.5 rounded-full">
-                        Plan d&apos;action
-                      </span>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 font-bold text-slate-700 dark:text-slate-300">
+                            <th className="p-3">Période</th>
+                            <th className="p-3 text-right">Borne Basse (Prudent)</th>
+                            <th className="p-3 text-right font-black text-purple-700 dark:text-purple-300">Projection Médiane</th>
+                            <th className="p-3 text-right">Borne Haute (Favorable)</th>
+                            <th className="p-3 text-center">Incertitude</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                          {sourceActive.projections.map((p, idx) => {
+                            const amplitude = p.borneHaute - p.borneBasse;
+                            return (
+                              <tr key={p.periode} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                <td className="p-3 font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                                  <span className="w-2 h-2 rounded-full bg-cyan-600"></span>
+                                  {p.periode} {idx === 0 && <span className="text-[10px] text-slate-400 font-normal">(prochain mois)</span>}
+                                </td>
+                                <td className="p-3 text-right text-slate-600 dark:text-slate-400 font-mono">
+                                  {p.borneBasse.toLocaleString("fr-FR")}
+                                </td>
+                                <td className="p-3 text-right font-bold text-purple-700 dark:text-purple-300 font-mono text-sm">
+                                  {p.valeurPrevue.toLocaleString("fr-FR")}
+                                </td>
+                                <td className="p-3 text-right text-slate-600 dark:text-slate-400 font-mono">
+                                  {p.borneHaute.toLocaleString("fr-FR")}
+                                </td>
+                                <td className="p-3 text-center">
+                                  <span className="text-[10px] bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-500">
+                                    ± {Math.round(amplitude / 2).toLocaleString("fr-FR")}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
-                    <p className="text-xl font-black text-slate-900 dark:text-white font-mono">
-                      {calculsDecisionnels.effortMensuelMoyen >= 0 ? "+" : ""}
-                      {calculsDecisionnels.effortMensuelMoyen.toLocaleString("fr-FR")} / mois
-                    </p>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                      Pour passer du niveau actuel ({calculsDecisionnels.dernierReelVal.toLocaleString("fr-FR")}) à la cible finale de {calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} en {calculsDecisionnels.cibleFinale.periode}, l&apos;activité de {sourceActive.nom} doit générer cette progression nette régulière chaque mois.
-                    </p>
                   </div>
+                )}
 
-                  {/* 3. DIMENSIONNEMENT DES COÛTS & CAPACITÉS */}
-                  <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                        <ShieldAlert className="w-4 h-4 text-amber-600" />
-                        Plafond d&apos;engagement sécurisé
-                      </span>
-                      <span className="text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 px-2 py-0.5 rounded-full">
-                        Trésorerie / Achats
-                      </span>
-                    </div>
-                    <p className="text-xl font-black text-amber-600 dark:text-amber-400 font-mono">
-                      {calculsDecisionnels.plafondEngagement.toLocaleString("fr-FR")} max
-                    </p>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                      En raison de l&apos;incertitude constatée ({sourceActive.metriques.fiabilite.toLowerCase()}), ne calibrez pas vos charges fixes ou vos commandes fermes sur la cible de {calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")}. Engagez au maximum ce montant pour préserver vos marges en cas de retournement.
-                    </p>
-                  </div>
+                {/* ONGLET 3 : DIAGNOSTIC DE L'HISTORIQUE PASSÉ */}
+                {ongletExplication === "historique" && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <span className="text-slate-400 block text-[11px]">Creux historique le plus bas</span>
+                        <strong className="text-rose-600 text-sm">{analyseAvancee.pointMin.periode}</strong>
+                        <p className="font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                          {analyseAvancee.pointMin.valeur.toLocaleString("fr-FR")}
+                        </p>
+                      </div>
 
-                  {/* 4. PROVISION SUR CHOC PASSÉ */}
-                  <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                        <Activity className="w-4 h-4 text-cyan-600" />
-                        Coussin d&apos;accident historique
-                      </span>
-                      <span className="text-[10px] font-bold bg-cyan-50 text-cyan-800 dark:bg-cyan-950/50 dark:text-cyan-300 px-2 py-0.5 rounded-full">
-                        Risque de creux
-                      </span>
+                      <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <span className="text-slate-400 block text-[11px]">Pic historique le plus haut</span>
+                        <strong className="text-emerald-600 text-sm">{analyseAvancee.pointMax.periode}</strong>
+                        <p className="font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                          {analyseAvancee.pointMax.valeur.toLocaleString("fr-FR")}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <span className="text-slate-400 block text-[11px]">Volatilité mensuelle constatée</span>
+                        <strong className="text-purple-600 text-sm">± {analyseAvancee.volatilitePct} % de variation</strong>
+                        <p className="text-slate-500 text-[11px] mt-0.5">
+                          {analyseAvancee.ecartExtremes !== null
+                            ? `Écart max/min de ${analyseAvancee.ecartExtremes}×`
+                            : "Amplitude calculée sur valeurs nulles ou négatives"}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-xl font-black text-cyan-600 dark:text-cyan-400 font-mono">
-                      {calculsDecisionnels.pireChute > 0 ? `${calculsDecisionnels.pireChute.toLocaleString("fr-FR")} de réserve` : "Faible amplitude"}
-                    </p>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                      La plus forte chute mensuelle observée dans l&apos;historique de {sourceActive.nom} a atteint <strong>{calculsDecisionnels.pireChute.toLocaleString("fr-FR")}</strong>. C&apos;est le montant exact de réserve à conserver pour continuer d&apos;opérer sans stress si un creux similaire venait à se reproduire.
-                    </p>
+
+                    <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
+                      <h4 className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        Pourquoi la fourchette est-elle aussi large ?
+                      </h4>
+                      <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                        L&apos;historique de <strong>{sourceActive.nom}</strong> ne suit pas une ligne droite régulière : il a connu un creux prononcé en{" "}
+                        <strong>{analyseAvancee.pointMin.periode}</strong> ({analyseAvancee.pointMin.valeur.toLocaleString("fr-FR")}) avant de rebondir en{" "}
+                        <strong>{analyseAvancee.pointMax.periode}</strong> ({analyseAvancee.pointMax.valeur.toLocaleString("fr-FR")}).
+                      </p>
+                      <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                        Le moteur statistique prend en compte cette forte fluctuation passée (R² = {sourceActive.metriques.r2}). Pour ne pas vous induire en erreur avec une certitude artificielle, il élargit automatiquement la zone d&apos;incertitude.
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* ONGLET 4 : RECOMMANDATIONS OPÉRATIONNELLES CHIFFRÉES */}
+                {ongletExplication === "guide" && (
+                  <div className="space-y-4">
+                    {alerteMetier && (
+                      <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-xs text-amber-900 dark:text-amber-200 space-y-1">
+                        <div className="flex items-center gap-2 font-bold">
+                          <ShieldAlert className="w-4 h-4 text-amber-600" />
+                          <span>Attention à l&apos;interprétation de cette grandeur</span>
+                        </div>
+                        <p className="leading-relaxed">{alerteMetier}</p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* 1. SEUIL D'ALERTE IMMÉDIAT (J+30) */}
+                      <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            <Target className="w-4 h-4 text-purple-600" />
+                            Seuil d&apos;invalidation à J+30 ({calculsDecisionnels.prochainMois.periode})
+                          </span>
+                          <span className="text-[10px] font-bold bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300 px-2 py-0.5 rounded-full">
+                            Contrôle immédiat
+                          </span>
+                        </div>
+                        <p className="text-xl font-black text-rose-600 dark:text-rose-400 font-mono">
+                          &lt; {calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}
+                        </p>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                          La cible prévue pour le mois prochain sur <strong>{sourceActive.nom}</strong> est de <strong>{calculsDecisionnels.prochainMois.valeurPrevue.toLocaleString("fr-FR")}</strong>.{" "}
+                          {sourceActive.metriques.sensTendance === "baisse" ? (
+                            <>La dynamique observée est en recul. Si vous clôturez le mois prochain sous <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong>, la baisse s&apos;accélère au-delà des tolérances : ajustez vos coûts sans attendre la fin du trimestre.</>
+                          ) : (
+                            <>Si vous clôturez le mois prochain en dessous de <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong>, la dynamique haussière est compromise : réajustez immédiatement vos objectifs sans attendre la fin du trimestre.</>
+                          )}
+                        </p>
+                      </div>
+
+                      {/* 2. CADENCE OPÉRATIONNELLE REQUISE */}
+                      <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            <TrendingUp className="w-4 h-4 text-emerald-600" />
+                            Cadence mensuelle requise
+                          </span>
+                          <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 px-2 py-0.5 rounded-full">
+                            Plan d&apos;action
+                          </span>
+                        </div>
+                        <p className="text-xl font-black text-slate-900 dark:text-white font-mono">
+                          {calculsDecisionnels.effortMensuelMoyen >= 0 ? "+" : ""}
+                          {calculsDecisionnels.effortMensuelMoyen.toLocaleString("fr-FR")} / mois
+                        </p>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                          Pour passer du niveau actuel ({calculsDecisionnels.dernierReelVal.toLocaleString("fr-FR")}) à la cible finale de {calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} en {calculsDecisionnels.cibleFinale.periode}, l&apos;activité de {sourceActive.nom} doit générer cette progression nette régulière chaque mois.
+                        </p>
+                      </div>
+
+                      {/* 3. DIMENSIONNEMENT DES COÛTS & CAPACITÉS */}
+                      <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            <ShieldAlert className="w-4 h-4 text-amber-600" />
+                            Plafond d&apos;engagement sécurisé
+                          </span>
+                          <span className="text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 px-2 py-0.5 rounded-full">
+                            Trésorerie / Achats
+                          </span>
+                        </div>
+                        <p className="text-xl font-black text-amber-600 dark:text-amber-400 font-mono">
+                          {calculsDecisionnels.plafondEngagement.toLocaleString("fr-FR")} max
+                        </p>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                          En raison de l&apos;incertitude constatée ({sourceActive.metriques.fiabilite.toLowerCase()}), ne calibrez pas vos charges fixes ou vos commandes fermes sur la cible de {calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")}. Engagez au maximum ce montant pour préserver vos marges en cas de retournement.
+                        </p>
+                      </div>
+
+                      {/* 4. PROVISION SUR CHOC PASSÉ */}
+                      <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            <Activity className="w-4 h-4 text-cyan-600" />
+                            Coussin d&apos;accident historique
+                          </span>
+                          <span className="text-[10px] font-bold bg-cyan-50 text-cyan-800 dark:bg-cyan-950/50 dark:text-cyan-300 px-2 py-0.5 rounded-full">
+                            Risque de creux
+                          </span>
+                        </div>
+                        <p className="text-xl font-black text-cyan-600 dark:text-cyan-400 font-mono">
+                          {calculsDecisionnels.pireChute > 0 ? `${calculsDecisionnels.pireChute.toLocaleString("fr-FR")} de réserve` : "Faible amplitude"}
+                        </p>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                          La plus forte chute mensuelle observée dans l&apos;historique de {sourceActive.nom} a atteint <strong>{calculsDecisionnels.pireChute.toLocaleString("fr-FR")}</strong>. C&apos;est le montant exact de réserve à conserver pour continuer d&apos;opérer sans stress si un creux similaire venait à se reproduire.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-
-          </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
-
     </div>
   );
 }

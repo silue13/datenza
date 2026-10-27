@@ -9,7 +9,8 @@ export function regressionLineaire(y: number[]) {
   const pente = den ? num / den : 0;
   const origine = my - pente * mx;
   y.forEach((v, i) => { sce += (v - (pente * i + origine)) ** 2; sct += (v - my) ** 2; });
-  return { pente, origine, r2: sct ? 1 - sce / sct : 0 };
+  const r2Calcule = sct ? 1 - sce / sct : 0;
+  return { pente, origine, r2: Math.max(0, Math.min(1, r2Calcule)) };
 }
 
 export function calculerTendance(valeurs: number[]) {
@@ -34,7 +35,8 @@ export function correlationPearson(x: number[], y: number[]) {
     vx += (x[i] - mx) ** 2;
     vy += (y[i] - my) ** 2;
   }
-  return vx && vy ? arrondir(cov / Math.sqrt(vx * vy)) : 0;
+  const r = vx && vy ? cov / Math.sqrt(vx * vy) : 0;
+  return arrondir(Math.max(-1, Math.min(1, r)));
 }
 
 export function interpreterCorrelation(r: number, langue: "fr" | "en" = "fr") {

@@ -17,6 +17,19 @@ export interface ContexteIA {
   note: string;
 }
 
+const PATTERNS_SENSIBLES = [
+  /password|mdp|secret/i,
+  /iban|rib|cb|carte|compte/i,
+  /ssn|secu|securite[_\s]?sociale/i,
+  /email|mail|courriel/i,
+  /tel|phone|telephone/i,
+  /salaire|remuneration/i,
+];
+
+function estColonneSensible(nomColonne: string): boolean {
+  return PATTERNS_SENSIBLES.some((regex) => regex.test(nomColonne));
+}
+
 export function construireContexte(
   nomFichier: string,
   entetes: string[],
@@ -26,9 +39,16 @@ export function construireContexte(
   const selection = Object.keys(res.statistiques);
   const apercu = corps.slice(0, 8).map((ligne) => {
     const o: Record<string, Cellule> = {};
-    for (const nom of selection) o[nom] = ligne[entetes.indexOf(nom)] ?? "";
+    for (const nom of selection) {
+      if (estColonneSensible(nom)) {
+        o[nom] = "[MASQUÉ - CONFIDENTIEL]";
+      } else {
+        o[nom] = ligne[entetes.indexOf(nom)] ?? "";
+      }
+    }
     return o;
   });
+
   return {
     fichier: nomFichier || "Fichier analysé",
     lignes: res.nbLignes,
@@ -39,6 +59,6 @@ export function construireContexte(
     correlations: res.correlations,
     mesures: res.mesures,
     apercuPremieresLignes: apercu,
-    note: "The complete raw data stays in the browser. Statistics are computed over the complete imported dataset. The preview contains only the first rows.",
+    note: "The complete raw data stays in the browser. Sensitive columns are masked. Statistics are computed over the complete imported dataset. The preview contains only the first rows.",
   };
 }

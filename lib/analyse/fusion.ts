@@ -8,7 +8,6 @@ export interface FichierEntree {
 }
 
 export type ModeAssemblage = "empilement" | "jointure";
-
 export type TypeJointure = "inter" | "anti_gauche" | "anti_droite" | "gauche_externe";
 
 export interface ConfigurationJointure {
@@ -43,7 +42,6 @@ export interface RapportNettoyage {
   espacesNettoyes: number;
   valeursVidesTraitees: number;
   colonnesFusionnees: { nomFinal: string; variantesDetectees: string[] }[];
-  // Métriques de réconciliation
   nbCorrespondances?: number;
   nbOrphelinsA?: number;
   nbOrphelinsB?: number;
@@ -109,7 +107,6 @@ function normaliserFormatDate(v: Cellule): string | null {
   return null;
 }
 
-/** Nettoie une ligne de cellules selon les options activées */
 function assainirLigne(
   ligneBrute: Cellule[],
   entetes: string[],
@@ -118,6 +115,12 @@ function assainirLigne(
 ): Cellule[] {
   return ligneBrute.map((valeurBrute, idxCol) => {
     const nomCol = entetes[idxCol] || "";
+
+    // Ne pas altérer la traçabilité du fichier source
+    if (nomCol === "Fichier Source") {
+      return valeurBrute;
+    }
+
     const exclueDate = estColonneExclueDeDate(nomCol);
     let val: Cellule = valeurBrute;
 
@@ -138,10 +141,14 @@ function assainirLigne(
     }
 
     if (options.harmoniserFormatsNumeriques && typeof val === "string") {
-      const nb = parseNombre(val);
-      if (nb !== null && !/^\d{4}-\d{2}-\d{2}$/.test(val)) {
-        compteurs.nb++;
-        val = nb;
+      const estColId = /(id|code|num|ref|matricule|tel|phone|postal|zip)/i.test(nomCol);
+      const aZeroInitial = /^0\d+/.test(val.trim());
+      if (!estColId && !aZeroInitial) {
+        const nb = parseNombre(val);
+        if (nb !== null && !/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+          compteurs.nb++;
+          val = nb;
+        }
       }
     }
 
@@ -165,9 +172,9 @@ export function fusionnerEtNettoyer(
   let doublonsSupprimes = 0;
   const totalLignesInitiales = fichiers.reduce((acc, f) => acc + f.corps.length, 0);
 
-  // =========================================================================
-  // SCÉNARIO 1 : RÉCONCILIATION / JOINTURES (Power Query : Inter, Anti, etc.)
-  // =========================================================================
+  // ==========================================
+  // MODE 1 : JOINTURE RELATIONNELLE
+  // ==========================================
   if (options.mode === "jointure" && options.jointure && fichiers.length >= 2) {
     const { indexFichierA, indexFichierB, cleFichierA, cleFichierB, typeJointure } =
       options.jointure;
@@ -179,9 +186,8 @@ export function fusionnerEtNettoyer(
     const idxCleB = tableB.entetes.indexOf(cleFichierB);
 
     let entetesFinaux: string[] = [];
-    let lignesBrutesJointes: Cellule[][] = [];
+    const lignesBrutesJointes: Cellule[][] = [];
 
-    // Indexation de la Table B par sa clé
     const mapTableB = new Map<string, Cellule[][]>();
     tableB.corps.forEach((ligne) => {
       const cleVal = normaliserCle(ligne[idxCleB]);
@@ -195,14 +201,24 @@ export function fusionnerEtNettoyer(
     let nbOrphelinsA = 0;
     let nbOrphelinsB = 0;
 
-    // Colonnes de B à fusionner (on évite de dupliquer la colonne clé si elle porte le même nom)
+    // Colonnes de A (hors Fichier Source déjà existant)
+    const indicesColsA: number[] = [];
+    const colsA: string[] = [];
+    tableA.entetes.forEach((col, idx) => {
+      if (col !== "Fichier Source") {
+        colsA.push(col);
+        indicesColsA.push(idx);
+      }
+    });
+
+    // Colonnes de B (hors clé et Fichier Source)
     const indicesColsBIncluses: number[] = [];
     const entetesColsBAjoutees: string[] = [];
 
     tableB.entetes.forEach((nomColB, iB) => {
-      if (iB === idxCleB) return; // Clé de B ignorée pour éviter le doublon strict
+      if (iB === idxCleB || nomColB === "Fichier Source") return;
       let nomFinal = nomColB;
-      if (tableA.entetes.includes(nomFinal)) {
+      if (colsA.includes(nomFinal)) {
         nomFinal = `${nomColB}_${tableB.nom.replace(/\.[^/.]+$/, "").slice(0, 10)}`;
       }
       entetesColsBAjoutees.push(nomFinal);
@@ -210,48 +226,58 @@ export function fusionnerEtNettoyer(
     });
 
     if (typeJointure === "inter") {
-      // 1. INTER (INNER JOIN) : Uniquement ce qui est dans A ET dans B
-      entetesFinaux = [...tableA.entetes, ...entetesColsBAjoutees];
+      entetesFinaux = ["Fichier Source", ...colsA, ...entetesColsBAjoutees];
 
       tableA.corps.forEach((ligneA) => {
         const cleA = normaliserCle(ligneA[idxCleA]);
+        if (!cleA) return;
         const matchsB = mapTableB.get(cleA);
 
         if (matchsB && matchsB.length > 0) {
           clesCorrespondantes.add(cleA);
           nbCorrespondances++;
+          const valsA = indicesColsA.map((iA) => ligneA[iA] ?? "");
+
           matchsB.forEach((ligneB) => {
             const suiteB = indicesColsBIncluses.map((iB) => ligneB[iB] ?? "");
-            lignesBrutesJointes.push([...ligneA, ...suiteB]);
+            lignesBrutesJointes.push([`${tableA.nom} + ${tableB.nom}`, ...valsA, ...suiteB]);
           });
         } else {
           nbOrphelinsA++;
         }
       });
 
-      // Calcul des orphelins B
       tableB.corps.forEach((ligneB) => {
         const cleB = normaliserCle(ligneB[idxCleB]);
-        if (!clesCorrespondantes.has(cleB)) nbOrphelinsB++;
+        if (cleB && !clesCorrespondantes.has(cleB)) nbOrphelinsB++;
       });
     } else if (typeJointure === "anti_gauche") {
-      // 2. ANTI-GAUCHE (LEFT ANTI) : Lignes de A absentes de B
-      entetesFinaux = [...tableA.entetes];
+      entetesFinaux = ["Fichier Source", ...colsA];
 
       tableA.corps.forEach((ligneA) => {
         const cleA = normaliserCle(ligneA[idxCleA]);
+        if (!cleA) return;
         const matchsB = mapTableB.get(cleA);
 
         if (!matchsB || matchsB.length === 0) {
           nbOrphelinsA++;
-          lignesBrutesJointes.push(ligneA);
+          const valsA = indicesColsA.map((iA) => ligneA[iA] ?? "");
+          lignesBrutesJointes.push([tableA.nom, ...valsA]);
         } else {
           nbCorrespondances++;
         }
       });
     } else if (typeJointure === "anti_droite") {
-      // 3. ANTI-DROITE (RIGHT ANTI) : Lignes de B absentes de A
-      entetesFinaux = [...tableB.entetes];
+      const indicesColsB: number[] = [];
+      const colsB: string[] = [];
+      tableB.entetes.forEach((col, idx) => {
+        if (col !== "Fichier Source") {
+          colsB.push(col);
+          indicesColsB.push(idx);
+        }
+      });
+
+      entetesFinaux = ["Fichier Source", ...colsB];
 
       const clesTableA = new Set(
         tableA.corps.map((l) => normaliserCle(l[idxCleA])).filter(Boolean)
@@ -259,36 +285,37 @@ export function fusionnerEtNettoyer(
 
       tableB.corps.forEach((ligneB) => {
         const cleB = normaliserCle(ligneB[idxCleB]);
+        if (!cleB) return;
         if (!clesTableA.has(cleB)) {
           nbOrphelinsB++;
-          lignesBrutesJointes.push(ligneB);
+          const valsB = indicesColsB.map((iB) => ligneB[iB] ?? "");
+          lignesBrutesJointes.push([tableB.nom, ...valsB]);
         } else {
           nbCorrespondances++;
         }
       });
     } else if (typeJointure === "gauche_externe") {
-      // 4. GAUCHE EXTERNE (LEFT OUTER) : Tout A + B si correspondance
-      entetesFinaux = [...tableA.entetes, ...entetesColsBAjoutees];
+      entetesFinaux = ["Fichier Source", ...colsA, ...entetesColsBAjoutees];
 
       tableA.corps.forEach((ligneA) => {
         const cleA = normaliserCle(ligneA[idxCleA]);
-        const matchsB = mapTableB.get(cleA);
+        const matchsB = cleA ? mapTableB.get(cleA) : undefined;
+        const valsA = indicesColsA.map((iA) => ligneA[iA] ?? "");
 
         if (matchsB && matchsB.length > 0) {
           nbCorrespondances++;
           matchsB.forEach((ligneB) => {
             const suiteB = indicesColsBIncluses.map((iB) => ligneB[iB] ?? "");
-            lignesBrutesJointes.push([...ligneA, ...suiteB]);
+            lignesBrutesJointes.push([`${tableA.nom} + ${tableB.nom}`, ...valsA, ...suiteB]);
           });
         } else {
-          nbOrphelinsA++;
+          if (cleA) nbOrphelinsA++;
           const suiteVide = new Array(indicesColsBIncluses.length).fill("");
-          lignesBrutesJointes.push([...ligneA, ...suiteVide]);
+          lignesBrutesJointes.push([tableA.nom, ...valsA, ...suiteVide]);
         }
       });
     }
 
-    // Assainissement des lignes résultantes
     const corpsFinal: Cellule[][] = [];
     const empreintes = new Set<string>();
 
@@ -296,7 +323,11 @@ export function fusionnerEtNettoyer(
       const lignePropre = assainirLigne(ligne, entetesFinaux, options, compteurs);
 
       if (options.supprimerDoublons) {
-        const emp = lignePropre.map((v) => String(v ?? "").toLowerCase().trim()).join("§");
+        const emp = lignePropre
+          .filter((_, idx) => entetesFinaux[idx] !== "Fichier Source")
+          .map((v) => String(v ?? "").toLowerCase().trim())
+          .join("§");
+
         if (empreintes.has(emp)) {
           doublonsSupprimes++;
           return;
@@ -329,9 +360,9 @@ export function fusionnerEtNettoyer(
     };
   }
 
-  // =========================================================================
-  // SCÉNARIO 2 : CONSOLIDATION VERTICALE (Empilement classique)
-  // =========================================================================
+  // ==========================================
+  // MODE 2 : EMPILEMENT (APPEND)
+  // ==========================================
   const mapNormaliseVersOriginal = new Map<string, string>();
   const mapVariantes = new Map<string, Set<string>>();
 
@@ -349,7 +380,8 @@ export function fusionnerEtNettoyer(
     });
   });
 
-  const entetesFinaux = Array.from(mapNormaliseVersOriginal.values());
+  const colonnesDonnees = Array.from(mapNormaliseVersOriginal.values());
+  const entetesFinaux = ["Fichier Source", ...colonnesDonnees];
 
   const colonnesFusionnees: { nomFinal: string; variantesDetectees: string[] }[] = [];
   mapVariantes.forEach((variantes, cle) => {
@@ -366,6 +398,7 @@ export function fusionnerEtNettoyer(
 
   fichiers.forEach((f) => {
     const mappingIndex = f.entetes.map((h) => {
+      if (h === "Fichier Source") return -1;
       const cle = options.alignerColonnesSimilaires ? normaliserCleColonne(h) : h.trim();
       const nomFinal = mapNormaliseVersOriginal.get(cle);
       return nomFinal ? entetesFinaux.indexOf(nomFinal) : -1;
@@ -375,6 +408,9 @@ export function fusionnerEtNettoyer(
       const nouvelleLigne: Cellule[] = new Array(entetesFinaux.length).fill(
         options.remplirValeursVides ? options.valeurRemplacementVide : ""
       );
+
+      // Attribution de la source pour chaque enregistrement
+      nouvelleLigne[0] = f.nom;
 
       ligneOriginale.forEach((valeurBrute, idxColSource) => {
         const idxFinal = mappingIndex[idxColSource];
@@ -386,6 +422,7 @@ export function fusionnerEtNettoyer(
 
       if (options.supprimerDoublons) {
         const empreinte = lignePropre
+          .filter((_, idx) => entetesFinaux[idx] !== "Fichier Source")
           .map((v) => String(v ?? "").toLowerCase().trim())
           .join("§");
 

@@ -1,6 +1,5 @@
 import ExcelJS from "exceljs";
-import { Cellule } from "./utils";
-
+import { Cellule, parseNombre } from "./utils";
 // Style d'en-tête Cobalt Executive
 function styliserEnTete(worksheet: ExcelJS.Worksheet) {
   const headerRow = worksheet.getRow(1);
@@ -22,6 +21,8 @@ function zebrerLigne(row: ExcelJS.Row, index: number) {
   }
 }
 
+
+
 export async function exporterExcelExecutive(
   nomProjet: string,
   entetes: string[],
@@ -33,9 +34,6 @@ export async function exporterExcelExecutive(
   workbook.creator = "DATENZA v2.0";
   workbook.created = new Date();
 
-  // =========================================================================
-  // ONGLET 1 : DONNÉES AUDITÉES
-  // =========================================================================
   const aUneSource = entetes[0] === "Fichier Source";
   const wsData = workbook.addWorksheet("Données Auditées", {
     views: [{ state: "frozen", xSplit: aUneSource ? 1 : 0, ySplit: 1, showGridLines: true }],
@@ -51,6 +49,15 @@ export async function exporterExcelExecutive(
     row.eachCell((cell, colNumber) => {
       const colName = entetes[colNumber - 1].toLowerCase();
       const valStr = String(cell.value || "").trim();
+
+      const estIdentifiantOuDate = /(id|code|num|ref|matricule|tel|phone|postal|zip|date|jour|mois|annee)/i.test(colName);
+      if (!estIdentifiantOuDate && typeof cell.value === "string") {
+        const parsed = parseNombre(cell.value);
+        if (parsed !== null) {
+          cell.value = parsed;
+        }
+      }
+
       const valNum = Number(cell.value);
 
       cell.border = {
@@ -75,6 +82,9 @@ export async function exporterExcelExecutive(
         cell.alignment = { horizontal: "right", vertical: "middle" };
         if (!isNaN(valNum) && valNum < 0) cell.font = { color: { argb: "FFDC2626" }, bold: true };
       } else if (colName.includes("pct") || colName.includes("taux") || colName.includes("%") || colName.includes("remise")) {
+        if (typeof cell.value === "number" && Math.abs(cell.value) > 1) {
+          cell.value = cell.value / 100;
+        }
         cell.numFmt = "0.00%";
         cell.alignment = { horizontal: "right", vertical: "middle" };
       } else if (colName.includes("statut") || colName.includes("état") || colName.includes("contrôle")) {
@@ -98,6 +108,8 @@ export async function exporterExcelExecutive(
     });
     column.width = Math.min(max + 4, 45);
   });
+
+  // ... [Conserver les onglets 2, 3, 4 et le téléchargement du blob]
 
   // =========================================================================
   // ONGLET 2 : PROFILING DES VARIABLES

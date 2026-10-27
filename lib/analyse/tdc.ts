@@ -36,18 +36,21 @@ export function parseNombreTdc(val: Cell): number | null {
     str = '-' + str.slice(1, -1);
   }
 
-  // Nettoyage des devises et du symbole pourcentage %
   str = str.replace(/(FCFA|CFA|EUR|USD|GBP|[€$£Ff%])/gi, '').trim();
   str = str.replace(/[\s\u00A0\u202F]+/g, '');
 
   if (str === '' || str === '-' || str === '+') return null;
 
   if (str.includes(',') && str.includes('.')) {
-    if (str.indexOf(',') < str.indexOf('.')) {
+    if (str.lastIndexOf(',') < str.lastIndexOf('.')) {
       str = str.replace(/,/g, '');
     } else {
-      str = str.replace(/\./g, '').replace(',', '.');
+      str = str.replace(/\./g, '').replace(/,/g, '.');
     }
+  } else if ((str.match(/,/g) || []).length > 1) {
+    str = str.replace(/,/g, '');
+  } else if ((str.match(/\./g) || []).length > 1) {
+    str = str.replace(/\./g, '');
   } else if (str.includes(',')) {
     str = str.replace(',', '.');
   }
@@ -55,6 +58,7 @@ export function parseNombreTdc(val: Cell): number | null {
   const num = Number(str);
   return isNaN(num) ? null : num;
 }
+
 export function valeurTdcInvalide(v: Cell): boolean {
   if (v === null || v === undefined) return true;
   return ['', 'n/a', 'na', 'n.a.', '#n/a', 'null', 'undefined', '-', '—'].includes(
@@ -176,12 +180,20 @@ export function calculerTdcAvecLimite(
   const brut = calculerTdc(d, champsLignes, champsColonnes, champsValeurs, agregation);
   let { lignes, colonnes, matrice } = brut;
   let tronque = false;
-  const somme = (row: (number | null)[]) => row.reduce<number>((a, b) => a + (b ?? 0), 0);
+
+  const scoreVecteur = (vals: (number | null)[]) => {
+    const valides = vals.filter((v): v is number => v !== null && !isNaN(v));
+    if (!valides.length) return 0;
+    if (agregation === 'moyenne') return valides.reduce((a, b) => a + b, 0) / valides.length;
+    if (agregation === 'min') return Math.min(...valides);
+    if (agregation === 'max') return Math.max(...valides);
+    return valides.reduce((a, b) => a + b, 0);
+  };
 
   if (lignes.length > NB_MAX_LIGNES_TDC) {
     const gardes = matrice
-      .map((row, i) => ({ i, total: somme(row) }))
-      .sort((a, b) => b.total - a.total)
+      .map((row, i) => ({ i, score: scoreVecteur(row) }))
+      .sort((a, b) => b.score - a.score)
       .slice(0, NB_MAX_LIGNES_TDC)
       .map((x) => x.i)
       .sort((a, b) => a - b);
@@ -192,8 +204,8 @@ export function calculerTdcAvecLimite(
 
   if (colonnes.length > NB_MAX_COLONNES_TDC) {
     const gardees = colonnes
-      .map((_, j) => ({ j, total: matrice.reduce((a, row) => a + (row[j] ?? 0), 0) }))
-      .sort((a, b) => b.total - a.total)
+      .map((_, j) => ({ j, score: scoreVecteur(matrice.map((row) => row[j])) }))
+      .sort((a, b) => b.score - a.score)
       .slice(0, NB_MAX_COLONNES_TDC)
       .map((x) => x.j)
       .sort((a, b) => a - b);

@@ -1,19 +1,26 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Bar, Line, Pie, Doughnut } from "react-chartjs-2";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
-  Sparkles,
   AlertCircle,
   Plus,
   Trash2,
   Scale,
   Presentation,
+  Loader2,
+  RefreshCw,
+  TrendingUp,
+  BarChart3,
+  FileText,
 } from "lucide-react";
 import CarteGeographique from "./CarteGeographique";
 import "./chartSetup";
 import { arrondir, estValeurVide, parseNombre, type Cellule } from "../../lib/analyse/utils";
 import { useData, type GraphiqueEpingle, type TypeGraphique } from "../context/DataContext";
+import { lireFournisseur } from "../../lib/prefs";
 
 type Agregation =
   | "Nombre"
@@ -32,24 +39,23 @@ interface GraphiqueGenerateurProps {
 }
 
 const PALETTE = [
+  "#2563eb",
   "#0891b2",
-  "#6366f1",
-  "#8b5cf6",
-  "#f59e0b",
-  "#10b981",
-  "#e11d48",
-  "#64748b",
-  "#14b8a6",
+  "#4f46e5",
+  "#d97706",
+  "#059669",
+  "#dc2626",
+  "#475569",
+  "#0d9488",
 ];
 
-// Palette rotative pour N sources (Remplissage, Bordure et Fond léger pour courbes)
 const PALETTE_COMPARAISON = [
-  { fill: "#4f46e5", border: "#3730a3", bgLeger: "rgba(79, 70, 229, 0.12)" }, // Source 1 (Indigo)
-  { fill: "#0891b2", border: "#0e7490", bgLeger: "rgba(8, 145, 178, 0.12)" }, // Source 2 (Cyan)
-  { fill: "#f59e0b", border: "#d97706", bgLeger: "rgba(245, 158, 11, 0.12)" }, // Source 3 (Ambre)
-  { fill: "#10b981", border: "#059669", bgLeger: "rgba(16, 185, 129, 0.12)" }, // Source 4 (Émeraude)
-  { fill: "#ec4899", border: "#be185d", bgLeger: "rgba(236, 72, 153, 0.12)" }, // Source 5 (Rose)
-  { fill: "#8b5cf6", border: "#6d28d9", bgLeger: "rgba(139, 92, 246, 0.12)" }, // Source 6 (Violet)
+  { fill: "#1d4ed8", border: "#1e40af", bgLeger: "rgba(29, 78, 216, 0.12)" },
+  { fill: "#0891b2", border: "#0e7490", bgLeger: "rgba(8, 145, 178, 0.12)" },
+  { fill: "#d97706", border: "#b45309", bgLeger: "rgba(217, 119, 6, 0.12)" },
+  { fill: "#059669", border: "#047857", bgLeger: "rgba(5, 150, 105, 0.12)" },
+  { fill: "#dc2626", border: "#b91c1c", bgLeger: "rgba(220, 38, 38, 0.12)" },
+  { fill: "#4f46e5", border: "#4338ca", bgLeger: "rgba(79, 70, 229, 0.12)" },
 ];
 
 const MAX_CATEGORIES = 15;
@@ -60,13 +66,65 @@ function versNombre(v: Cellule): number | null {
 }
 
 const selectClasse =
-  "w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-purple-500";
+  "w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-blue-500";
+
+// Traceur unique des valeurs au-dessus des barres et points (évite les doublons)
+const pluginValeursSurGraphique = {
+  id: "pluginValeursSurGraphique",
+  afterDatasetsDraw(chart: any) {
+    const { ctx } = chart;
+    const type = chart.config.type;
+    if (type === "pie" || type === "doughnut" || type === "radar") return;
+
+    chart.data.datasets.forEach((dataset: any, datasetIndex: number) => {
+      const meta = chart.getDatasetMeta(datasetIndex);
+      if (!meta || meta.hidden) return;
+
+      meta.data.forEach((element: any, index: number) => {
+        const val = dataset.data[index];
+        if (val === null || val === undefined || Number.isNaN(val)) return;
+
+        const valNum = Number(val);
+        const texte = Number.isInteger(valNum)
+          ? valNum.toLocaleString("fr-FR")
+          : valNum.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+
+        ctx.save();
+        ctx.font = "bold 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+        ctx.fillStyle = "#334155";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+
+        const yPos = valNum < 0 ? element.y + 14 : element.y - 4;
+        ctx.fillText(texte, element.x, yPos);
+        ctx.restore();
+      });
+    });
+  },
+};
+
+const H = ({ children }: { children?: ReactNode }) => (
+  <h6 className="text-[11px] font-bold mt-2.5 mb-1 text-slate-900 dark:text-slate-100 uppercase tracking-wide">
+    {children}
+  </h6>
+);
+
+const MD_GRAPH: Components = {
+  h1: H,
+  h2: H,
+  h3: H,
+  h4: H,
+  p: ({ children }) => <p className="my-1 leading-relaxed text-slate-700 dark:text-slate-300">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc pl-4 my-1 space-y-1 text-slate-700 dark:text-slate-300">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-4 my-1 space-y-1 text-slate-700 dark:text-slate-300">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold text-slate-900 dark:text-white">{children}</strong>,
+};
 
 export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: GraphiqueGenerateurProps) {
-  const { graphiquesEpingles, epinglerGraphique } = useData();
+  const { graphiquesEpingles, epinglerGraphique, nomFichier } = useData();
   const actionEpingler = onEpingler || epinglerGraphique;
 
-  // Détection du mode comparaison multi-sources
   const estModeComparaison = entetes.includes("Fichier Source");
   const idxSource = entetes.indexOf("Fichier Source");
 
@@ -88,12 +146,10 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
   const [messageErreur, setMessageErreur] = useState<string>("");
   const compteur = useRef(0);
 
-  // Vérifier si un graphique est déjà ajouté au PowerPoint
   const estInclusPptx = (id: number | string) => {
     return (graphiquesEpingles || []).some((g) => g.id === id);
   };
 
-  // 1. RECOMMANDATIONS AUTOMATIQUES (Standard ou Benchmark N)
   const graphiquesRecommandes = useMemo<GraphiqueEpingle[]>(() => {
     if (!entetes.length || !corps.length) return [];
 
@@ -124,7 +180,6 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     const categories = colonnes.filter((c) => c.categorielle);
     const resultats: GraphiqueEpingle[] = [];
 
-    // SCÉNARIO A : RECOMMANDATIONS DE BENCHMARK MULTI-SOURCES
     if (estModeComparaison && sourcesFichiers.length >= 2 && numeriques.length > 0 && categories.length > 0) {
       const mesure = numeriques[0];
       const cat = categories[0];
@@ -165,50 +220,9 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         datasets,
       });
 
-      if (categories.length > 1) {
-        const cat2 = categories[1];
-        const modalites2 = cat2.uniques.slice(0, 7);
-
-        const datasets2 = sourcesFichiers.map((sourceNom, sIdx) => {
-          const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
-          const data = modalites2.map((modalite) => {
-            const valeurs = corps
-              .filter(
-                (l) =>
-                  String(l[idxSource] ?? "").trim() === sourceNom &&
-                  String(l[cat2.index] ?? "").trim() === modalite
-              )
-              .map((l) => versNombre(l[mesure.index]))
-              .filter((n): n is number => n !== null);
-
-            if (!valeurs.length) return 0;
-            const somme = valeurs.reduce((a, b) => a + b, 0);
-            return arrondir(somme / valeurs.length);
-          });
-
-          return {
-            label: sourceNom,
-            data,
-            backgroundColor: couleur.fill,
-            borderColor: couleur.border,
-            borderWidth: 1,
-            borderRadius: 4,
-          };
-        });
-
-        resultats.push({
-          id: 930002,
-          titre: `Benchmark : ${mesure.nom} selon ${cat2.nom}`,
-          type: "Barres",
-          labels: modalites2,
-          datasets: datasets2,
-        });
-      }
-
       return resultats;
     }
 
-    // SCÉNARIO B : RECOMMANDATIONS CLASSIQUES (1 FICHIER)
     for (const cat of categories) {
       if (resultats.length >= 2) break;
       const mesure = numeriques[0];
@@ -241,8 +255,8 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
             {
               label: `Moyenne — ${mesure.nom}`,
               data: pts.map((p) => p.valeur),
-              backgroundColor: "#0891b2",
-              borderColor: "#0e7490",
+              backgroundColor: "#2563eb",
+              borderColor: "#1d4ed8",
               borderRadius: 4,
               borderWidth: 1,
             },
@@ -254,7 +268,6 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     return resultats;
   }, [entetes, corps, colonnesSansSource, estModeComparaison, sourcesFichiers, idxSource]);
 
-  // Construction manuelle d'un graphique (avec support N fichiers)
   function construireGraphiqueManuel() {
     setMessageErreur("");
     if (!colonneAxeX) {
@@ -269,7 +282,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         titre: `Carte géographique — ${colonneAxeX}`,
         type: "Carte",
         labels: [],
-        datasets: [{ label: "Occurrences", data: [], backgroundColor: "#0891b2" }],
+        datasets: [{ label: "Occurrences", data: [], backgroundColor: "#2563eb" }],
       };
       setGraphiquesGeneres((prev) => [carte, ...prev]);
       return;
@@ -285,12 +298,8 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     }
 
     compteur.current += 1;
-    const titreMesure =
-      agregation === "Nombre"
-        ? "Effectif"
-        : `${agregation} — ${colonneAxeY}`;
+    const titreMesure = agregation === "Nombre" ? "Effectif" : `${agregation} — ${colonneAxeY}`;
 
-    // OPTION BENCHMARK MULTI-SOURCES : Séries dédiées côte à côte
     if (estModeComparaison && ventilerParFichier && sourcesFichiers.length >= 2) {
       const modalitesUniques = Array.from(
         new Set(corps.map((l) => String(l[idxX] ?? "").trim()).filter(Boolean))
@@ -308,10 +317,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
           if (!lignesFiltrees.length) return 0;
           if (agregation === "Nombre") return lignesFiltrees.length;
 
-          const valeurs = lignesFiltrees
-            .map((l) => versNombre(l[idxY]))
-            .filter((n): n is number => n !== null);
-
+          const valeurs = lignesFiltrees.map((l) => versNombre(l[idxY])).filter((n): n is number => n !== null);
           if (!valeurs.length) return 0;
           const somme = valeurs.reduce((a, b) => a + b, 0);
 
@@ -344,18 +350,19 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
       return;
     }
 
-    // MODE STANDARD (Série unique)
-    const groupes = new Map<string, { somme: number; nNum: number; compte: number }>();
+    const groupes = new Map<string, { somme: number; nNum: number; compte: number; min: number; max: number }>();
     for (const ligne of corps) {
       if (estValeurVide(ligne[idxX])) continue;
       const cle = String(ligne[idxX]).trim();
-      const g = groupes.get(cle) ?? { somme: 0, nNum: 0, compte: 0 };
+      const g = groupes.get(cle) ?? { somme: 0, nNum: 0, compte: 0, min: Infinity, max: -Infinity };
       g.compte += 1;
       if (besoinY && idxY !== -1) {
         const n = versNombre(ligne[idxY]);
         if (n !== null) {
           g.somme += n;
           g.nNum += 1;
+          if (n < g.min) g.min = n;
+          if (n > g.max) g.max = n;
         }
       }
       groupes.set(cle, g);
@@ -365,7 +372,8 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
       let valeur = g.compte;
       if (agregation === "Somme") valeur = g.somme;
       if (agregation === "Moyenne") valeur = g.nNum ? g.somme / g.nNum : 0;
-      if (agregation === "Minimum" || agregation === "Maximum") valeur = g.somme;
+      if (agregation === "Minimum") valeur = g.min !== Infinity ? g.min : 0;
+      if (agregation === "Maximum") valeur = g.max !== -Infinity ? g.max : 0;
       return { label, valeur: arrondir(valeur) };
     });
 
@@ -384,8 +392,8 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
           backgroundColor:
             typeGraphique === "Camembert"
               ? paires.map((_, i) => PALETTE[i % PALETTE.length])
-              : "#0891b2",
-          borderColor: "#0e7490",
+              : "#2563eb",
+          borderColor: "#1d4ed8",
           borderRadius: 4,
           borderWidth: 1,
         },
@@ -395,13 +403,16 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     setGraphiquesGeneres((prev) => [nouveau, ...prev]);
   }
 
-  const options = {
+  const options: any = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
       legend: {
-        position: "top" as const,
-        labels: { boxWidth: 12, font: { size: 11, weight: "bold" as const } },
+        position: "top",
+        labels: { boxWidth: 12, font: { size: 11, weight: "bold" } },
+      },
+      datalabels: {
+        display: false,
       },
     },
     scales: {
@@ -409,6 +420,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         beginAtZero: true,
         grid: { color: "rgba(148,163,184,0.15)" },
         ticks: { font: { size: 10 } },
+        grace: "15%",
       },
       x: {
         grid: { display: false },
@@ -416,21 +428,19 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
       },
     },
   };
-
   return (
     <div className="space-y-6">
-      {/* BANNIÈRE DE BENCHMARK ACTIF */}
       {estModeComparaison && (
-        <div className="bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold">
+            <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold">
               <Scale className="w-4 h-4" />
             </div>
             <div>
-              <p className="text-xs font-bold text-indigo-950 dark:text-indigo-200">
+              <p className="text-xs font-bold text-blue-950 dark:text-blue-200">
                 Mode Comparatif Actif ({sourcesFichiers.length} fichiers confrontés)
               </p>
-              <p className="text-[11px] text-indigo-600 dark:text-indigo-400">
+              <p className="text-[11px] text-blue-600 dark:text-blue-400">
                 Chaque fichier dispose de sa propre couleur pour identifier visuellement les dominances et les écarts.
               </p>
             </div>
@@ -449,7 +459,6 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         </div>
       )}
 
-      {/* 1. SECTION RECOMMANDATIONS AUTOMATIQUES */}
       {graphiquesRecommandes.length > 0 && (
         <section className="space-y-4">
           <div className="no-print">
@@ -474,14 +483,14 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                       <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
                         {g.titre}
                       </h4>
-                      <span className="text-[10px] bg-indigo-50 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded-full font-bold whitespace-nowrap">
+                      <span className="text-[10px] bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-300 px-2 py-0.5 rounded-full font-bold whitespace-nowrap">
                         {estModeComparaison ? `Benchmark #${index + 1}` : `Recommandation #${index + 1}`}
                       </span>
                     </div>
 
                     <button
                       onClick={() => actionEpingler && actionEpingler(g)}
-                      className={`no-print inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
+                      className={`no-print print:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
                         estEpingle
                           ? "bg-blue-600 text-white shadow-xs"
                           : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
@@ -492,11 +501,15 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                     </button>
                   </div>
 
-                  <div className="h-64 w-full relative">
-                    {g.type === "Courbe" ? <Line data={g} options={options} /> : <Bar data={g} options={options} />}
+                  <div className="h-56 sm:h-64 w-full relative">
+                    {g.type === "Courbe" ? (
+                      <Line data={g} options={options} plugins={[pluginValeursSurGraphique]} />
+                    ) : (
+                      <Bar data={g} options={options} plugins={[pluginValeursSurGraphique]} />
+                    )}
                   </div>
 
-                  <ExplicationDetailleeGraphique graphique={g} />
+                  <ExplicationDetailleeGraphique graphique={g} nomFichier={nomFichier} />
                 </div>
               );
             })}
@@ -504,8 +517,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         </section>
       )}
 
-      {/* 2. FORMULAIRE DE CRÉATION MANUELLE */}
-      <div className="no-print bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
+      <div className="no-print print:hidden bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h4 className="text-sm font-bold text-slate-900 dark:text-white mb-0.5">
@@ -522,16 +534,16 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                 type="checkbox"
                 checked={ventilerParFichier}
                 onChange={(e) => setVentilerParFichier(e.target.checked)}
-                className="accent-indigo-600 h-4 w-4 rounded cursor-pointer"
+                className="accent-blue-600 h-4 w-4 rounded cursor-pointer"
               />
-              <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">
+              <span className="text-xs font-bold text-blue-700 dark:text-blue-300">
                 Dédier une série par fichier ({sourcesFichiers.length} sources)
               </span>
             </label>
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-50 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-200/60 dark:border-slate-700/50">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-4 bg-slate-50 dark:bg-slate-800/40 p-3 sm:p-4 rounded-xl border border-slate-200/60 dark:border-slate-700/50">
           <div>
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
               Format d&apos;affichage
@@ -601,7 +613,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         <div className="flex items-center gap-3">
           <button
             onClick={construireGraphiqueManuel}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-medium text-xs rounded-xl shadow transition cursor-pointer"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs rounded-xl shadow transition cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             Ajouter le graphique
@@ -616,7 +628,6 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         </div>
       </div>
 
-      {/* 3. VOS GRAPHIQUES CRÉÉS */}
       {graphiquesGeneres.length > 0 && (
         <div className="space-y-4">
           <h4 className="text-sm font-bold text-slate-900 dark:text-white">
@@ -635,7 +646,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
                       {g.titre}
                     </h4>
-                    <div className="no-print flex items-center gap-2 shrink-0">
+                    <div className="no-print print:hidden flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => actionEpingler && actionEpingler(g)}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
@@ -659,13 +670,17 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
 
                   <div className={g.type === "Carte" ? "w-full min-h-[340px]" : "h-64 w-full relative"}>
                     {g.type === "Carte" && <CarteGeographique entetes={entetes} corps={corps} />}
-                    {g.type === "Barres" && <Bar data={g} options={options} />}
-                    {g.type === "Courbe" && <Line data={g} options={options} />}
+                    {g.type === "Barres" && (
+                      <Bar data={g} options={options} plugins={[pluginValeursSurGraphique]} />
+                    )}
+                    {g.type === "Courbe" && (
+                      <Line data={g} options={options} plugins={[pluginValeursSurGraphique]} />
+                    )}
                     {g.type === "Camembert" && <Pie data={g} options={options} />}
                     {g.type === "Anneau" && <Doughnut data={g} options={{ ...options, cutout: "68%" }} />}
                   </div>
 
-                  <ExplicationDetailleeGraphique graphique={g} />
+                  <ExplicationDetailleeGraphique graphique={g} nomFichier={nomFichier} />
                 </div>
               );
             })}
@@ -676,16 +691,24 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
   );
 }
 
-/** COMPOSANT D'EXPLICATION AUTOMATIQUE (CALCUL APPROFONDI POUR N >= 2 FICHIERS) */
-function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpingle }) {
+function ExplicationDetailleeGraphique({
+  graphique,
+  nomFichier,
+}: {
+  graphique: GraphiqueEpingle;
+  nomFichier?: string;
+}) {
   const estComparatifMultiSeries = (graphique.datasets || []).length >= 2;
+
+  const [syntheseDecisionnelle, setSyntheseDecisionnelle] = useState<string | null>(null);
+  const [chargement, setChargement] = useState<boolean>(false);
+  const [erreur, setErreur] = useState<string | null>(null);
 
   const analyse = useMemo(() => {
     const labels = (graphique.labels || []).map(String);
     const datasets = graphique.datasets || [];
     if (!labels.length || !datasets.length) return null;
 
-    // SCÉNARIO 1 : ANALYSE COMPARATIVE MULTI-SOURCES (N >= 2)
     if (estComparatifMultiSeries) {
       const syntheseDatasets = datasets.map((d) => {
         const nums = (d.data || []).map((v) => Number(v) || 0);
@@ -760,7 +783,6 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
       };
     }
 
-    // SCÉNARIO 2 : ANALYSE STANDARD (SÉRIE UNIQUE)
     const points = labels.map((l, idx) => ({
       label: l,
       valeur: Number(datasets[0]?.data[idx]) || 0,
@@ -784,23 +806,104 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
     };
   }, [graphique, estComparatifMultiSeries]);
 
+  async function genererSyntheseApprofondie() {
+    setChargement(true);
+    setErreur(null);
+    try {
+      const labels = (graphique.labels || []).map(String);
+      const resumePoints = labels.slice(0, 10).map((lab, i) => {
+        const val = (graphique.datasets || []).map((d) => `${d.label || "Valeur"}: ${d.data[i] ?? 0}`).join(", ");
+        return `${lab} (${val})`;
+      });
+
+      const contexteUltraCourt = JSON.stringify({
+        fichier: nomFichier || "Données",
+        graphique: graphique.titre,
+        type: graphique.type,
+        donnees: resumePoints,
+      });
+
+      const question = `Rédige une analyse managériale concise de ce graphique intitulé "${graphique.titre}" :
+- Constat majeur chiffré (volume, part dominante ou concentration).
+- Contraste ou divergence opérationnelle notable.
+- Recommandation concrète d'action.
+Reste concis, précis, direct et professionnel, sans formule d'introduction ni de conclusion. Ne mentionne jamais que tu es une IA.`;
+
+      const moteurPref = typeof window !== "undefined" ? lireFournisseur() : "auto";
+
+      const rep = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          contexte: contexteUltraCourt,
+          fournisseur: moteurPref || "auto",
+          langueConversation: "fr",
+          langueApp: "fr",
+        }),
+      });
+
+      const data = (await rep.json().catch(() => ({}))) as {
+        reponse?: string;
+        fournisseur?: string;
+        error?: string;
+      };
+
+      if (!rep.ok || !data.reponse) {
+        throw new Error(data.error || `Erreur (${rep.status})`);
+      }
+
+      setSyntheseDecisionnelle(data.reponse);
+    } catch (err) {
+      setErreur(err instanceof Error ? err.message : "Erreur de connexion.");
+    } finally {
+      setChargement(false);
+    }
+  }
+
   if (!analyse) return null;
 
   return (
-    <div className="rounded-xl border border-slate-200/90 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 p-3.5 space-y-2 text-[11px] leading-relaxed">
-      <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-800 pb-1.5">
-        <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-        <h5 className="font-bold text-slate-800 dark:text-slate-200">
-          {analyse.estComparatif
-            ? `Lecture comparative multi-sources (${analyse.nombreSeries} fichiers confrontés) :`
-            : "Comprendre ce graphique en détail :"}
-        </h5>
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60 p-3.5 space-y-2.5 text-[11px] leading-relaxed">
+      {/* En-tête sobre : titre exécutif et bouton discret masqué au PDF */}
+      <div className="flex items-center justify-between border-b border-slate-200/60 dark:border-slate-800 pb-2">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+          <h5 className="font-bold text-slate-800 dark:text-slate-200">
+            {analyse.estComparatif
+              ? `Lecture comparative multi-sources (${analyse.nombreSeries} fichiers) :`
+              : "Indicateurs & Points clés :"}
+          </h5>
+        </div>
+
+        <button
+          onClick={genererSyntheseApprofondie}
+          disabled={chargement}
+          className="no-print print:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-700 bg-white hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-50 cursor-pointer shadow-2xs"
+        >
+          {chargement ? (
+            <>
+              <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+              <span>Analyse en cours...</span>
+            </>
+          ) : syntheseDecisionnelle ? (
+            <>
+              <RefreshCw className="w-3 h-3" />
+              <span>Actualiser l&apos;analyse</span>
+            </>
+          ) : (
+            <>
+              <FileText className="w-3 h-3 text-blue-600" />
+              <span>Approfondir l&apos;analyse</span>
+            </>
+          )}
+        </button>
       </div>
 
       {analyse.estComparatif ? (
         <div className="space-y-1.5">
           <div className="flex items-start gap-1.5">
-            <span className="font-bold text-indigo-600">•</span>
+            <span className="font-bold text-blue-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
               <strong>Leader global du graphique : </strong>
               <strong>« {analyse.leader.nom} »</strong> arrive en première position avec un volume cumulé de{" "}
@@ -812,7 +915,7 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
           </div>
 
           <div className="flex items-start gap-1.5">
-            <span className="font-bold text-indigo-600">•</span>
+            <span className="font-bold text-blue-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
               <strong>Répartition des positions : </strong>
               {analyse.classementVictoires.map(([nom, victoires], i) => (
@@ -825,7 +928,7 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
           </div>
 
           <div className="flex items-start gap-1.5">
-            <span className="font-bold text-indigo-600">•</span>
+            <span className="font-bold text-blue-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
               <strong>Plus forte divergence constatée : </strong>
               Sur <strong>« {analyse.plusGrosEcart.label} »</strong>, l&apos;écart atteint{" "}
@@ -837,25 +940,46 @@ function ExplicationDetailleeGraphique({ graphique }: { graphique: GraphiqueEpin
       ) : (
         <div className="space-y-1">
           <div className="flex items-start gap-1.5">
-            <span className="font-bold text-purple-600">•</span>
+            <span className="font-bold text-blue-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
               <strong>Pôle dominant :</strong> <strong>{analyse.max.label}</strong> ({analyse.max.valeur.toLocaleString("fr-FR")}).
             </p>
           </div>
           <div className="flex items-start gap-1.5">
-            <span className="font-bold text-purple-600">•</span>
+            <span className="font-bold text-blue-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
               <strong>Pôle en retrait :</strong> <strong>{analyse.min.label}</strong> ({analyse.min.valeur.toLocaleString("fr-FR")}).
             </p>
           </div>
           <div className="flex items-start gap-1.5">
-            <span className="font-bold text-purple-600">•</span>
+            <span className="font-bold text-blue-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
               <strong>Disparité :</strong> Écart de <strong>{analyse.ecartAbsolu.toLocaleString("fr-FR")}</strong>
               {analyse.ratio ? ` (ratio de ${analyse.ratio}×)` : ""}.
             </p>
           </div>
         </div>
+      )}
+
+      {/* Rendu sobre et institutionnel de la synthèse managériale (zéro mention d'IA) */}
+      {syntheseDecisionnelle && (
+        <div className="mt-2.5 pt-2.5 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
+          <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100 text-[11px]">
+            <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+            <span className="uppercase tracking-wider">Synthèse décisionnelle & Recommandations :</span>
+          </div>
+          <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_GRAPH}>
+              {syntheseDecisionnelle}
+            </ReactMarkdown>
+          </div>
+        </div>
+      )}
+
+      {erreur && (
+        <p className="no-print print:hidden text-[10px] text-rose-600 font-medium mt-1">
+          ⚠ {erreur}
+        </p>
       )}
     </div>
   );

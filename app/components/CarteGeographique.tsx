@@ -12,6 +12,7 @@ const MapContainer = dynamic(() => import("react-leaflet").then((m) => m.MapCont
 const TileLayer = dynamic(() => import("react-leaflet").then((m) => m.TileLayer), { ssr: false });
 const CircleMarker = dynamic(() => import("react-leaflet").then((m) => m.CircleMarker), { ssr: false });
 const Popup = dynamic(() => import("react-leaflet").then((m) => m.Popup), { ssr: false });
+const Tooltip = dynamic(() => import("react-leaflet").then((m) => m.Tooltip), { ssr: false });
 const AjusterVue = dynamic(() => import("./AjusterVue"), { ssr: false });
 
 interface Props {
@@ -42,18 +43,16 @@ function nombreCellule(v: Cellule): number | null {
 
 const MAX_LIEUX = 50;
 
-// Filtres de détection géographique
 const MOTS_CLES_GEO = /(ville|city|commune|region|pays|country|departement|department|district|adresse|lieu|location|zone|secteur|territoire|localite|village|prefecture|province|quartier)/i;
 const MOTS_CLES_EXCLUS = /(categorie|category|statut|status|mois|month|annee|year|commercial|vendeur|client|devise|type|produit|article|id|num|reference|ref|remise|taux)/i;
 
-// Palette rotative pour N sources (Remplissage et Bordure)
 const COULEURS_COMPARAISON = [
-  { fill: "#4f46e5", border: "#3730a3" }, // Source 1 (Indigo)
-  { fill: "#0891b2", border: "#0e7490" }, // Source 2 (Cyan)
-  { fill: "#f59e0b", border: "#d97706" }, // Source 3 (Ambre)
-  { fill: "#10b981", border: "#059669" }, // Source 4 (Émeraude)
-  { fill: "#ec4899", border: "#be185d" }, // Source 5 (Rose)
-  { fill: "#8b5cf6", border: "#6d28d9" }, // Source 6 (Violet)
+  { fill: "#4f46e5", border: "#3730a3" },
+  { fill: "#0891b2", border: "#0e7490" },
+  { fill: "#f59e0b", border: "#d97706" },
+  { fill: "#10b981", border: "#059669" },
+  { fill: "#ec4899", border: "#be185d" },
+  { fill: "#8b5cf6", border: "#6d28d9" },
 ];
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -83,7 +82,6 @@ const COORDONNEES_FRANCE: Record<string, [number, number]> = {
 export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Props) {
   const { graphiquesEpingles, epinglerGraphique } = useData();
 
-  // Détection du mode comparaison multi-sources
   const estModeComparaison = entetes.includes("Fichier Source");
   const idxSource = entetes.indexOf("Fichier Source");
 
@@ -94,13 +92,11 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
   const estBenchmarkActif = estModeComparaison && sourcesFichiers.length >= 2;
 
-  // Fichier étalon de référence
   const [sourceRefChoisie, setSourceRefChoisie] = useState<string>("");
   const refSource = sourcesFichiers.includes(sourceRefChoisie)
     ? sourceRefChoisie
     : sourcesFichiers[0] || "";
 
-  // Filtrage strict des colonnes géographiques
   const colonnesGeographiquesEligibles = useMemo(() => {
     return entetes.filter((nom, idx) => {
       if (nom === "Fichier Source") return false;
@@ -155,7 +151,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
   const demandes = useRef(new Set<string>());
   const [estDejaInclus, setEstDejaInclus] = useState(false);
 
-  // Détection du territoire d'atterrissage
   const contexteTerritorial = useMemo<"FR" | "CI" | "MONDE">(() => {
     const idx = entetes.indexOf(colonneGeo);
     if (idx === -1) return "MONDE";
@@ -173,7 +168,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     return "MONDE";
   }, [entetes, corps, colonneGeo]);
 
-  // Agrégation des points par lieu et par source
   const donneesAgregees = useMemo(() => {
     const idxGeo = entetes.indexOf(colonneGeo);
     if (idxGeo === -1) return [] as { nom: string; totalGlobal: number; parSource: Record<string, number> }[];
@@ -257,7 +251,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     [donneesAgregees, contexteTerritorial]
   );
 
-  // Géocodage asynchrone OpenStreetMap (fallback)
   useEffect(() => {
     let annule = false;
     async function executer() {
@@ -296,7 +289,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     };
   }, [inconnus, contexteTerritorial]);
 
-  // Construction des points cartographiques pour N sources
   const points = useMemo<PointComparatif[]>(() => {
     const pts: PointComparatif[] = [];
 
@@ -322,7 +314,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       const valeurLeader = maxVal === -Infinity ? 0 : maxVal;
       const amplitude = Math.round((valeurLeader - (minVal === Infinity ? 0 : minVal)) * 100) / 100;
 
-      // Écart par rapport au fichier de référence
       const vRef = d.parSource[refSource] || 0;
       const ecartVsRef = Math.round((valeurLeader - vRef) * 100) / 100;
       const variationPctVsRef = vRef > 0 ? Math.round((ecartVsRef / vRef) * 1000) / 10 : 0;
@@ -358,10 +349,9 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
   const rayonPoint = (val: number) => {
     const ratio = Math.max(0, val / maxValMesure);
-    return Math.round(6 + ratio * 22);
+    return Math.round(7 + ratio * 20);
   };
 
-  // Diagnostic comparatif exhaustif (pour N >= 2 sources)
   const analyseBenchmark = useMemo(() => {
     if (!estBenchmarkActif || sourcesFichiers.length < 2 || points.length === 0) return null;
 
@@ -391,15 +381,14 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     };
   }, [estBenchmarkActif, sourcesFichiers, points]);
 
-  // ID unique pour le suivi d'inclusion PPTX
   const idGraphiqueCarte = `carte-geo-${colonneGeo}-${agregation}-${colonneMesure || "compte"}`;
 
- const estInclusPptx = useMemo(() => {
+  const estInclusPptx = useMemo(() => {
     return (
       (graphiquesEpingles || []).some((g) => String(g.id) === String(idGraphiqueCarte)) || estDejaInclus
     );
   }, [graphiquesEpingles, idGraphiqueCarte, estDejaInclus]);
-  // Préparation et conversion automatique de la carte pour PowerPoint
+
   const preparerExportPptx = () => {
     if (!points.length) return;
     const topPoints = points.slice(0, 10);
@@ -532,7 +521,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             </select>
           )}
 
-          {/* Bouton d'ajout au PowerPoint */}
           <button
             onClick={preparerExportPptx}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
@@ -569,14 +557,21 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
         </div>
       )}
 
-      {/* Rendu Leaflet */}
+      {/* Rendu Leaflet avec étiquette Tooltip permanente */}
       {colonneGeo === "" ? (
         <p className="text-xs text-slate-500 p-4 border border-dashed rounded-xl">
           Aucune colonne géographique reconnue.
         </p>
       ) : (
-        <div className="h-80 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0">
-          <MapContainer center={centreDefaut} zoom={zoomDefaut} scrollWheelZoom={false} className="h-full w-full">
+        <div className="h-64 sm:h-80 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0">
+          <MapContainer
+            center={centreDefaut}
+            zoom={zoomDefaut}
+            scrollWheelZoom={false}
+            dragging={typeof window !== "undefined" && window.innerWidth > 768}
+            touchZoom={false}
+            className="h-full w-full"
+          >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -599,6 +594,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
                   <div key={p.nom}>
                     {itemsTries.map((item, idx) => {
                       const opacite = idx === 0 ? 0.4 : 0.65 + (idx / itemsTries.length) * 0.25;
+                      const estDernier = idx === itemsTries.length - 1;
 
                       return (
                         <CircleMarker
@@ -612,6 +608,13 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
                             fillOpacity: opacite,
                           }}
                         >
+                          {estDernier && (
+                            <Tooltip permanent direction="top" offset={[0, -rayonPoint(p.valeurLeader) - 3]} opacity={0.95}>
+                              <span className="font-bold text-[11px] text-slate-900 bg-white/95 px-1.5 py-0.5 rounded shadow border border-slate-200">
+                                {p.nom} : <strong>{p.valeurLeader.toLocaleString("fr-FR")}</strong>
+                              </span>
+                            </Tooltip>
+                          )}
                           <Popup>
                             <div className="text-xs font-sans space-y-1.5 p-0.5 min-w-[180px]">
                               <div className="border-b pb-1">
@@ -667,6 +670,11 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
                     fillOpacity: 0.7,
                   }}
                 >
+                  <Tooltip permanent direction="top" offset={[0, -rayonPoint(p.totalGlobal) - 3]} opacity={0.95}>
+                    <span className="font-bold text-[11px] text-slate-900 bg-white/95 px-1.5 py-0.5 rounded shadow border border-slate-200">
+                      {p.nom} : <strong>{p.totalGlobal.toLocaleString("fr-FR")}</strong>
+                    </span>
+                  </Tooltip>
                   <Popup>
                     <div className="text-xs font-semibold p-1">
                       <p className="text-purple-700 font-bold">{p.nom}</p>
@@ -683,8 +691,27 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
         </div>
       )}
 
+      {/* Récapitulatif avec les chiffres de chaque zone sous la carte */}
+      <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+        <span className="font-semibold text-slate-500 dark:text-slate-400">
+          {points.length} zone(s) localisée(s) :
+        </span>
+        {points.map((p) => (
+          <span
+            key={p.nom}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-medium border border-slate-200/60 dark:border-slate-700 text-[11px]"
+          >
+            <span className="w-2 h-2 rounded-full bg-purple-600"></span>
+            <strong>{p.nom}</strong> :{" "}
+            <span className="text-purple-700 dark:text-purple-300 font-bold font-mono">
+              {p.totalGlobal.toLocaleString("fr-FR")}
+            </span>
+          </span>
+        ))}
+      </div>
+
       {/* Synthèse comparative multi-sources */}
-      {analyseBenchmark ? (
+      {analyseBenchmark && (
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 p-4 space-y-2.5 text-xs leading-relaxed">
           <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-800 pb-1.5">
             <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
@@ -727,10 +754,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
               </p>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-          <span>{points.length} zone(s) localisée(s)</span>
         </div>
       )}
     </div>

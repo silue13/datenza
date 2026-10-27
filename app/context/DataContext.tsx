@@ -28,6 +28,7 @@ export interface GraphiqueEpingle {
     borderWidth?: number;
     borderRadius?: number;
   }[];
+  interpretation?: string; // <-- AJOUTER ICI
 }
 
 interface DataContextType {

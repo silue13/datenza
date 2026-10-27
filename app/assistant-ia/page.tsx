@@ -12,6 +12,7 @@ import {
   ArrowRight,
   Cpu,
   Scale,
+  ShieldCheck,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import { analyserColonnes } from "../../lib/analyse/analyse";
@@ -560,6 +561,12 @@ Le fichier de référence étalon est : « ${refSource} ».
                   Posez-moi vos questions : classements, anomalies, ratios, tendances ou demandez-moi de générer un tableau croisé dynamique.
                 </div>
               )}
+
+              {/* Note de réassurance et sécurité */}
+              <div className="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Garde-fou actif : données sensibles masquées et réponses limitées aux analyses statistiques globales.</span>
+              </div>
             </div>
           </div>
 
@@ -640,6 +647,16 @@ Le fichier de référence étalon est : « ${refSource} ».
             <Send className="w-3.5 h-3.5" />
             Envoyer
           </button>
+        </div>
+
+        {/* Bandeau de protection et de confidentialité */}
+        <div className="px-4 py-2 bg-slate-50 dark:bg-slate-850 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              <strong>Confidentialité garantie :</strong> Vos fichiers restent traités localement dans votre navigateur. Les champs sensibles sont automatiquement masqués et l&apos;extraction de données brutes est restreinte.
+            </span>
+          </div>
         </div>
       </div>
     </div>

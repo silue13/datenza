@@ -7,6 +7,7 @@ import { analyserColonnes } from "../lib/analyse/analyse";
 import { genererRapport } from "../lib/analyse/rapport";
 import type { Cellule } from "../lib/analyse/utils";
 import { useRouter } from "next/navigation";
+import BoutonInstallerApp from "./components/BoutonInstallerApp";
 import {
   UploadCloud,
   FileSpreadsheet,
@@ -259,20 +260,26 @@ export default function HomePage() {
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-16 font-sans">
       {/* En-tête Titre & Statut */}
-      <div className="space-y-1">
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 text-xs font-bold mb-2">
-          <span>DATENZA</span>
-          <span>·</span>
-          <span>Aide à la Décision</span>
-        </div>
-        <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-          Ingestion & Analyse des Données
-        </h1>
-        <p className="text-slate-500 dark:text-slate-400 text-sm">
-          Importez un ou plusieurs classeurs Excel ou fichiers CSV pour les auditer ou les comparer.
-        </p>
-      </div>
+   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+     <div className="space-y-1">
+       <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 text-xs font-bold mb-2">
+         <span>DATENZA</span>
+         <span>·</span>
+         <span>Aide à la Décision</span>
+       </div>
+       <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+         Ingestion & Analyse des Données
+       </h1>
+       <p className="text-slate-500 dark:text-slate-400 text-sm">
+         Importez un ou plusieurs classeurs Excel ou fichiers CSV pour les auditer ou les comparer.
+       </p>
+     </div>
 
+     {/* Bouton d'installation de l'application (Android, iPhone, Windows, Mac) */}
+     <div className="sm:w-56 shrink-0">
+       <BoutonInstallerApp />
+     </div>
+   </div>
       {/* Zone de Glisser-Déposer */}
       <div
         onDragOver={(e) => {

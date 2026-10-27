@@ -110,36 +110,46 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       const listeLig = Array.from(ligSet).slice(0, 30);
       const listeCol = idxColonne >= 0 ? Array.from(colSet).slice(0, 15) : ["Total"];
 
-      const calculerValeurCellule = (cell?: { somme: number; n: number; min: number; max: number }) => {
-        if (!cell || cell.n === 0) return 0;
-        if (agregation === "Nombre") return cell.n;
-        if (agregation === "Moyenne") return cell.n ? cell.somme / cell.n : 0;
-        if (agregation === "Minimum") return cell.min === Infinity ? 0 : cell.min;
-        if (agregation === "Maximum") return cell.max === -Infinity ? 0 : cell.max;
-        return cell.somme;
+      // Agrégation vectorielle : recalcule fidèlement selon l'opération choisie (pas de somme de moyennes)
+      const agregerCellules = (cells: ({ somme: number; n: number; min: number; max: number } | undefined)[]) => {
+        const valides = cells.filter((c): c is { somme: number; n: number; min: number; max: number } => !!c && c.n > 0);
+        const totalN = valides.reduce((acc, c) => acc + c.n, 0);
+        if (totalN === 0) return 0;
+        if (agregation === "Nombre") return totalN;
+        const totalSomme = valides.reduce((acc, c) => acc + c.somme, 0);
+        if (agregation === "Moyenne") return totalN > 0 ? totalSomme / totalN : 0;
+        if (agregation === "Minimum") {
+          const mins = valides.map((c) => c.min).filter((m) => m !== Infinity);
+          return mins.length ? Math.min(...mins) : 0;
+        }
+        if (agregation === "Maximum") {
+          const maxs = valides.map((c) => c.max).filter((m) => m !== -Infinity);
+          return maxs.length ? Math.max(...maxs) : 0;
+        }
+        return totalSomme;
       };
 
       const totLig = new Map<string, number>();
       for (const lig of listeLig) {
-        let s = 0;
-        for (const col of listeCol) {
-          s += calculerValeurCellule(map.get(lig)?.get(col));
-        }
-        totLig.set(lig, arrondir(s));
+        const rowCells = listeCol.map((col) => map.get(lig)?.get(col));
+        totLig.set(lig, arrondir(agregerCellules(rowCells)));
       }
 
       const totCol = new Map<string, number>();
-      let totGen = 0;
       for (const col of listeCol) {
-        let s = 0;
-        for (const lig of listeLig) {
-          s += calculerValeurCellule(map.get(lig)?.get(col));
-        }
-        totCol.set(col, arrondir(s));
-        totGen += s;
+        const colCells = listeLig.map((lig) => map.get(lig)?.get(col));
+        totCol.set(col, arrondir(agregerCellules(colCells)));
       }
 
-      setEstDejaInclus(false); // Reset the pin button when data changes
+      const toutesCellules: ({ somme: number; n: number; min: number; max: number } | undefined)[] = [];
+      for (const lig of listeLig) {
+        for (const col of listeCol) {
+          toutesCellules.push(map.get(lig)?.get(col));
+        }
+      }
+      const totGen = arrondir(agregerCellules(toutesCellules));
+
+      setEstDejaInclus(false);
 
       return {
         modalitesLignes: listeLig,
@@ -147,7 +157,7 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
         grille: map,
         totauxLignes: totLig,
         totauxColonnes: totCol,
-        totalGeneral: arrondir(totGen),
+        totalGeneral: totGen,
       };
     }, [idxLigne, idxColonne, idxMesure, corps, agregation]);
 
@@ -165,25 +175,24 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
   const colCible = useMemo(() => modalitesColonnes.includes(sourceCibleChoisie) && sourceCibleChoisie !== colRef ? sourceCibleChoisie : modalitesColonnes.filter((c) => c !== colRef)[0] || "", [modalitesColonnes, sourceCibleChoisie, colRef]);
 
   // Fonction de transmission au PowerPoint
- const preparerExportPptx = () => {
+  const preparerExportPptx = () => {
     if (!onAjouterPptx) return;
 
     const entetesTdc = [`${colonneLigne} \\ ${colonneColonne || "Valeur"}`, ...modalitesColonnes, "Total Général"];
     
-    // Typage explicite (string | number)[] pour accepter à la fois les libellés et les chiffres
     const lignesTdc: (string | number)[][] = modalitesLignes.map((lig) => {
       const cellules: (string | number)[] = [lig];
       modalitesColonnes.forEach((col) => {
-        cellules.push(Math.round(calculerValeur(grille.get(lig)?.get(col))));
+        cellules.push(arrondir(calculerValeur(grille.get(lig)?.get(col))));
       });
-      cellules.push(Math.round(totauxLignes.get(lig) || 0));
+      cellules.push(arrondir(totauxLignes.get(lig) || 0));
       return cellules;
     });
 
     lignesTdc.push([
       "Total Général",
-      ...modalitesColonnes.map((col) => Math.round(totauxColonnes.get(col) || 0)),
-      Math.round(totalGeneral),
+      ...modalitesColonnes.map((col) => arrondir(totauxColonnes.get(col) || 0)),
+      totalGeneral,
     ]);
 
     onAjouterPptx({
@@ -208,8 +217,8 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
     const ecartGlobal = Math.round((totalC2 - totalC1) * 100) / 100;
     const pctGlobal = totalC1 > 0 ? Math.round(((totalC2 - totalC1) / totalC1) * 1000) / 10 : 0;
 
-    let maxProgression = { nom: "", ecart: -Infinity, pct: 0 };
-    let maxRecul = { nom: "", ecart: Infinity, pct: 0 };
+    let maxProgression: { nom: string; ecart: number; pct: number } | null = null;
+    let maxRecul: { nom: string; ecart: number; pct: number } | null = null;
 
     const victoiresParColonne: Record<string, number> = {};
     modalitesColonnes.forEach((c) => (victoiresParColonne[c] = 0));
@@ -233,12 +242,17 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       const diff = Math.round((v2 - v1) * 100) / 100;
       const pct = v1 > 0 ? Math.round((diff / v1) * 1000) / 10 : 0;
 
-      if (diff > maxProgression.ecart) maxProgression = { nom: lig, ecart: diff, pct };
-      if (diff < maxRecul.ecart) maxRecul = { nom: lig, ecart: diff, pct };
+      // Détection stricte des hausses (> 0) et des baisses (< 0)
+      if (diff > 0 && (!maxProgression || diff > maxProgression.ecart)) {
+        maxProgression = { nom: lig, ecart: diff, pct };
+      }
+      if (diff < 0 && (!maxRecul || diff < maxRecul.ecart)) {
+        maxRecul = { nom: lig, ecart: diff, pct };
+      }
     }
 
     const classementVictoires = Object.entries(victoiresParColonne).sort((a, b) => b[1] - a[1]);
-    const leaderLignes = classementVictoires[0];
+    const leaderLignes = classementVictoires[0] || ["—", 0];
 
     return {
       sourceRef: colRef,
@@ -247,8 +261,8 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       totalC2,
       ecartGlobal,
       pctGlobal,
-      maxProgression,
-      maxRecul,
+      maxProgression: maxProgression || { nom: "—", ecart: 0, pct: 0 },
+      maxRecul: maxRecul || { nom: "—", ecart: 0, pct: 0 },
       leaderLignes,
       totalLignes: modalitesLignes.length,
     };
@@ -570,10 +584,14 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
                 <ArrowUpRight className="w-3.5 h-3.5" /> Plus forte hausse
               </span>
               <p className="text-sm font-black text-slate-800 dark:text-slate-100 truncate">
-                {syntheseComparatif.maxProgression.nom || "—"}
+                {syntheseComparatif.maxProgression.nom}
               </p>
               <p className="text-[10px] text-slate-500">
-                Gain net de <strong>+{syntheseComparatif.maxProgression.ecart.toLocaleString("fr-FR")}</strong> (+{syntheseComparatif.maxProgression.pct} %).
+                {syntheseComparatif.maxProgression.ecart > 0 ? (
+                  <>Gain net de <strong>+{syntheseComparatif.maxProgression.ecart.toLocaleString("fr-FR")}</strong> (+{syntheseComparatif.maxProgression.pct} %).</>
+                ) : (
+                  <>Aucune progression constatée.</>
+                )}
               </p>
             </div>
 
@@ -582,10 +600,14 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
                 <ArrowDownRight className="w-3.5 h-3.5" /> Plus fort recul
               </span>
               <p className="text-sm font-black text-slate-800 dark:text-slate-100 truncate">
-                {syntheseComparatif.maxRecul.nom || "—"}
+                {syntheseComparatif.maxRecul.nom}
               </p>
               <p className="text-[10px] text-slate-500">
-                Variation de <strong>{syntheseComparatif.maxRecul.ecart.toLocaleString("fr-FR")}</strong> ({syntheseComparatif.maxRecul.pct} %).
+                {syntheseComparatif.maxRecul.ecart < 0 ? (
+                  <>Variation de <strong>{syntheseComparatif.maxRecul.ecart.toLocaleString("fr-FR")}</strong> ({syntheseComparatif.maxRecul.pct} %).</>
+                ) : (
+                  <>Aucun recul constaté.</>
+                )}
               </p>
             </div>
           </div>

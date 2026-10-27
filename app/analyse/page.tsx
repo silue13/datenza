@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import ModulePrevisions from "../components/ModulePrevisions";
 import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
 import CarteGeographique from "../components/CarteGeographique";
@@ -11,6 +13,7 @@ import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
 import { useData } from "../context/DataContext";
 import { parseNombre, estValeurVide, arrondir, type Cellule } from "../../lib/analyse/utils";
 import { analyserColonnes } from "../../lib/analyse/analyse";
+import { lireFournisseur } from "../../lib/prefs";
 import Link from "next/link";
 import BoutonSupprimerDonnees from "../components/BoutonSupprimerDonnees";
 import {
@@ -27,6 +30,13 @@ import {
   Scale,
   Lightbulb,
   ChevronDown,
+  MapPin,
+  Table,
+  Link2,
+  FileText,
+  Sparkles,
+  Loader2,
+  RefreshCw,
 } from "lucide-react";
 
 interface Cat {
@@ -61,9 +71,27 @@ const carteStyle =
 const fmt = (v: number | null | undefined) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("fr-FR");
 
+const H_CORR = ({ children }: { children?: ReactNode }) => (
+  <h6 className="text-[11px] font-bold mt-2 mb-1 text-slate-900 dark:text-slate-100 uppercase tracking-wide">
+    {children}
+  </h6>
+);
+
+const MD_CORR: Components = {
+  h1: H_CORR,
+  h2: H_CORR,
+  h3: H_CORR,
+  h4: H_CORR,
+  p: ({ children }) => <p className="my-1 leading-relaxed text-slate-700 dark:text-slate-300">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc pl-4 my-1 space-y-1 text-slate-700 dark:text-slate-300">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-4 my-1 space-y-1 text-slate-700 dark:text-slate-300">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold text-slate-900 dark:text-white">{children}</strong>,
+};
+
 function calculerPearson(x: number[], y: number[]): number | null {
   const n = Math.min(x.length, y.length);
-  if (n < 3) return null;
+  if (n < 2) return null;
   const moyX = x.reduce((a, b) => a + b, 0) / n;
   const moyY = y.reduce((a, b) => a + b, 0) / n;
 
@@ -80,7 +108,9 @@ function calculerPearson(x: number[], y: number[]): number | null {
   }
 
   const denom = Math.sqrt(denX * denY);
-  return denom === 0 ? 0 : Math.round((num / denom) * 100) / 100;
+  if (denom === 0) return 0;
+  const r = num / denom;
+  return Math.round(Math.max(-1, Math.min(1, r)) * 100) / 100;
 }
 
 function calculerStatsComplet(nums: number[]) {
@@ -112,19 +142,29 @@ function calculerStatsComplet(nums: number[]) {
 }
 
 function expliquerCorrelationSimple(colA: string, colB: string, r: number): string {
+  const estTemps = (nom: string) => /annee|année|date|mois|trimestre|semaine|exercice|an/i.test(nom);
+
+  if (estTemps(colA) || estTemps(colB)) {
+    const colTemps = estTemps(colA) ? colA : colB;
+    const colMesure = estTemps(colA) ? colB : colA;
+    if (r >= 0.5) return `Tendance haussière : au fil de « ${colTemps} », « ${colMesure} » enregistre une croissance régulière.`;
+    if (r <= -0.5) return `Tendance baissière : au fil de « ${colTemps} », « ${colMesure} » subit une érosion continue.`;
+    return `Trajectoire neutre : « ${colMesure} » ne présente pas de dynamique linéaire nette au cours de « ${colTemps} ».`;
+  }
+
   if (r >= 0.7) {
     return `Forte synergie directe : lorsque « ${colA} » augmente, « ${colB} » progresse presque systématiquement de façon proportionnelle.`;
   }
   if (r >= 0.3) {
-    return `Liaison positive modérée : « ${colA} » et « ${colB} » ont tendance à évoluer dans la même direction, avec de légères variations.`;
+    return `Liaison positive modérée : « ${colA} » et « ${colB} » ont tendance à évoluer dans la même direction, avec quelques variations.`;
   }
   if (r > -0.3) {
     return `Indépendance statistique : les variations de « ${colA} » n'ont pas d'impact linéaire perceptible sur « ${colB} ».`;
   }
   if (r > -0.7) {
-    return `Liaison négative modérée : accorder ou observer une hausse de « ${colA} » s'accompagne généralement d'un recul de « ${colB} ».`;
+    return `Liaison négative modérée : une hausse de « ${colA} » s'accompagne généralement d'un recul mesuré de « ${colB} ».`;
   }
-  return `Forte relation inverse : une progression de « ${colA} » entraîne une chute prononcée et systématique de « ${colB} ».`;
+  return `Forte relation inverse : une progression de « ${colA} » entraîne une baisse prononcée et systématique de « ${colB} ».`;
 }
 
 function expliquerEvolutionCorrelation(
@@ -205,6 +245,25 @@ export default function AnalysePage() {
 
   const [exportExcelEnCours, setExportExcelEnCours] = useState(false);
   const [exportPptxEnCours, setExportPptxEnCours] = useState(false);
+
+  const [syntheseCorrIA, setSyntheseCorrIA] = useState<string | null>(null);
+  const [chargementCorrIA, setChargementCorrIA] = useState(false);
+  const [erreurCorrIA, setErreurCorrIA] = useState<string | null>(null);
+
+  const allerASection = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    if (el.tagName === "DETAILS") {
+      (el as HTMLDetailsElement).open = true;
+    }
+    const parentDetails = el.closest("details");
+    if (parentDetails) {
+      parentDetails.open = true;
+    }
+
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const resultatActif = useMemo(() => {
     if (resultat && resultat.statistiques) return resultat;
@@ -437,10 +496,11 @@ export default function AnalysePage() {
 
   const imprimerRapport = () => {
     document.querySelectorAll("details").forEach((el) => el.setAttribute("open", "true"));
-    window.print();
+    setTimeout(() => {
+      window.print();
+    }, 80);
   };
 
-  // 1. Export Excel Multi-onglets (Données + Profiling + Corrélations + Synthèse)
   const telechargerExcelPropre = async () => {
     if (!entetes.length || !corps.length || exportExcelEnCours) return;
     setExportExcelEnCours(true);
@@ -460,7 +520,6 @@ export default function AnalysePage() {
     }
   };
 
-  // 2. Export PowerPoint avec TDC ajusté & Graphiques
   const telechargerPowerPoint = async () => {
     if (!entetes.length || !corps.length || exportPptxEnCours) return;
     setExportPptxEnCours(true);
@@ -470,10 +529,11 @@ export default function AnalysePage() {
         nomProjet: nomFichier || "Analyse Datenza",
         entetes: entetes,
         corps: corps,
-        analyse: resultatActif,
-        rapport: rapportActif,
-        graphiquesEpingles: graphiquesEpingles || [],
-      });
+        analyse: resultatActif as any,
+        rapport: rapportActif as any,
+        graphiquesEpingles: (graphiquesEpingles || []) as any,
+        syntheseCorrelationsIA: syntheseCorrIA ?? undefined,
+      } as any);
     } catch (error) {
       console.error("Erreur lors de l'export PowerPoint :", error);
     } finally {
@@ -484,8 +544,62 @@ export default function AnalysePage() {
   const correlationsStandard = [...(resultatActif?.correlations ?? [])]
     .filter((c) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
     .sort((a, b) => Math.abs(b.coefficient) - Math.abs(a.coefficient));
-  
-  
+
+  async function genererSyntheseCorrelationsIA() {
+    setChargementCorrIA(true);
+    setErreurCorrIA(null);
+    try {
+      const topRelations = (estBenchmarkActif ? correlationsBenchmark.slice(0, 5) : correlationsStandard.slice(0, 6)).map((c: any) => {
+        if (estBenchmarkActif) {
+          return {
+            relation: `${c.colA} ↔ ${c.colB}`,
+            reference: `${refSource} (r = ${c.rRef})`,
+            comparaisons: c.comparaisons.map((comp: any) => `${comp.source}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`),
+          };
+        }
+        return {
+          relation: `${c.colonneA} ↔ ${c.colonneB}`,
+          coefficient_r: c.coefficient,
+          intensite: c.interpretation,
+        };
+      });
+
+      const question = `Interprète de façon managériale et opérationnelle ces corrélations statistiques dominantes :
+${JSON.stringify(topRelations)}
+
+Rédige une synthèse directe et percutante articulée autour de 3 puces :
+- Le levier moteur : la relation clé qui stimule directement l'activité.
+- Le point de vigilance ou paradoxe : corrélation inverse, stagnation temporelle ou risque sous-jacent.
+- La recommandation concrète : décision managériale à prendre sur la base de ces interactions.
+Ne mets ni introduction ni conclusion.`;
+
+      const moteurPref = typeof window !== "undefined" ? lireFournisseur() : "auto";
+
+      const rep = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          contexte: JSON.stringify({ fichier: nomFichier, nbLignes: corps.length, topRelations }),
+          fournisseur: moteurPref || "auto",
+          langueConversation: "fr",
+          langueApp: "fr",
+        }),
+      });
+
+      const data = (await rep.json().catch(() => ({}))) as { reponse?: string; error?: string };
+      if (!rep.ok || !data.reponse) {
+        throw new Error(data.error || `Erreur (${rep.status})`);
+      }
+
+      setSyntheseCorrIA(data.reponse);
+    } catch (err) {
+      setErreurCorrIA(err instanceof Error ? err.message : "Erreur de connexion.");
+    } finally {
+      setChargementCorrIA(false);
+    }
+  }
+
   if (corps.length === 0) {
     return (
       <div className="max-w-4xl mx-auto py-16 text-center space-y-4">
@@ -506,6 +620,27 @@ export default function AnalysePage() {
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-16 text-slate-800 dark:text-slate-100 font-sans">
       
+      {/* EN-TÊTE FORMEL EXCLUSIF À L'EXPORT PDF */}
+      <div className="print-only mb-6 pb-3 border-b-2 border-slate-900">
+        <div className="flex justify-between items-end">
+          <div>
+            <span className="text-[10px] font-bold tracking-widest uppercase text-blue-700">
+              DATENZA ANALYTICS PLATFORM · RAPPORT D&apos;AUDIT
+            </span>
+            <h1 className="text-xl font-black text-slate-900 mt-0.5">
+              Synthèse Décisionnelle &amp; Tableau de Bord
+            </h1>
+            <p className="text-xs text-slate-600">
+              Jeu de données : <strong>{nomFichier || "Données importées"}</strong> ({corps.length.toLocaleString("fr-FR")} lignes)
+            </p>
+          </div>
+          <div className="text-right text-[10px] text-slate-500 font-medium">
+            <p>Document généré le {new Date().toLocaleDateString("fr-FR")}</p>
+            <p className="font-bold text-slate-800">Confidentiel Direction</p>
+          </div>
+        </div>
+      </div>
+
       {/* 1. BANDEAU DE PILOTAGE COBALT EXECUTIVE */}
       <section className="bg-slate-900 border border-slate-800 text-white rounded-3xl p-6 md:p-8 shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
@@ -570,33 +705,34 @@ export default function AnalysePage() {
             )}
           </div>
 
-          {/* Actions d'exportation */}
-          <div className="flex flex-wrap items-center gap-3 print:hidden shrink-0">
+          {/* Actions d'exportation & gestion des données */}
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 print:hidden w-full sm:w-auto mt-4 lg:mt-0 shrink-0">
             <button
               onClick={telechargerPowerPoint}
               disabled={exportPptxEnCours}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+              className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
             >
-              <Presentation className="w-4 h-4" />
-              {exportPptxEnCours ? "Génération PPTX…" : "Exporter PowerPoint (.pptx)"}
+              <Presentation className="w-4 h-4 shrink-0" />
+              <span>{exportPptxEnCours ? "Génération PPTX…" : "PowerPoint (.pptx)"}</span>
             </button>
+
             <BoutonSupprimerDonnees />
 
             <button
               onClick={imprimerRapport}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
             >
-              <Printer className="w-4 h-4" />
-              Exporter PDF
+              <Printer className="w-3.5 h-3.5 shrink-0" />
+              <span>PDF</span>
             </button>
 
             <button
               onClick={telechargerExcelPropre}
               disabled={exportExcelEnCours}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
             >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-              {exportExcelEnCours ? "Export en cours…" : "Télécharger Excel (.xlsx)"}
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{exportExcelEnCours ? "Export…" : "Excel (.xlsx)"}</span>
             </button>
           </div>
         </div>
@@ -686,8 +822,82 @@ export default function AnalysePage() {
         <BarreOutilsDonnees />
       </div>
 
+      {/* BARRE D'ACCÈS RAPIDE */}
+      <nav 
+        aria-label="Navigation rapide de l'analyse"
+        className="print:hidden sticky top-3 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl p-2 shadow-xs flex items-center gap-2 overflow-x-auto scrollbar-none"
+      >
+        <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase px-2 shrink-0">
+          Aller à :
+        </span>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-synthese")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <FileText className="w-3.5 h-3.5 text-blue-500" />
+          <span>Synthèse</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-stats")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <BarChart3 className="w-3.5 h-3.5 text-indigo-500" />
+          <span>Statistiques</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-correlations")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <Link2 className="w-3.5 h-3.5 text-cyan-500" />
+          <span>Corrélations</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-previsions")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+          <span>Prévisions</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-graphiques")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <PieChart className="w-3.5 h-3.5 text-purple-500" />
+          <span>Graphiques</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-carte")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <MapPin className="w-3.5 h-3.5 text-rose-500" />
+          <span>Carte</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-tdc")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <Table className="w-3.5 h-3.5 text-amber-500" />
+          <span>Tableau Croisé (TCD)</span>
+        </button>
+      </nav>
+
       {/* 4. DÉPLIANT 1 : SYNTHÈSE EXÉCUTIVE */}
       <Depliant
+        id="sec-synthese"
         titre={estBenchmarkActif ? `Synthèse exécutive du Benchmark (${sourcesFichiers.length} fichiers)` : "Synthèse exécutive & Faits marquants"}
         detail={estBenchmarkActif ? `${syntheseComparativeCards.length} constats multi-sources` : `${rapportActif.length} points clés identifiés`}
         parDefautOuvert={true}
@@ -745,6 +955,7 @@ export default function AnalysePage() {
 
       {/* DÉPLIANT 2 : STATISTIQUES DÉTAILLÉES PAR COLONNE */}
       <Depliant
+        id="sec-stats"
         titre={estBenchmarkActif ? `Statistiques détaillées par colonne (vs ${refSource})` : "Statistiques détaillées par colonne"}
         detail={`${noms.length} colonnes profilées`}
       >
@@ -973,6 +1184,7 @@ export default function AnalysePage() {
 
       {/* DÉPLIANT 3 : CORRÉLATIONS */}
       <Depliant
+        id="sec-correlations"
         titre={estBenchmarkActif ? `Évolution des corrélations (${sourcesFichiers.length} fichiers)` : "Corrélations significatives"}
         detail={estBenchmarkActif ? `${correlationsBenchmark.length} relations analysées` : `${correlationsStandard.length} relations analysées`}
       >
@@ -982,6 +1194,67 @@ export default function AnalysePage() {
               ? `Analyse détaillée de la transformation des liens mathématiques par rapport au fichier pivot « ${refSource} ».`
               : "Mesure de la force du lien linéaire entre deux variables avec traduction en impact opérationnel."}
           </p>
+
+          {/* MODULE DE SYNTHÈSE TRANSVERSALE */}
+          <div className="space-y-3">
+            {/* 1. Contrôle interactif (VISIBLE UNIQUEMENT À L'ÉCRAN, MASQUÉ DU PDF) */}
+            <div className="no-print print:hidden bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+                  <span>Synthèse analytique transversale</span>
+                </h5>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Dégage les leviers moteurs prioritaires et les points de vigilance opérationnels.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={genererSyntheseCorrelationsIA}
+                disabled={chargementCorrIA}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-purple-700 bg-purple-100 hover:bg-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 transition cursor-pointer self-start sm:self-auto disabled:opacity-50"
+              >
+                {chargementCorrIA ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-600" />
+                    <span>Analyse des liens...</span>
+                  </>
+                ) : syntheseCorrIA ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Actualiser la synthèse</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Générer la synthèse</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* 2. Rendu sobre et exécutif (Visible à l'écran ET sur l'export PDF) */}
+            {syntheseCorrIA && (
+              <div className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm space-y-2">
+                <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100 text-xs border-b border-slate-100 dark:border-slate-800 pb-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                  <span className="uppercase tracking-wider">Synthèse Décisionnelle des Interactions</span>
+                </div>
+                <div className="text-xs text-slate-700 dark:text-slate-300 pt-1">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_CORR}>
+                    {syntheseCorrIA}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+
+            {erreurCorrIA && (
+              <p className="no-print print:hidden text-[10px] text-rose-600 font-medium px-2">
+                ⚠ {erreurCorrIA}
+              </p>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {estBenchmarkActif
@@ -1068,12 +1341,20 @@ export default function AnalysePage() {
         </div>
       </Depliant>
 
-      {/* 5. MODULES D'EXPLORATION VISUELLE & TABLEAUX */}
+      {/* 5. MODULES D'EXPLORATION VISUELLE & TABLEAUX AVEC ANCRAGES */}
       <section className="space-y-8">
-        <ModulePrevisions entetes={entetes} corps={corps} />
-        <GraphiqueGenerateur key={`g-${nomFichier}`} entetes={entetes} corps={corps} onEpingler={epinglerGraphique} />
-        <CarteGeographique key={`c-${nomFichier}`} entetes={entetes} corps={corps} />
-        <TableauCroiseDynamique key={`t-${nomFichier}`} entetes={entetes} corps={corps} />
+        <div id="sec-previsions" className="scroll-mt-24">
+          <ModulePrevisions entetes={entetes} corps={corps} />
+        </div>
+        <div id="sec-graphiques" className="scroll-mt-24">
+          <GraphiqueGenerateur key={`g-${nomFichier}`} entetes={entetes} corps={corps} onEpingler={epinglerGraphique} />
+        </div>
+        <div id="sec-carte" className="scroll-mt-24">
+          <CarteGeographique key={`c-${nomFichier}`} entetes={entetes} corps={corps} />
+        </div>
+        <div id="sec-tdc" className="scroll-mt-24">
+          <TableauCroiseDynamique key={`t-${nomFichier}`} entetes={entetes} corps={corps} />
+        </div>
       </section>
 
     </div>
@@ -1137,25 +1418,27 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
 }
 
 function Depliant({
+  id,
   titre,
   detail,
   children,
   parDefautOuvert = false,
 }: {
+  id?: string;
   titre: string;
   detail: string;
   children: ReactNode;
   parDefautOuvert?: boolean;
 }) {
   return (
-    <details className={`group ${carteStyle}`} open={parDefautOuvert}>
+    <details id={id} className={`group ${carteStyle} scroll-mt-24`} open={parDefautOuvert}>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-6 py-4 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 [&::-webkit-details-marker]:hidden">
         <span className="flex items-baseline gap-3">
           <span className="text-base md:text-lg font-bold text-slate-900 dark:text-white">{titre}</span>
           <span className="text-xs text-slate-400 font-medium">{detail}</span>
         </span>
         <ChevronDown
-          className="h-5 w-5 shrink-0 text-slate-400 transition-transform group-open:rotate-180"
+          className="h-5 w-5 shrink-0 text-slate-400 transition-transform group-open:rotate-180 print:hidden"
           aria-hidden
         />
       </summary>
