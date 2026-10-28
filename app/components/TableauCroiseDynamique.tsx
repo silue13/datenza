@@ -1,8 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Table, Sparkles, ArrowUpRight, ArrowDownRight, Trophy, Presentation } from "lucide-react";
-import { arrondir, estValeurVide, parseNombre, type Cellule } from "../../lib/analyse/utils";
+import { Table, Sparkles, ArrowUpRight, ArrowDownRight, Trophy, Presentation, Info } from "lucide-react";
+import {
+  arrondir,
+  estValeurVide,
+  parseNombre,
+  estColonneIdentifiant,
+  estColonneTemporelle,
+  estLigneTotal,
+  type Cellule,
+} from "../../lib/analyse/utils";
 import type { ElementPptxExport } from "../../lib/analyse/exportPptx";
 
 interface Props {
@@ -19,36 +27,66 @@ function versNombre(v: Cellule): number | null {
 }
 
 const selectClasse =
-  "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-purple-500 text-slate-800 dark:text-slate-200";
+  "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold focus:ring-2 focus:ring-blue-500 text-slate-800 dark:text-slate-200";
 
 export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }: Props) {
   const estModeComparaison = entetes.includes("Fichier Source");
   const colonnesSansSource = useMemo(() => entetes.filter((h) => h !== "Fichier Source"), [entetes]);
 
-  const colonnesNumeriques = useMemo(() => {
-    return colonnesSansSource.filter((h) => {
+  // 1. Classification sémantique rigoureuse des colonnes
+  const { colonnesDimensions, colonnesMesurables } = useMemo(() => {
+    const dimensions: string[] = [];
+    const mesurables: string[] = [];
+
+    colonnesSansSource.forEach((h) => {
       const idx = entetes.indexOf(h);
-      const vals = corps.map((l) => versNombre(l[idx])).filter((n): n is number => n !== null);
-      return vals.length >= 2;
+      const vals = corps.map((l) => l[idx]).filter((v) => !estValeurVide(v));
+      if (vals.length === 0) return;
+
+      const estId = estColonneIdentifiant(h, vals);
+      const estTemps = estColonneTemporelle(h, vals);
+      const nums = vals.map(versNombre).filter((n): n is number => n !== null);
+      const estNumerique = nums.length / vals.length >= 0.7;
+
+      // Une colonne est mesurable uniquement si elle est numérique ET n'est ni un ID, ni une année/date
+      if (estNumerique && !estId && !estTemps) {
+        mesurables.push(h);
+      } else {
+        dimensions.push(h);
+      }
     });
-  }, [entetes, corps, colonnesSansSource]);
 
-  const colonnesCategorielles = useMemo(() => {
-    return colonnesSansSource.filter((h) => !colonnesNumeriques.includes(h));
-  }, [colonnesSansSource, colonnesNumeriques]);
+    return { colonnesDimensions: dimensions, colonnesMesurables: mesurables };
+  }, [colonnesSansSource, entetes, corps]);
 
-  // Configurations par défaut
-  const [colonneLigne, setColonneLigne] = useState<string>(
-    colonnesCategorielles[0] || colonnesSansSource[0] || ""
-  );
-  const [colonneColonne, setColonneColonne] = useState<string>(
-    estModeComparaison ? "Fichier Source" : colonnesCategorielles[1] || ""
-  );
-  const [colonneMesure, setColonneMesure] = useState<string>(colonnesNumeriques[0] || "");
+  // 2. Sélection intelligente des valeurs par défaut (Empêche de sommer les années ou les IDs)
+  const defautLigne = useMemo(() => {
+    // Priorité à une dimension catégorielle ou géographique, sinon temporelle
+    return colonnesDimensions[0] || colonnesSansSource[0] || "";
+  }, [colonnesDimensions, colonnesSansSource]);
+
+  const defautColonne = useMemo(() => {
+    if (estModeComparaison) return "Fichier Source";
+    // Deuxième dimension différente de la première
+    return colonnesDimensions.find((d) => d !== defautLigne) || "";
+  }, [estModeComparaison, colonnesDimensions, defautLigne]);
+
+  const defautMesure = useMemo(() => {
+    // Priorité aux véritables métriques chiffrées (Budget, Rendement, Chiffre d'affaires)
+    const mesurePrio = colonnesMesurables.find((m) => m !== defautLigne && m !== defautColonne);
+    if (mesurePrio) return mesurePrio;
+    if (colonnesMesurables.length > 0) return colonnesMesurables[0];
+    // Repli de secours
+    return colonnesSansSource.find((c) => c !== defautLigne) || colonnesSansSource[0] || "";
+  }, [colonnesMesurables, colonnesSansSource, defautLigne, defautColonne]);
+
+  const [colonneLigne, setColonneLigne] = useState<string>(defautLigne);
+  const [colonneColonne, setColonneColonne] = useState<string>(defautColonne);
+  const [colonneMesure, setColonneMesure] = useState<string>(defautMesure);
   const [agregation, setAgregation] = useState<AgregationTCD>("Somme");
   const [afficherEcarts, setAfficherEcarts] = useState<boolean>(true);
 
-  // Sélecteurs de référence pour écarts
+  // Sélecteurs de référence pour écarts multi-sources
   const [sourceRefChoisie, setSourceRefChoisie] = useState<string>("");
   const [sourceCibleChoisie, setSourceCibleChoisie] = useState<string>("");
 
@@ -79,6 +117,9 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       const map = new Map<string, Map<string, { somme: number; n: number; min: number; max: number }>>();
 
       for (const ligne of corps) {
+        // Exclusion systématique des lignes de totalisation ou calculées
+        if (estLigneTotal(ligne)) continue;
+
         const valLig = String(ligne[idxLigne] ?? "").trim();
         if (!valLig) continue;
         ligSet.add(valLig);
@@ -107,10 +148,17 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
         sousMap.set(valCol, cell);
       }
 
-      const listeLig = Array.from(ligSet).slice(0, 30);
-      const listeCol = idxColonne >= 0 ? Array.from(colSet).slice(0, 15) : ["Total"];
+      // 3. Ne plus tronquer arbitrairement les 31 régions de Côte d'Ivoire (limite portée à 100)
+      let listeLig = Array.from(ligSet).slice(0, 100);
+      const listeCol = idxColonne >= 0 ? Array.from(colSet).slice(0, 20) : ["Total"];
 
-      // Agrégation vectorielle : recalcule fidèlement selon l'opération choisie (pas de somme de moyennes)
+      // Si la dimension ligne représente des années, trier chronologiquement
+      const sontDesAnnees = listeLig.length > 3 && listeLig.every((v) => /^(19|20)\d{2}$/.test(v));
+      if (sontDesAnnees) {
+        listeLig.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+      }
+
+      // Agrégation vectorielle fidèle (pas de somme de moyennes)
       const agregerCellules = (cells: ({ somme: number; n: number; min: number; max: number } | undefined)[]) => {
         const valides = cells.filter((c): c is { somme: number; n: number; min: number; max: number } => !!c && c.n > 0);
         const totalN = valides.reduce((acc, c) => acc + c.n, 0);
@@ -171,15 +219,23 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
   };
 
   const estComparatifActif = modalitesColonnes.length >= 2 && (colonneColonne === "Fichier Source" || estModeComparaison);
-  const colRef = useMemo(() => modalitesColonnes.includes(sourceRefChoisie) ? sourceRefChoisie : modalitesColonnes[0] || "", [modalitesColonnes, sourceRefChoisie]);
-  const colCible = useMemo(() => modalitesColonnes.includes(sourceCibleChoisie) && sourceCibleChoisie !== colRef ? sourceCibleChoisie : modalitesColonnes.filter((c) => c !== colRef)[0] || "", [modalitesColonnes, sourceCibleChoisie, colRef]);
+  const colRef = useMemo(
+    () => (modalitesColonnes.includes(sourceRefChoisie) ? sourceRefChoisie : modalitesColonnes[0] || ""),
+    [modalitesColonnes, sourceRefChoisie]
+  );
+  const colCible = useMemo(
+    () =>
+      modalitesColonnes.includes(sourceCibleChoisie) && sourceCibleChoisie !== colRef
+        ? sourceCibleChoisie
+        : modalitesColonnes.filter((c) => c !== colRef)[0] || "",
+    [modalitesColonnes, sourceCibleChoisie, colRef]
+  );
 
-  // Fonction de transmission au PowerPoint
   const preparerExportPptx = () => {
     if (!onAjouterPptx) return;
 
     const entetesTdc = [`${colonneLigne} \\ ${colonneColonne || "Valeur"}`, ...modalitesColonnes, "Total Général"];
-    
+
     const lignesTdc: (string | number)[][] = modalitesLignes.map((lig) => {
       const cellules: (string | number)[] = [lig];
       modalitesColonnes.forEach((col) => {
@@ -198,8 +254,8 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
     onAjouterPptx({
       id: `tdc-manuel-${colonneLigne}-${colonneColonne}-${agregation}`,
       typeVisuel: "tdc",
-      titre: "Tableau Croisé Dynamique (Sélection Manuelle)",
-      sousTitre: `Matrice croisée : ${colonneLigne} × ${colonneColonne} (${agregation} de ${colonneMesure})`,
+      titre: "Tableau Croisé Dynamique",
+      sousTitre: `Matrice croisée : ${colonneLigne} × ${colonneColonne || "Global"} (${agregation} de ${colonneMesure})`,
       donneesTableau: {
         entetes: entetesTdc,
         lignes: lignesTdc,
@@ -242,7 +298,6 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       const diff = Math.round((v2 - v1) * 100) / 100;
       const pct = v1 > 0 ? Math.round((diff / v1) * 1000) / 10 : 0;
 
-      // Détection stricte des hausses (> 0) et des baisses (< 0)
       if (diff > 0 && (!maxProgression || diff > maxProgression.ecart)) {
         maxProgression = { nom: lig, ecart: diff, pct };
       }
@@ -270,10 +325,10 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
 
   return (
     <div className="bloc-tdc-print print-eviter-coupure bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-5 shadow-sm">
-      {/* En-tête & Contrôles */}
+      {/* En-tête exécutif */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold">
+          <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
             <Table className="w-5 h-5" />
           </div>
           <div>
@@ -283,107 +338,118 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
             <p className="text-xs text-slate-400">
               {estComparatifActif
                 ? `Matrice comparative multi-sources (${modalitesColonnes.length} colonnes confrontées)`
-                : "Agrégation matricielle de vos dimensions"}
+                : "Agrégation matricielle et croisement de vos indicateurs"}
             </p>
           </div>
         </div>
 
-        {/* Bouton d'export vers le PPTX */}
         {onAjouterPptx && (
-          <div className="print:hidden">
+          <div className="no-print print:hidden">
             <button
               onClick={preparerExportPptx}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
                 estDejaInclus
-                  ? "bg-blue-600 text-white"
+                  ? "bg-blue-600 text-white shadow-xs"
                   : "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800 dark:border"
               }`}
             >
               <Presentation className="w-3.5 h-3.5" />
-              {estDejaInclus ? "✓ Ajouté au PPTX" : "+ Ajouter au PPTX"}
+              {estDejaInclus ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
             </button>
           </div>
         )}
       </div>
 
-      {/* Sélecteurs de dimensions et de calculs */}
-      <div className="no-print flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-4">
+      {/* Sélecteurs de dimensions et de métriques */}
+      <div className="no-print print:hidden flex flex-wrap items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-4">
         <div>
-          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Lignes</span>
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Lignes (Dimension)</span>
           <select value={colonneLigne} onChange={(e) => setColonneLigne(e.target.value)} className={selectClasse}>
             {colonnesSansSource.map((h) => (
-              <option key={h} value={h}>{h}</option>
+              <option key={h} value={h}>
+                {h}
+              </option>
             ))}
           </select>
         </div>
 
         <div>
-          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Colonnes</span>
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Colonnes (Croisement)</span>
           <select value={colonneColonne} onChange={(e) => setColonneColonne(e.target.value)} className={selectClasse}>
-            <option value="">(Aucune)</option>
+            <option value="">(Aucune - Vue synthétique)</option>
             {entetes.map((h) => (
-              <option key={h} value={h}>{h}</option>
+              <option key={h} value={h}>
+                {h}
+              </option>
             ))}
           </select>
         </div>
 
         <div>
-          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Mesure</span>
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Mesure calculée</span>
           <select
             value={colonneMesure}
             onChange={(e) => setColonneMesure(e.target.value)}
             disabled={agregation === "Nombre"}
             className={`${selectClasse} disabled:opacity-40`}
           >
-            {colonnesNumeriques.map((h) => (
-              <option key={h} value={h}>{h}</option>
+            {colonnesSansSource.map((h) => (
+              <option key={h} value={h}>
+                {h}
+              </option>
             ))}
           </select>
         </div>
 
         <div>
-          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Calcul</span>
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Opération</span>
           <select
             value={agregation}
             onChange={(e) => setAgregation(e.target.value as AgregationTCD)}
             className={selectClasse}
           >
-            <option value="Somme">Somme</option>
+            <option value="Somme">Somme cumulée</option>
             <option value="Moyenne">Moyenne</option>
-            <option value="Nombre">Nombre (effectif)</option>
+            <option value="Nombre">Nombre d’enregistrements</option>
             <option value="Minimum">Minimum</option>
             <option value="Maximum">Maximum</option>
           </select>
         </div>
       </div>
 
-      {/* Barre de pilotage comparative pour N >= 2 colonnes */}
+      {/* Barre de pilotage en mode Benchmark */}
       {estComparatifActif && (
-        <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/50 text-xs">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5">
-              <span className="font-semibold text-indigo-950 dark:text-indigo-200">Base Référence :</span>
+              <span className="font-semibold text-blue-950 dark:text-blue-200">Base Référence :</span>
               <select
                 value={colRef}
                 onChange={(e) => setSourceRefChoisie(e.target.value)}
-                className="bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 rounded-lg px-2 py-1 font-bold text-purple-700 dark:text-purple-300"
+                className="bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 rounded-lg px-2 py-1 font-bold text-blue-700 dark:text-blue-300"
               >
                 {modalitesColonnes.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="flex items-center gap-1.5">
-              <span className="font-semibold text-indigo-950 dark:text-indigo-200">Cible comparée :</span>
+              <span className="font-semibold text-blue-950 dark:text-blue-200">Cible comparée :</span>
               <select
                 value={colCible}
                 onChange={(e) => setSourceCibleChoisie(e.target.value)}
-                className="bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 rounded-lg px-2 py-1 font-bold text-cyan-700 dark:text-cyan-300"
+                className="bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 rounded-lg px-2 py-1 font-bold text-blue-600 dark:text-blue-400"
               >
-                {modalitesColonnes.filter((c) => c !== colRef).map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
+                {modalitesColonnes
+                  .filter((c) => c !== colRef)
+                  .map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
               </select>
             </div>
           </div>
@@ -393,19 +459,20 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
               type="checkbox"
               checked={afficherEcarts}
               onChange={(e) => setAfficherEcarts(e.target.checked)}
-              className="rounded text-purple-600 focus:ring-purple-500"
+              className="rounded text-blue-600 focus:ring-blue-500"
             />
-            Afficher les colonnes d&apos;écart ({colCible} vs {colRef})
+            Afficher les écarts ({colCible} vs {colRef})
           </label>
         </div>
       )}
 
-      {/* Rendu Tabulaire */}
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+      {/* Rendu Tabulaire avec colonne gauche figée sur mobile (Sticky Column) */}
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 relative scrollbar-thin">
         <table className="w-full text-left text-xs border-collapse font-sans">
           <thead>
             <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-              <th className="p-3.5 font-bold uppercase tracking-wider text-[11px] bg-slate-100/70 dark:bg-slate-800">
+              {/* Colonne gauche figée */}
+              <th className="p-3.5 font-bold uppercase tracking-wider text-[11px] bg-slate-100 dark:bg-slate-800 sticky left-0 z-20 shadow-[1px_0_0_0_rgba(226,232,240,1)] dark:shadow-[1px_0_0_0_rgba(51,65,85,1)]">
                 {colonneLigne || "Dimension"} \ {colonneColonne || "Valeur"}
               </th>
               {modalitesColonnes.map((col) => {
@@ -416,9 +483,9 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
                     key={col}
                     className={`p-3.5 font-bold text-right whitespace-nowrap ${
                       estRef
-                        ? "bg-purple-50/60 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300"
+                        ? "bg-blue-50/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
                         : estCible
-                        ? "bg-cyan-50/60 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300"
+                        ? "bg-slate-100/80 dark:bg-slate-800 text-blue-600 dark:text-blue-400"
                         : ""
                     }`}
                   >
@@ -429,10 +496,10 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
 
               {estComparatifActif && afficherEcarts && (
                 <>
-                  <th className="p-3.5 font-bold text-right text-purple-700 dark:text-purple-300 bg-purple-50/50 dark:bg-purple-950/30 whitespace-nowrap">
+                  <th className="p-3.5 font-bold text-right text-blue-700 dark:text-blue-300 bg-blue-50/50 dark:bg-blue-950/30 whitespace-nowrap">
                     Écart (Δ)
                   </th>
-                  <th className="p-3.5 font-bold text-right text-purple-700 dark:text-purple-300 bg-purple-50/50 dark:bg-purple-950/30 whitespace-nowrap">
+                  <th className="p-3.5 font-bold text-right text-blue-700 dark:text-blue-300 bg-blue-50/50 dark:bg-blue-950/30 whitespace-nowrap">
                     Variation (%)
                   </th>
                 </>
@@ -452,8 +519,9 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
               const pctLigne = vRef > 0 ? Math.round(((vCible - vRef) / vRef) * 1000) / 10 : 0;
 
               return (
-                <tr key={lig} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition">
-                  <td className="p-3.5 font-sans font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                <tr key={lig} className="group hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition">
+                  {/* Cellule gauche figée */}
+                  <td className="p-3.5 font-sans font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap sticky left-0 z-10 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800/80 shadow-[1px_0_0_0_rgba(226,232,240,1)] dark:shadow-[1px_0_0_0_rgba(51,65,85,1)]">
                     {lig}
                   </td>
                   {modalitesColonnes.map((col) => {
@@ -476,7 +544,9 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
                             : "text-slate-400"
                         }`}
                       >
-                        {ecartLigne > 0 ? `+${ecartLigne.toLocaleString("fr-FR")}` : ecartLigne.toLocaleString("fr-FR")}
+                        {ecartLigne > 0
+                          ? `+${ecartLigne.toLocaleString("fr-FR")}`
+                          : ecartLigne.toLocaleString("fr-FR")}
                       </td>
                       <td
                         className={`p-3.5 text-right font-bold whitespace-nowrap ${
@@ -502,7 +572,10 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
 
           <tfoot>
             <tr className="bg-slate-100/80 dark:bg-slate-800/80 font-bold border-t-2 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white">
-              <td className="p-3.5 uppercase tracking-wider text-[11px]">Total général</td>
+              {/* Total général figé à gauche */}
+              <td className="p-3.5 uppercase tracking-wider text-[11px] sticky left-0 z-10 bg-slate-100 dark:bg-slate-800 shadow-[1px_0_0_0_rgba(226,232,240,1)] dark:shadow-[1px_0_0_0_rgba(51,65,85,1)]">
+                Total général
+              </td>
               {modalitesColonnes.map((col) => (
                 <td key={col} className="p-3.5 text-right whitespace-nowrap">
                   {(totauxColonnes.get(col) || 0).toLocaleString("fr-FR")}
@@ -532,7 +605,7 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
                 </>
               )}
 
-              <td className="p-3.5 text-right font-black text-purple-700 dark:text-purple-400">
+              <td className="p-3.5 text-right font-black text-blue-700 dark:text-blue-400">
                 {totalGeneral.toLocaleString("fr-FR")}
               </td>
             </tr>
@@ -540,11 +613,11 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
         </table>
       </div>
 
-      {/* SYNTHÈSE ANALYTIQUE EN MODE BENCHMARK MULTI-SOURCES */}
+      {/* Synthèse comparative multi-sources */}
       {syntheseComparatif && (
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 p-4 space-y-2.5 text-xs leading-relaxed">
           <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-800 pb-2">
-            <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+            <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
             <h5 className="font-bold text-slate-800 dark:text-slate-200">
               Diagnostic chiffré du tableau croisé ({modalitesColonnes.length} colonnes) :
             </h5>
@@ -560,7 +633,10 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
               >
                 {syntheseComparatif.ecartGlobal >= 0 ? "+" : ""}
                 {syntheseComparatif.ecartGlobal.toLocaleString("fr-FR")}{" "}
-                <span className="text-xs font-semibold">({syntheseComparatif.pctGlobal >= 0 ? "+" : ""}{syntheseComparatif.pctGlobal} %)</span>
+                <span className="text-xs font-semibold">
+                  ({syntheseComparatif.pctGlobal >= 0 ? "+" : ""}
+                  {syntheseComparatif.pctGlobal} %)
+                </span>
               </p>
               <p className="text-[10px] text-slate-500">
                 {syntheseComparatif.sourceCible} par rapport à {syntheseComparatif.sourceRef}.
@@ -575,7 +651,8 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
                 {syntheseComparatif.leaderLignes[0]}
               </p>
               <p className="text-[10px] text-slate-500">
-                En tête sur <strong>{syntheseComparatif.leaderLignes[1]}</strong> ligne(s) sur {syntheseComparatif.totalLignes}.
+                En tête sur <strong>{syntheseComparatif.leaderLignes[1]}</strong> ligne(s) sur{" "}
+                {syntheseComparatif.totalLignes}.
               </p>
             </div>
 
@@ -588,7 +665,10 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
               </p>
               <p className="text-[10px] text-slate-500">
                 {syntheseComparatif.maxProgression.ecart > 0 ? (
-                  <>Gain net de <strong>+{syntheseComparatif.maxProgression.ecart.toLocaleString("fr-FR")}</strong> (+{syntheseComparatif.maxProgression.pct} %).</>
+                  <>
+                    Gain net de <strong>+{syntheseComparatif.maxProgression.ecart.toLocaleString("fr-FR")}</strong> (
+                    +{syntheseComparatif.maxProgression.pct} %).
+                  </>
                 ) : (
                   <>Aucune progression constatée.</>
                 )}
@@ -604,7 +684,10 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
               </p>
               <p className="text-[10px] text-slate-500">
                 {syntheseComparatif.maxRecul.ecart < 0 ? (
-                  <>Variation de <strong>{syntheseComparatif.maxRecul.ecart.toLocaleString("fr-FR")}</strong> ({syntheseComparatif.maxRecul.pct} %).</>
+                  <>
+                    Variation de <strong>{syntheseComparatif.maxRecul.ecart.toLocaleString("fr-FR")}</strong> (
+                    {syntheseComparatif.maxRecul.pct} %).
+                  </>
                 ) : (
                   <>Aucun recul constaté.</>
                 )}

@@ -11,7 +11,14 @@ import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
 import { useData } from "../context/DataContext";
-import { parseNombre, estValeurVide, arrondir, type Cellule } from "../../lib/analyse/utils";
+import {
+  parseNombre,
+  estValeurVide,
+  arrondir,
+  estColonneIdentifiant,
+  estColonneTemporelle,
+  type Cellule,
+} from "../../lib/analyse/utils";
 import { analyserColonnes } from "../../lib/analyse/analyse";
 import { lireFournisseur } from "../../lib/prefs";
 import Link from "next/link";
@@ -37,6 +44,7 @@ import {
   Sparkles,
   Loader2,
   RefreshCw,
+  Calendar,
 } from "lucide-react";
 
 interface Cat {
@@ -142,7 +150,7 @@ function calculerStatsComplet(nums: number[]) {
 }
 
 function expliquerCorrelationSimple(colA: string, colB: string, r: number): string {
-  const estTemps = (nom: string) => /annee|année|date|mois|trimestre|semaine|exercice|an/i.test(nom);
+  const estTemps = (nom: string) => /annee|année|date|mois|trimestre|semaine|exercice|an|indicateur/i.test(nom);
 
   if (estTemps(colA) || estTemps(colB)) {
     const colTemps = estTemps(colA) ? colA : colB;
@@ -317,13 +325,63 @@ export default function AnalysePage() {
     return map;
   }, [sourcesFichiers, corps, idxSource]);
 
-  const colonnesNumeriques = useMemo(() => {
-    return noms.filter((nom) => {
+  // 1. CLASSIFICATION RIGOUREUSE DES COLONNES (Évite de sommer les années et les identifiants)
+  const { colonnesMesurables, colonnesTemporelles, colonnesIdentifiants } = useMemo(() => {
+    const mesurables: string[] = [];
+    const temporelles: string[] = [];
+    const identifiants: string[] = [];
+
+    noms.forEach((nom) => {
       const idx = entetes.indexOf(nom);
-      const nums = corps.map((l) => parseNombre(l[idx])).filter((n): n is number => n !== null);
-      return nums.length >= 2;
+      const vals = corps.map((l) => l[idx]).filter((v) => !estValeurVide(v));
+      if (!vals.length) return;
+
+      if (estColonneIdentifiant(nom, vals)) {
+        identifiants.push(nom);
+        return;
+      }
+
+      if (estColonneTemporelle(nom, vals)) {
+        temporelles.push(nom);
+        return;
+      }
+
+      const nums = vals.map(parseNombre).filter((n): n is number => n !== null);
+      if (nums.length / vals.length >= 0.6) {
+        mesurables.push(nom);
+      }
     });
+
+    return { colonnesMesurables: mesurables, colonnesTemporelles: temporelles, colonnesIdentifiants: identifiants };
   }, [noms, entetes, corps]);
+
+  // Colonnes admissibles aux corrélations (Mesures + 1 colonne Temporelle pour dégager la tendance)
+  const colonnesPourCorrelations = useMemo(() => {
+    const list = [...colonnesMesurables];
+    if (colonnesTemporelles.length > 0) {
+      list.unshift(colonnesTemporelles[0]);
+    }
+    return list;
+  }, [colonnesMesurables, colonnesTemporelles]);
+
+  // Calcul du taux réel de complétude des données
+  const completudeGlobale = useMemo(() => {
+    if (!corps.length || !noms.length) return 100;
+    let totalCellules = 0;
+    let totalRemplies = 0;
+
+    corps.forEach((ligne) => {
+      noms.forEach((nom) => {
+        const idx = entetes.indexOf(nom);
+        if (idx !== -1) {
+          totalCellules++;
+          if (!estValeurVide(ligne[idx])) totalRemplies++;
+        }
+      });
+    });
+
+    return totalCellules ? Math.round((totalRemplies / totalCellules) * 100) : 100;
+  }, [corps, noms, entetes]);
 
   const statsGlobalesMulti = useMemo(() => {
     if (!estBenchmarkActif) return null;
@@ -359,7 +417,13 @@ export default function AnalysePage() {
   const syntheseComparativeCards = useMemo(() => {
     if (!estBenchmarkActif || !statsGlobalesMulti) return [];
 
-    const cartes: { type: "numerique" | "categorie" | "qualite"; titre: string; detail: string; deltaBadge?: string; estHausse?: boolean }[] = [];
+    const cartes: {
+      type: "numerique" | "categorie" | "qualite";
+      titre: string;
+      detail: string;
+      deltaBadge?: string;
+      estHausse?: boolean;
+    }[] = [];
 
     if (sourcesFichiers.length === 2) {
       const s1 = sourcesFichiers[0];
@@ -387,7 +451,8 @@ export default function AnalysePage() {
       });
     }
 
-    colonnesNumeriques.forEach((nomCol) => {
+    // Uniquement sur les vraies métriques mesurables (exclut Année et ID)
+    colonnesMesurables.forEach((nomCol) => {
       const idx = entetes.indexOf(nomCol);
       const perfParSource = sourcesFichiers.map((src) => {
         const lignes = corpsParSource.get(src) || [];
@@ -407,14 +472,21 @@ export default function AnalysePage() {
         cartes.push({
           type: "numerique",
           titre: `Volume total de ${nomCol}`,
-          detail: `Dominé par ${leaderSomme.src} (${fmt(arrondir(leaderSomme.sum))}). Référence ${refSource} : ${fmt(arrondir(refData.sum))} (moyenne : ${fmt(arrondir(leaderSomme.moy))} vs ${fmt(arrondir(refData.moy))}).`,
+          detail: `Dominé par ${leaderSomme.src} (${fmt(arrondir(leaderSomme.sum))}). Référence ${refSource} : ${fmt(
+            arrondir(refData.sum)
+          )} (moyenne : ${fmt(arrondir(leaderSomme.moy))} vs ${fmt(arrondir(refData.moy))}).`,
           deltaBadge: leaderSomme.src === refSource ? "Réf en tête" : `+${pctDiff} % vs Réf`,
           estHausse: deltaRefLeader >= 0,
         });
       }
     });
 
-    noms.filter((nom) => !colonnesNumeriques.includes(nom)).forEach((nomCol) => {
+    // Synthèse pour les colonnes catégorielles réelles
+    const categorielles = noms.filter(
+      (nom) => !colonnesMesurables.includes(nom) && !colonnesTemporelles.includes(nom) && !colonnesIdentifiants.includes(nom)
+    );
+
+    categorielles.forEach((nomCol) => {
       const idx = entetes.indexOf(nomCol);
       const topParSource = sourcesFichiers.map((src) => {
         const lignes = corpsParSource.get(src) || [];
@@ -444,10 +516,22 @@ export default function AnalysePage() {
     });
 
     return cartes;
-  }, [estBenchmarkActif, statsGlobalesMulti, sourcesFichiers, refSource, colonnesNumeriques, noms, entetes, corpsParSource]);
+  }, [
+    estBenchmarkActif,
+    statsGlobalesMulti,
+    sourcesFichiers,
+    refSource,
+    colonnesMesurables,
+    colonnesTemporelles,
+    colonnesIdentifiants,
+    noms,
+    entetes,
+    corpsParSource,
+  ]);
 
+  // 2. CORRÉLATIONS BENCHMARK SÉCURISÉES (Exclut les identifiants)
   const correlationsBenchmark = useMemo(() => {
-    if (!estBenchmarkActif || colonnesNumeriques.length < 2) return [];
+    if (!estBenchmarkActif || colonnesPourCorrelations.length < 2) return [];
 
     const couples: {
       colA: string;
@@ -462,10 +546,16 @@ export default function AnalysePage() {
       maxDiffAbs: number;
     }[] = [];
 
-    for (let i = 0; i < colonnesNumeriques.length; i++) {
-      for (let j = i + 1; j < colonnesNumeriques.length; j++) {
-        const colA = colonnesNumeriques[i];
-        const colB = colonnesNumeriques[j];
+    for (let i = 0; i < colonnesPourCorrelations.length; i++) {
+      for (let j = i + 1; j < colonnesPourCorrelations.length; j++) {
+        const colA = colonnesPourCorrelations[i];
+        const colB = colonnesPourCorrelations[j];
+
+        // Ne pas corréler deux colonnes temporelles entre elles
+        if (colonnesTemporelles.includes(colA) && colonnesTemporelles.includes(colB)) {
+          continue;
+        }
+
         const idxA = entetes.indexOf(colA);
         const idxB = entetes.indexOf(colB);
 
@@ -473,14 +563,20 @@ export default function AnalysePage() {
         const pairesRef = lignesRef
           .map((l) => [parseNombre(l[idxA]), parseNombre(l[idxB])])
           .filter((p): p is [number, number] => p[0] !== null && p[1] !== null);
-        const rRef = calculerPearson(pairesRef.map((p) => p[0]), pairesRef.map((p) => p[1]));
+        const rRef = calculerPearson(
+          pairesRef.map((p) => p[0]),
+          pairesRef.map((p) => p[1])
+        );
 
         const comparaisons = autresSources.map((src) => {
           const lignesSrc = corpsParSource.get(src) || [];
           const pairesSrc = lignesSrc
             .map((l) => [parseNombre(l[idxA]), parseNombre(l[idxB])])
             .filter((p): p is [number, number] => p[0] !== null && p[1] !== null);
-          const rSrc = calculerPearson(pairesSrc.map((p) => p[0]), pairesSrc.map((p) => p[1]));
+          const rSrc = calculerPearson(
+            pairesSrc.map((p) => p[0]),
+            pairesSrc.map((p) => p[1])
+          );
           const diff = Math.round(((rSrc ?? 0) - (rRef ?? 0)) * 100) / 100;
           const expl = expliquerEvolutionCorrelation(colA, colB, rRef, rSrc, refSource, src);
           return { source: src, r: rSrc, diff, expl };
@@ -492,7 +588,7 @@ export default function AnalysePage() {
     }
 
     return couples.sort((a, b) => b.maxDiffAbs - a.maxDiffAbs);
-  }, [estBenchmarkActif, colonnesNumeriques, entetes, corpsParSource, refSource, autresSources]);
+  }, [estBenchmarkActif, colonnesPourCorrelations, colonnesTemporelles, entetes, corpsParSource, refSource, autresSources]);
 
   const imprimerRapport = () => {
     document.querySelectorAll("details").forEach((el) => el.setAttribute("open", "true"));
@@ -541,28 +637,40 @@ export default function AnalysePage() {
     }
   };
 
-  const correlationsStandard = [...(resultatActif?.correlations ?? [])]
-    .filter((c) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
-    .sort((a, b) => Math.abs(b.coefficient) - Math.abs(a.coefficient));
+  // 3. CORRÉLATIONS STANDARDS FILTRÉES (Exclut fichiers sources et identifiants)
+  const correlationsStandard = useMemo(() => {
+    return [...(resultatActif?.correlations ?? [])]
+      .filter((c) => {
+        if (c.colonneA === "Fichier Source" || c.colonneB === "Fichier Source") return false;
+        if (colonnesIdentifiants.includes(c.colonneA) || colonnesIdentifiants.includes(c.colonneB)) return false;
+        if (colonnesTemporelles.includes(c.colonneA) && colonnesTemporelles.includes(c.colonneB)) return false;
+        return true;
+      })
+      .sort((a, b) => Math.abs(b.coefficient) - Math.abs(a.coefficient));
+  }, [resultatActif, colonnesIdentifiants, colonnesTemporelles]);
 
   async function genererSyntheseCorrelationsIA() {
     setChargementCorrIA(true);
     setErreurCorrIA(null);
     try {
-      const topRelations = (estBenchmarkActif ? correlationsBenchmark.slice(0, 5) : correlationsStandard.slice(0, 6)).map((c: any) => {
-        if (estBenchmarkActif) {
+      const topRelations = (estBenchmarkActif ? correlationsBenchmark.slice(0, 5) : correlationsStandard.slice(0, 6)).map(
+        (c: any) => {
+          if (estBenchmarkActif) {
+            return {
+              relation: `${c.colA} ↔ ${c.colB}`,
+              reference: `${refSource} (r = ${c.rRef})`,
+              comparaisons: c.comparaisons.map(
+                (comp: any) => `${comp.source}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`
+              ),
+            };
+          }
           return {
-            relation: `${c.colA} ↔ ${c.colB}`,
-            reference: `${refSource} (r = ${c.rRef})`,
-            comparaisons: c.comparaisons.map((comp: any) => `${comp.source}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`),
+            relation: `${c.colonneA} ↔ ${c.colonneB}`,
+            coefficient_r: c.coefficient,
+            intensite: c.interpretation,
           };
         }
-        return {
-          relation: `${c.colonneA} ↔ ${c.colonneB}`,
-          coefficient_r: c.coefficient,
-          intensite: c.interpretation,
-        };
-      });
+      );
 
       const question = `Interprète de façon managériale et opérationnelle ces corrélations statistiques dominantes :
 ${JSON.stringify(topRelations)}
@@ -619,7 +727,6 @@ Ne mets ni introduction ni conclusion.`;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-16 text-slate-800 dark:text-slate-100 font-sans">
-      
       {/* EN-TÊTE FORMEL EXCLUSIF À L'EXPORT PDF */}
       <div className="print-only mb-6 pb-3 border-b-2 border-slate-900">
         <div className="flex justify-between items-end">
@@ -705,7 +812,6 @@ Ne mets ni introduction ni conclusion.`;
             )}
           </div>
 
-          {/* Actions d'exportation & gestion des données */}
           <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 print:hidden w-full sm:w-auto mt-4 lg:mt-0 shrink-0">
             <button
               onClick={telechargerPowerPoint}
@@ -738,7 +844,7 @@ Ne mets ni introduction ni conclusion.`;
         </div>
       </section>
 
-      {/* 2. CARTES D'INDICATEURS CLÉS (KPIs) */}
+      {/* 2. CARTES D'INDICATEURS CLÉS (KPIs RÉELS) */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:grid-cols-4">
         <div className={`${carteStyle} p-5 flex items-center justify-between`}>
           <div>
@@ -754,7 +860,7 @@ Ne mets ni introduction ni conclusion.`;
                   Réf {refSource} : <strong>{fmt(corpsParSource.get(refSource)?.length || 0)}</strong> lignes
                 </span>
               ) : (
-                "• Enregistrements du fichier"
+                "• Enregistrements filtrés"
               )}
             </p>
           </div>
@@ -765,12 +871,12 @@ Ne mets ni introduction ni conclusion.`;
 
         <div className={`${carteStyle} p-5 flex items-center justify-between`}>
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Colonnes Communes</p>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Variables Évaluées</p>
             <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">
               {noms.length}
             </h3>
             <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium">
-              {estBenchmarkActif ? "• 100 % alignées" : "• Variables exploitables"}
+              • {colonnesMesurables.length} métriques · {colonnesTemporelles.length} temporelles
             </p>
           </div>
           <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold">
@@ -787,7 +893,7 @@ Ne mets ni introduction ni conclusion.`;
               {estBenchmarkActif ? `${sourcesFichiers.length} fichiers` : graphiquesEpingles.length}
             </h3>
             <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium">
-              {estBenchmarkActif ? "• Séries synchronisées" : "• Graphiques épinglés"}
+              {estBenchmarkActif ? "• Séries synchronisées" : "• Incluses au rapport"}
             </p>
           </div>
           <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
@@ -797,17 +903,20 @@ Ne mets ni introduction ni conclusion.`;
 
         <div className={`${carteStyle} p-5 flex items-center justify-between`}>
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Complétude Moyenne</p>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Complétude Réelle</p>
             <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-              {statsGlobalesMulti
-                ? `${Math.round(statsGlobalesMulti.resumeSources.reduce((a, b) => a + b.completude, 0) / (sourcesFichiers.length || 1))} %`
-                : "100 %"}
+              {estBenchmarkActif && statsGlobalesMulti
+                ? `${Math.round(
+                    statsGlobalesMulti.resumeSources.reduce((a, b) => a + b.completude, 0) /
+                      (sourcesFichiers.length || 1)
+                  )} %`
+                : `${completudeGlobale} %`}
             </h3>
             <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium">
               {estBenchmarkActif ? (
                 <span>Réf {refSource} : {statsGlobalesMulti?.refInfo.completude} %</span>
               ) : (
-                "• Données prêtes pour l'audit"
+                "• Données qualifiées"
               )}
             </p>
           </div>
@@ -823,7 +932,7 @@ Ne mets ni introduction ni conclusion.`;
       </div>
 
       {/* BARRE D'ACCÈS RAPIDE */}
-      <nav 
+      <nav
         aria-label="Navigation rapide de l'analyse"
         className="print:hidden sticky top-3 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl p-2 shadow-xs flex items-center gap-2 overflow-x-auto scrollbar-none"
       >
@@ -1195,13 +1304,11 @@ Ne mets ni introduction ni conclusion.`;
               : "Mesure de la force du lien linéaire entre deux variables avec traduction en impact opérationnel."}
           </p>
 
-          {/* MODULE DE SYNTHÈSE TRANSVERSALE */}
           <div className="space-y-3">
-            {/* 1. Contrôle interactif (VISIBLE UNIQUEMENT À L'ÉCRAN, MASQUÉ DU PDF) */}
             <div className="no-print print:hidden bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+                  <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
                   <span>Synthèse analytique transversale</span>
                 </h5>
                 <p className="text-[11px] text-slate-500 mt-0.5">
@@ -1213,11 +1320,11 @@ Ne mets ni introduction ni conclusion.`;
                 type="button"
                 onClick={genererSyntheseCorrelationsIA}
                 disabled={chargementCorrIA}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-purple-700 bg-purple-100 hover:bg-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 transition cursor-pointer self-start sm:self-auto disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-blue-700 bg-blue-100 hover:bg-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 transition cursor-pointer self-start sm:self-auto disabled:opacity-50"
               >
                 {chargementCorrIA ? (
                   <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-600" />
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
                     <span>Analyse des liens...</span>
                   </>
                 ) : syntheseCorrIA ? (
@@ -1227,14 +1334,13 @@ Ne mets ni introduction ni conclusion.`;
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
                     <span>Générer la synthèse</span>
                   </>
                 )}
               </button>
             </div>
 
-            {/* 2. Rendu sobre et exécutif (Visible à l'écran ET sur l'export PDF) */}
             {syntheseCorrIA && (
               <div className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm space-y-2">
                 <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100 text-xs border-b border-slate-100 dark:border-slate-800 pb-2">
@@ -1356,7 +1462,6 @@ Ne mets ni introduction ni conclusion.`;
           <TableauCroiseDynamique key={`t-${nomFichier}`} entetes={entetes} corps={corps} />
         </div>
       </section>
-
     </div>
   );
 }

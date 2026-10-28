@@ -2,7 +2,12 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import type { BlocRapport } from "../../lib/analyse/rapport";
 import type { analyserColonnes } from "../../lib/analyse/analyse";
-import type { Cellule } from "../../lib/analyse/utils";
+import {
+  type Cellule,
+  nettoyerEntetes,
+  estLigneTotal,
+  estValeurVide,
+} from "../../lib/analyse/utils";
 import { analyserNettoyage, appliquerCorrections } from "../../lib/analyse/nettoyage";
 import {
   appliquerFiltres,
@@ -16,19 +21,23 @@ export type ResultatAnalyse = ReturnType<typeof analyserColonnes>;
 export type TypeGraphique = "Barres" | "Courbe" | "Camembert" | "Anneau" | "Radar" | "Aires" | "Carte";
 
 export interface GraphiqueEpingle {
-  id: number;
+  id: number | string;
   titre: string;
   type: TypeGraphique;
   labels: string[];
   datasets: {
     label: string;
-    data: number[];
+    data: (number | null)[];
     backgroundColor: string | string[];
     borderColor?: string;
     borderWidth?: number;
     borderRadius?: number;
+    fill?: boolean;
+    borderDash?: number[];
+    pointRadius?: number;
   }[];
-  interpretation?: string; // <-- AJOUTER ICI
+  chartType?: string;
+  interpretation?: string;
 }
 
 interface DataContextType {
@@ -51,14 +60,13 @@ interface DataContextType {
   setRapport: React.Dispatch<React.SetStateAction<BlocRapport[]>>;
   setResultat: React.Dispatch<React.SetStateAction<ResultatAnalyse | null>>;
   epinglerGraphique: (graphique: GraphiqueEpingle) => void;
-  desepinglerGraphique: (id: number) => void;
+  desepinglerGraphique: (id: number | string) => void;
   ajouterFiltre: (filtre: ConditionFiltre) => void;
   supprimerFiltre: (index: number) => void;
   reinitialiserFiltres: () => void;
   creerColonneCalculee: (def: DefinitionColonneCalculee) => void;
   nettoyerDonnees: (corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) => void;
   supprimerDonnees: () => void;
-  // false tant que la sauvegarde locale n'a pas été relue (évite d'afficher « aucun fichier » une fraction de seconde)
   restaurationTerminee: boolean;
 }
 
@@ -119,17 +127,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
     nouveauResultat?: ResultatAnalyse | null,
     nouveauRapport?: BlocRapport[]
   ) {
-    // Nettoyage automatique initial de la casse
-    const donneesObjets = corpsData.map((ligne) => {
+    // 1. Purge immédiate du BOM UTF-8 et des guillemets sur les en-têtes
+    const entetesPropres = nettoyerEntetes(entetesData);
+
+    // 2. Filtrage des lignes de calculs parasites (Totaux, Variations, Lignes vides)
+    const corpsFiltre = corpsData.filter((ligne) => {
+      if (!ligne || ligne.length === 0) return false;
+      const aDesValeurs = ligne.some((c) => !estValeurVide(c));
+      if (!aDesValeurs) return false;
+      return !estLigneTotal(ligne);
+    });
+
+    // 3. Conversion en objets avec protection mémoire pour grands volumes
+    const echantillon = corpsFiltre.slice(0, 2500);
+    const echantillonObjets = echantillon.map((ligne) => {
       const obj: Record<string, any> = {};
-      entetesData.forEach((h, idx) => {
+      entetesPropres.forEach((h, idx) => {
         obj[h] = ligne[idx];
       });
       return obj;
     });
 
-    const rapportNettoyage = analyserNettoyage(donneesObjets);
+    const rapportNettoyage = analyserNettoyage(echantillonObjets);
     const corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[] = [];
+
     Object.values(rapportNettoyage.suggestionsParColonne).forEach((suggestions) => {
       suggestions.forEach((s) => {
         if (s.colonne && s.valeurOriginale && s.valeurSuggeree) {
@@ -142,21 +163,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
       });
     });
 
-    let corpsNettoye = corpsData;
+    let corpsNettoye = corpsFiltre;
     if (corrections.length > 0) {
-      const donneesPropres = appliquerCorrections(donneesObjets, corrections);
-      corpsNettoye = donneesPropres.map((obj) => entetesData.map((h) => obj[h]));
+      const donneesCompletesObjets = corpsFiltre.map((ligne) => {
+        const obj: Record<string, any> = {};
+        entetesPropres.forEach((h, idx) => {
+          obj[h] = ligne[idx];
+        });
+        return obj;
+      });
+
+      const donneesPropres = appliquerCorrections(donneesCompletesObjets, corrections);
+      corpsNettoye = donneesPropres.map((obj) => entetesPropres.map((h) => obj[h]));
     }
 
     setNomFichier(nom);
-    setSources({ entetes: entetesData, corps: corpsNettoye });
-    setEntetes(entetesData);
+    setSources({ entetes: entetesPropres, corps: corpsNettoye });
+    setEntetes(entetesPropres);
     setCorps(corpsNettoye);
-    setChoisies(entetesData);
+    setChoisies(entetesPropres);
     setFiltresActifs([]);
     setDefinitionsCalculs([]);
 
-    // Conserve le résultat et le rapport fournis lors d'une fusion
     setRapport(nouveauRapport ?? []);
     setResultat(nouveauResultat ?? null);
     setGraphiquesEpingles([]);
@@ -185,7 +213,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     regenererDonnees(sources.entetes, sources.corps, maj, filtresActifs);
   }
 
-  // Applique des corrections de variantes (casse, doublons de texte) sur les données sources, puis régénère l'affichage
   function nettoyerDonnees(corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) {
     if (!corrections.length) return;
     const objs = sources.corps.map((ligne) => {
@@ -201,7 +228,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     regenererDonnees(sources.entetes, corpsPropre, definitionsCalculs, filtresActifs);
   }
 
-  // Au premier affichage : relit la sauvegarde locale (les données survivent au rechargement de la page)
+  // Restauration de l'état persisté
   useEffect(() => {
     let annule = false;
     chargerEtat().then((etat) => {
@@ -215,7 +242,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setChoisies(etat.choisies);
         setRapport(etat.rapport);
         setResultat(etat.resultat);
-        setGraphiquesEpingles(etat.graphiquesEpingles);
+        setGraphiquesEpingles(etat.graphiquesEpingles || []);
       }
       setRestaurationTerminee(true);
     });
@@ -225,7 +252,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sauvegarde automatique à chaque modification (après la restauration, jamais avant)
+  // Sauvegarde automatique
   useEffect(() => {
     if (!restaurationTerminee) return;
     if (!sources.corps.length) {
@@ -247,7 +274,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(minuteur);
   }, [restaurationTerminee, nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs]);
 
-  // Suppression volontaire : efface les données à l'écran ET la sauvegarde locale
   function supprimerDonnees() {
     setNomFichier("");
     setSources({ entetes: [], corps: [] });
@@ -263,11 +289,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }
 
   function epinglerGraphique(graphique: GraphiqueEpingle) {
-    setGraphiquesEpingles((prev) => (prev.some((g) => g.id === graphique.id) ? prev : [graphique, ...prev]));
+    setGraphiquesEpingles((prev) =>
+      prev.some((g) => String(g.id) === String(graphique.id)) ? prev : [graphique, ...prev]
+    );
   }
 
-  function desepinglerGraphique(id: number) {
-    setGraphiquesEpingles((prev) => prev.filter((g) => g.id !== id));
+  function desepinglerGraphique(id: number | string) {
+    setGraphiquesEpingles((prev) => prev.filter((g) => String(g.id) !== String(id)));
   }
 
   return (

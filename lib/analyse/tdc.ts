@@ -20,8 +20,10 @@ export interface ResultatTdc {
 
 export const COMPTE = '__compte__';
 export const VALEUR_UNIQUE = '__valeur__';
-export const NB_MAX_LIGNES_TDC = 30;
-export const NB_MAX_COLONNES_TDC = 10;
+
+// Limites étendues pour préserver l'ensemble des 33 régions de CI et les séries historiques de 65+ ans
+export const NB_MAX_LIGNES_TDC = 100;
+export const NB_MAX_COLONNES_TDC = 25;
 
 const arrondir = (v: number): number => Math.round(v * 100) / 100;
 
@@ -29,18 +31,30 @@ export function parseNombreTdc(val: Cell): number | null {
   if (val === null || val === undefined) return null;
   if (typeof val === 'number') return isNaN(val) ? null : val;
 
-  let str = String(val).trim();
+  let str = String(val).replace(/^\uFEFF/, '').trim();
   if (str === '') return null;
 
+  // 1. Purge des guillemets doubles et simples (ex: "-402,6" -> -402,6)
+  str = str.replace(/["'«»“”]/g, '').trim();
+
+  // 2. Gestion de la notation comptable négative entre parenthèses : (1 250) -> -1250
   if (str.startsWith('(') && str.endsWith(')')) {
     str = '-' + str.slice(1, -1);
   }
 
-  str = str.replace(/(FCFA|CFA|EUR|USD|GBP|[€$£Ff%])/gi, '').trim();
+  // 3. Normalisation des tirets négatifs (Unicode minus, en-dash, em-dash)
+  str = str.replace(/^[−–—]\s*/, '-');
+
+  // 4. Nettoyage des devises, unités monétaires et pourcentages
+  str = str.replace(/\b(FCFA|CFA|XOF|EUR|USD|GBP)\b/gi, '').trim();
+  str = str.replace(/[€$£%]/g, '').trim();
+
+  // 5. Suppression des espaces standards et insécables (\u00A0, \u202F)
   str = str.replace(/[\s\u00A0\u202F]+/g, '');
 
-  if (str === '' || str === '-' || str === '+') return null;
+  if (str === '' || str === '-' || str === '+' || str === '—' || str === '.') return null;
 
+  // 6. Normalisation de la virgule et du point décimal
   if (str.includes(',') && str.includes('.')) {
     if (str.lastIndexOf(',') < str.lastIndexOf('.')) {
       str = str.replace(/,/g, '');
@@ -61,9 +75,37 @@ export function parseNombreTdc(val: Cell): number | null {
 
 export function valeurTdcInvalide(v: Cell): boolean {
   if (v === null || v === undefined) return true;
-  return ['', 'n/a', 'na', 'n.a.', '#n/a', 'null', 'undefined', '-', '—'].includes(
-    String(v).trim().toLowerCase()
+  const s = String(v)
+    .replace(/^\uFEFF/, '')
+    .replace(/["'«»“”]/g, '')
+    .trim()
+    .toLowerCase();
+  return (
+    s === '' ||
+    s === '-' ||
+    s === '—' ||
+    s === '–' ||
+    s === '.' ||
+    s === '..' ||
+    /^(n\/?a|na|n\.?a\.?|#n\/a|null|undefined|none|vide|missing|n\.?d\.?|nd|s\/?o|so)$/i.test(s)
   );
+}
+
+/**
+ * Détecte et exclut les lignes de totalisation ou calculées
+ * (ex: "Variation 2023/2022", "TOTAL", "Sous-total").
+ */
+function estLigneTotalTdc(ligne: Row): boolean {
+  if (!ligne || ligne.length === 0) return true;
+  const premierNonVide = ligne.find((c) => !valeurTdcInvalide(c));
+  if (!premierNonVide) return true;
+  const s = String(premierNonVide)
+    .replace(/^\uFEFF/, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+  return /^(total|sous[- ]?total|variation|moyenne|ensemble|general|bilan|somme|ecart)/i.test(s);
 }
 
 function cleComposite(ligne: Row, indices: number[]): string | null {
@@ -71,7 +113,7 @@ function cleComposite(ligne: Row, indices: number[]): string | null {
   for (const i of indices) {
     const brut = i >= 0 ? ligne[i] : undefined;
     if (valeurTdcInvalide(brut)) return null;
-    morceaux.push(String(brut).trim());
+    morceaux.push(String(brut).replace(/["'«»“”]/g, '').trim());
   }
   return morceaux.join(' / ');
 }
@@ -95,8 +137,8 @@ function agreger(a: Acc, champ: string, agregation: Agregation): number | null {
   if (champ === COMPTE || agregation === 'nombre') return a.n;
   if (agregation === 'somme') return arrondir(a.sum);
   if (agregation === 'moyenne') return arrondir(a.sum / a.n);
-  if (agregation === 'min') return arrondir(a.min);
-  return arrondir(a.max);
+  if (agregation === 'min') return a.min === Infinity ? null : arrondir(a.min);
+  return a.max === -Infinity ? null : arrondir(a.max);
 }
 
 export function calculerTdc(
@@ -120,6 +162,9 @@ export function calculerTdc(
   const cellules = new Map<string, Map<string, Acc[]>>();
 
   for (const ligne of d.corps) {
+    // Écarte les lignes de totalisation administrative
+    if (estLigneTotalTdc(ligne)) continue;
+
     const cleL = cleComposite(ligne, iLignes);
     if (cleL === null) continue;
     const cleC = avecColonnes ? cleComposite(ligne, iCols) : VALEUR_UNIQUE;

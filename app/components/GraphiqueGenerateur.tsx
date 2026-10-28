@@ -18,7 +18,14 @@ import {
 } from "lucide-react";
 import CarteGeographique from "./CarteGeographique";
 import "./chartSetup";
-import { arrondir, estValeurVide, parseNombre, type Cellule } from "../../lib/analyse/utils";
+import {
+  arrondir,
+  estValeurVide,
+  parseNombre,
+  estColonneIdentifiant,
+  estColonneTemporelle,
+  type Cellule,
+} from "../../lib/analyse/utils";
 import { useData, type GraphiqueEpingle, type TypeGraphique } from "../context/DataContext";
 import { lireFournisseur } from "../../lib/prefs";
 
@@ -58,7 +65,7 @@ const PALETTE_COMPARAISON = [
   { fill: "#4f46e5", border: "#4338ca", bgLeger: "rgba(79, 70, 229, 0.12)" },
 ];
 
-const MAX_CATEGORIES = 15;
+const MAX_CATEGORIES = 100;
 
 function versNombre(v: Cellule): number | null {
   if (estValeurVide(v)) return null;
@@ -67,41 +74,6 @@ function versNombre(v: Cellule): number | null {
 
 const selectClasse =
   "w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-blue-500";
-
-// Traceur unique des valeurs au-dessus des barres et points (évite les doublons)
-const pluginValeursSurGraphique = {
-  id: "pluginValeursSurGraphique",
-  afterDatasetsDraw(chart: any) {
-    const { ctx } = chart;
-    const type = chart.config.type;
-    if (type === "pie" || type === "doughnut" || type === "radar") return;
-
-    chart.data.datasets.forEach((dataset: any, datasetIndex: number) => {
-      const meta = chart.getDatasetMeta(datasetIndex);
-      if (!meta || meta.hidden) return;
-
-      meta.data.forEach((element: any, index: number) => {
-        const val = dataset.data[index];
-        if (val === null || val === undefined || Number.isNaN(val)) return;
-
-        const valNum = Number(val);
-        const texte = Number.isInteger(valNum)
-          ? valNum.toLocaleString("fr-FR")
-          : valNum.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
-
-        ctx.save();
-        ctx.font = "bold 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-        ctx.fillStyle = "#334155";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "bottom";
-
-        const yPos = valNum < 0 ? element.y + 14 : element.y - 4;
-        ctx.fillText(texte, element.x, yPos);
-        ctx.restore();
-      });
-    });
-  },
-};
 
 const H = ({ children }: { children?: ReactNode }) => (
   <h6 className="text-[11px] font-bold mt-2.5 mb-1 text-slate-900 dark:text-slate-100 uppercase tracking-wide">
@@ -121,6 +93,55 @@ const MD_GRAPH: Components = {
   strong: ({ children }) => <strong className="font-semibold text-slate-900 dark:text-white">{children}</strong>,
 };
 
+// Calcule la largeur dynamique requise pour donner tout l'espace aux données
+function calculerLargeurConteneur(nbPoints: number): string {
+  if (nbPoints > 15) {
+    return `${Math.max(900, nbPoints * 40)}px`;
+  }
+  return "100%";
+}
+
+// Générateur d'options Chart.js dynamique et sans surcharge de chiffres
+// APRÈS (compatible avec Line, Bar, Pie et Doughnut)
+function creerOptionsChart(nbPoints: number): any {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: "top" as const,
+        labels: {
+          boxWidth: 12,
+          font: { size: 11, weight: "bold" as const },
+        },
+      },
+      datalabels: {
+        display: false,
+      },
+      tooltip: {
+        enabled: true,
+      },
+    },
+    scales: {
+      y: {
+        beginAtZero: false,
+        grid: { color: "rgba(148,163,184,0.15)" },
+        ticks: { font: { size: 10 } },
+        grace: "10%",
+      },
+      x: {
+        grid: { display: false },
+        ticks: {
+          font: { size: 10 },
+          maxRotation: 45,
+          minRotation: 0,
+          autoSkip: nbPoints <= 15,
+        },
+      },
+    },
+  };
+}
+
 export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: GraphiqueGenerateurProps) {
   const { graphiquesEpingles, epinglerGraphique, nomFichier } = useData();
   const actionEpingler = onEpingler || epinglerGraphique;
@@ -137,9 +158,48 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     return entetes.filter((h) => h !== "Fichier Source");
   }, [entetes]);
 
+  // 1. Classification rigoureuse des colonnes
+  const { colonnesTemporelles, colonnesMesurables, colonnesCategorielles } = useMemo(() => {
+    const temporelles: string[] = [];
+    const mesurables: string[] = [];
+    const categorielles: string[] = [];
+
+    colonnesSansSource.forEach((nom) => {
+      const idx = entetes.indexOf(nom);
+      const nonVides = corps.map((l) => l[idx]).filter((v) => !estValeurVide(v));
+      if (!nonVides.length) return;
+
+      if (estColonneIdentifiant(nom, nonVides)) return;
+
+      if (estColonneTemporelle(nom, nonVides)) {
+        temporelles.push(nom);
+        return;
+      }
+
+      const nums = nonVides.map(versNombre).filter((n): n is number => n !== null);
+      if (nums.length / nonVides.length >= 0.6) {
+        mesurables.push(nom);
+      } else {
+        const uniques = new Set(nonVides.map((v) => String(v).trim()));
+        if (uniques.size >= 2 && uniques.size <= 60) {
+          categorielles.push(nom);
+        }
+      }
+    });
+
+    return { colonnesTemporelles: temporelles, colonnesMesurables: mesurables, colonnesCategorielles: categorielles };
+  }, [colonnesSansSource, entetes, corps]);
+
+  const defautX = colonnesTemporelles[0] || colonnesCategorielles[0] || colonnesSansSource[0] || "";
+  const defautY =
+    colonnesMesurables.find((c) => c !== defautX) ||
+    colonnesMesurables[0] ||
+    colonnesSansSource.find((c) => c !== defautX) ||
+    "";
+
   const [typeGraphique, setTypeGraphique] = useState<TypeGraphique>("Barres");
-  const [colonneAxeX, setColonneAxeX] = useState<string>(colonnesSansSource[0] || entetes[0] || "");
-  const [colonneAxeY, setColonneAxeY] = useState<string>(colonnesSansSource[1] || colonnesSansSource[0] || "");
+  const [colonneAxeX, setColonneAxeX] = useState<string>(defautX);
+  const [colonneAxeY, setColonneAxeY] = useState<string>(defautY);
   const [agregation, setAgregation] = useState<Agregation>("Moyenne");
   const [ventilerParFichier, setVentilerParFichier] = useState<boolean>(estModeComparaison);
   const [graphiquesGeneres, setGraphiquesGeneres] = useState<GraphiqueEpingle[]>([]);
@@ -150,123 +210,175 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     return (graphiquesEpingles || []).some((g) => g.id === id);
   };
 
+  // 2. MOTEUR DE RECOMMANDATION SANS DOUBLON (1 seul graphique par donnée analysée)
   const graphiquesRecommandes = useMemo<GraphiqueEpingle[]>(() => {
     if (!entetes.length || !corps.length) return [];
-
-    const normaliser = (v: Cellule) => String(v ?? "").trim();
-    const normaliserNom = (v: string) =>
-      v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-
-    const colonnes = colonnesSansSource.map((nom) => {
-      const index = entetes.indexOf(nom);
-      const valeurs = corps.map((ligne) => ligne[index]).filter((v) => !estValeurVide(v));
-      const nombres = valeurs.map(versNombre).filter((v): v is number => v !== null);
-      const uniques = new Set(valeurs.map(normaliser));
-      const nomN = normaliserNom(nom);
-      const tauxNumerique = valeurs.length ? nombres.length / valeurs.length : 0;
-      const tauxUnique = valeurs.length ? uniques.size / valeurs.length : 0;
-
-      const identifiant =
-        /(^|[^a-z])(id|uuid|matricule|code|reference|ref|numero|num)([^a-z]|$)/.test(nomN) ||
-        (valeurs.length >= 12 && tauxUnique >= 0.9 && tauxNumerique < 0.9);
-
-      const numerique = tauxNumerique >= 0.8 && nombres.length >= 3 && !identifiant;
-      const categorielle = !numerique && !identifiant && uniques.size >= 2 && uniques.size <= 12;
-
-      return { nom, index, numerique, categorielle, uniques: Array.from(uniques) };
-    });
-
-    const numeriques = colonnes.filter((c) => c.numerique);
-    const categories = colonnes.filter((c) => c.categorielle);
     const resultats: GraphiqueEpingle[] = [];
+    const mesuresDejaUtilisees = new Set<string>();
 
-    if (estModeComparaison && sourcesFichiers.length >= 2 && numeriques.length > 0 && categories.length > 0) {
-      const mesure = numeriques[0];
-      const cat = categories[0];
-      const modalites = cat.uniques.slice(0, 7);
+    // CAS BENCHMARK COMPARATIF (N Fichiers)
+    if (estModeComparaison && sourcesFichiers.length >= 2) {
+      const colX = colonnesTemporelles[0] || colonnesCategorielles[0] || colonnesSansSource[0];
+      const colY = colonnesMesurables[0] || colonnesSansSource.find((c) => c !== colX) || "";
 
-      const datasets = sourcesFichiers.map((sourceNom, sIdx) => {
-        const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
-        const data = modalites.map((modalite) => {
-          const valeurs = corps
-            .filter(
+      if (colX && colY) {
+        mesuresDejaUtilisees.add(colY);
+        const idxX = entetes.indexOf(colX);
+        const idxY = entetes.indexOf(colY);
+
+        const modalitesUniques = Array.from(
+          new Set(corps.map((l) => String(l[idxX] ?? "").replace(/["'«»“”]/g, "").trim()).filter(Boolean))
+        );
+
+        if (colonnesTemporelles.includes(colX)) {
+          const sontAnnees = modalitesUniques.every((m) => /^(19|20)\d{2}$/.test(m));
+          if (sontAnnees) {
+            modalitesUniques.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+          }
+        }
+
+        const datasets = sourcesFichiers.map((sourceNom, sIdx) => {
+          const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
+          const data = modalitesUniques.map((mod) => {
+            const lignes = corps.filter(
               (l) =>
                 String(l[idxSource] ?? "").trim() === sourceNom &&
-                String(l[cat.index] ?? "").trim() === modalite
-            )
-            .map((l) => versNombre(l[mesure.index]))
-            .filter((n): n is number => n !== null);
+                String(l[idxX] ?? "").replace(/["'«»“”]/g, "").trim() === mod
+            );
+            if (!lignes.length) return 0;
+            const nums = lignes.map((l) => versNombre(l[idxY])).filter((n): n is number => n !== null);
+            if (!nums.length) return 0;
+            return arrondir(nums.reduce((a, b) => a + b, 0) / nums.length);
+          });
 
-          if (!valeurs.length) return 0;
-          const somme = valeurs.reduce((a, b) => a + b, 0);
-          return arrondir(somme / valeurs.length);
+          return {
+            label: sourceNom,
+            data,
+            backgroundColor: couleur.fill,
+            borderColor: couleur.border,
+            borderWidth: 2,
+            borderRadius: 4,
+          };
         });
 
-        return {
-          label: sourceNom,
-          data,
-          backgroundColor: couleur.fill,
-          borderColor: couleur.border,
-          borderWidth: 1,
-          borderRadius: 4,
-        };
-      });
-
-      resultats.push({
-        id: 930001,
-        titre: `Benchmark : Moyenne de ${mesure.nom} par ${cat.nom}`,
-        type: "Barres",
-        labels: modalites,
-        datasets,
-      });
-
-      return resultats;
+        resultats.push({
+          id: 930001,
+          titre: `Benchmark (${sourcesFichiers.length} fichiers) : Moyenne de ${colY} selon ${colX}`,
+          type: colonnesTemporelles.includes(colX) ? "Courbe" : "Barres",
+          labels: modalitesUniques,
+          datasets,
+        });
+      }
     }
 
-    for (const cat of categories) {
-      if (resultats.length >= 2) break;
-      const mesure = numeriques[0];
-      if (!mesure) continue;
+    // CAS SÉRIES TEMPORELLES : Exactement 1 courbe par mesure (aucun clone en barres)
+    if (colonnesTemporelles.length > 0 && colonnesMesurables.length > 0) {
+      const colT = colonnesTemporelles[0];
+      const idxT = entetes.indexOf(colT);
 
-      const groupes = new Map<string, { somme: number; n: number }>();
-      for (const ligne of corps) {
-        const cVal = normaliser(ligne[cat.index]);
-        const mVal = versNombre(ligne[mesure.index]);
-        if (!cVal || mVal === null) continue;
-        const g = groupes.get(cVal) ?? { somme: 0, n: 0 };
-        g.somme += mVal;
-        g.n += 1;
-        groupes.set(cVal, g);
-      }
+      // On explore jusqu'à 2 mesures DIFFÉRENTES (ex: Abidjan puis Adiaké)
+      colonnesMesurables.forEach((colM, idxMIndex) => {
+        if (mesuresDejaUtilisees.has(colM) || resultats.length >= 2) return;
+        mesuresDejaUtilisees.add(colM);
 
-      const pts = [...groupes.entries()]
-        .filter(([, g]) => g.n > 0)
-        .map(([label, g]) => ({ label, valeur: arrondir(g.somme / g.n) }))
-        .sort((a, b) => b.valeur - a.valeur)
-        .slice(0, 8);
+        const idxM = entetes.indexOf(colM);
+        const mapT = new Map<string, { somme: number; n: number; ordre: number }>();
 
-      if (pts.length >= 2) {
-        resultats.push({
-          id: 920010 + resultats.length,
-          titre: `Moyenne de ${mesure.nom} par ${cat.nom}`,
-          type: "Barres",
-          labels: pts.map((p) => p.label),
-          datasets: [
-            {
-              label: `Moyenne — ${mesure.nom}`,
-              data: pts.map((p) => p.valeur),
-              backgroundColor: "#2563eb",
-              borderColor: "#1d4ed8",
-              borderRadius: 4,
-              borderWidth: 1,
-            },
-          ],
+        corps.forEach((ligne, i) => {
+          if (estValeurVide(ligne[idxT])) return;
+          const cle = String(ligne[idxT]).replace(/["'«»“”]/g, "").trim();
+          const val = versNombre(ligne[idxM]);
+          if (val === null) return;
+
+          let ordre = i;
+          if (/^(19|20)\d{2}$/.test(cle)) ordre = parseInt(cle, 10);
+
+          const g = mapT.get(cle) ?? { somme: 0, n: 0, ordre };
+          g.somme += val;
+          g.n += 1;
+          mapT.set(cle, g);
         });
+
+        const pairesT = Array.from(mapT.entries())
+          .sort((a, b) => a[1].ordre - b[1].ordre)
+          .map(([label, g]) => ({ label, valeur: arrondir(g.somme / g.n) }));
+
+        if (pairesT.length >= 2) {
+          resultats.push({
+            id: 910001 + idxMIndex,
+            titre: `Évolution temporelle : ${colM} selon ${colT}`,
+            type: "Courbe",
+            labels: pairesT.map((p) => p.label),
+            datasets: [
+              {
+                label: `Moyenne — ${colM}`,
+                data: pairesT.map((p) => p.valeur),
+                backgroundColor: "rgba(37, 99, 235, 0.12)",
+                borderColor: "#2563eb",
+                borderWidth: 2.5,
+                fill: true,
+                pointRadius: pairesT.length > 30 ? 2.5 : 3.5,
+              },
+            ],
+          });
+        }
+      });
+    }
+
+    // CAS DIMENSIONS CATÉGORIELLES (Régions, Statuts, Cultures, etc.)
+    if (colonnesCategorielles.length > 0 && colonnesMesurables.length > 0 && resultats.length < 2) {
+      const catNom = colonnesCategorielles[0];
+      // Privilégie une mesure qui n'a pas encore été analysée
+      const mesNom =
+        colonnesMesurables.find((m) => !mesuresDejaUtilisees.has(m)) ||
+        colonnesMesurables[0];
+
+      if (!mesuresDejaUtilisees.has(mesNom) || resultats.length === 0) {
+        mesuresDejaUtilisees.add(mesNom);
+        const idxC = entetes.indexOf(catNom);
+        const idxM = entetes.indexOf(mesNom);
+
+        const mapC = new Map<string, { somme: number; n: number }>();
+        corps.forEach((ligne) => {
+          if (estValeurVide(ligne[idxC])) return;
+          const cle = String(ligne[idxC]).trim();
+          const val = versNombre(ligne[idxM]);
+          if (val === null) return;
+
+          const g = mapC.get(cle) ?? { somme: 0, n: 0 };
+          g.somme += val;
+          g.n += 1;
+          mapC.set(cle, g);
+        });
+
+        const pairesC = Array.from(mapC.entries())
+          .map(([label, g]) => ({ label, valeur: arrondir(g.somme / g.n) }))
+          .sort((a, b) => b.valeur - a.valeur)
+          .slice(0, 35);
+
+        if (pairesC.length >= 2) {
+          resultats.push({
+            id: 920001,
+            titre: `Distribution : ${mesNom} par ${catNom}`,
+            type: "Barres",
+            labels: pairesC.map((p) => p.label),
+            datasets: [
+              {
+                label: `Moyenne — ${mesNom}`,
+                data: pairesC.map((p) => p.valeur),
+                backgroundColor: "#2563eb",
+                borderColor: "#1d4ed8",
+                borderRadius: 4,
+                borderWidth: 1,
+              },
+            ],
+          });
+        }
       }
     }
 
     return resultats;
-  }, [entetes, corps, colonnesSansSource, estModeComparaison, sourcesFichiers, idxSource]);
+  }, [entetes, corps, colonnesTemporelles, colonnesMesurables, colonnesCategorielles, colonnesSansSource, estModeComparaison, sourcesFichiers, idxSource]);
 
   function construireGraphiqueManuel() {
     setMessageErreur("");
@@ -302,8 +414,12 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
 
     if (estModeComparaison && ventilerParFichier && sourcesFichiers.length >= 2) {
       const modalitesUniques = Array.from(
-        new Set(corps.map((l) => String(l[idxX] ?? "").trim()).filter(Boolean))
+        new Set(corps.map((l) => String(l[idxX] ?? "").replace(/["'«»“”]/g, "").trim()).filter(Boolean))
       ).slice(0, MAX_CATEGORIES);
+
+      if (typeGraphique === "Courbe" && modalitesUniques.every((m) => /^(19|20)\d{2}$/.test(m))) {
+        modalitesUniques.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+      }
 
       const datasets = sourcesFichiers.map((sourceNom, sIdx) => {
         const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
@@ -311,7 +427,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
           const lignesFiltrees = corps.filter(
             (l) =>
               String(l[idxSource] ?? "").trim() === sourceNom &&
-              String(l[idxX] ?? "").trim() === mod
+              String(l[idxX] ?? "").replace(/["'«»“”]/g, "").trim() === mod
           );
 
           if (!lignesFiltrees.length) return 0;
@@ -353,7 +469,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     const groupes = new Map<string, { somme: number; nNum: number; compte: number; min: number; max: number }>();
     for (const ligne of corps) {
       if (estValeurVide(ligne[idxX])) continue;
-      const cle = String(ligne[idxX]).trim();
+      const cle = String(ligne[idxX]).replace(/["'«»“”]/g, "").trim();
       const g = groupes.get(cle) ?? { somme: 0, nNum: 0, compte: 0, min: Infinity, max: -Infinity };
       g.compte += 1;
       if (besoinY && idxY !== -1) {
@@ -377,7 +493,15 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
       return { label, valeur: arrondir(valeur) };
     });
 
-    if (typeGraphique !== "Courbe") paires.sort((a, b) => b.valeur - a.valeur);
+    if (typeGraphique === "Courbe") {
+      const sontAnnees = paires.every((p) => /^(19|20)\d{2}$/.test(p.label));
+      if (sontAnnees) {
+        paires.sort((a, b) => parseInt(a.label, 10) - parseInt(b.label, 10));
+      }
+    } else {
+      paires.sort((a, b) => b.valeur - a.valeur);
+    }
+
     paires = paires.slice(0, MAX_CATEGORIES);
 
     const nouveau: GraphiqueEpingle = {
@@ -403,31 +527,6 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     setGraphiquesGeneres((prev) => [nouveau, ...prev]);
   }
 
-  const options: any = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: "top",
-        labels: { boxWidth: 12, font: { size: 11, weight: "bold" } },
-      },
-      datalabels: {
-        display: false,
-      },
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        grid: { color: "rgba(148,163,184,0.15)" },
-        ticks: { font: { size: 10 } },
-        grace: "15%",
-      },
-      x: {
-        grid: { display: false },
-        ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 0 },
-      },
-    },
-  };
   return (
     <div className="space-y-6">
       {estModeComparaison && (
@@ -459,6 +558,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         </div>
       )}
 
+      {/* SECTION DES GRAPHIQUES RECOMMANDÉS (Prend tout l'espace requis) */}
       {graphiquesRecommandes.length > 0 && (
         <section className="space-y-4">
           <div className="no-print">
@@ -466,17 +566,26 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
               {estModeComparaison ? "Analyses comparatives suggérées" : "Graphiques recommandés automatiquement"}
             </h4>
             <p className="text-xs text-slate-500 mt-0.5">
-              Visualisations optimisées avec calcul automatique des écarts, des classements et des dominances.
+              Visualisations optimisées avec calcul automatique des tendances, classements et dominances.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div
+            className={`grid gap-5 ${
+              graphiquesRecommandes.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2"
+            }`}
+          >
             {graphiquesRecommandes.map((g, index) => {
               const estEpingle = estInclusPptx(g.id);
+              const nbPoints = g.labels?.length || 0;
+              const prendPleinLargeur = graphiquesRecommandes.length === 1 || nbPoints > 20;
+
               return (
                 <div
                   key={g.id}
-                  className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm"
+                  className={`print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm ${
+                    prendPleinLargeur ? "lg:col-span-2" : ""
+                  }`}
                 >
                   <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
                     <div className="flex items-center gap-2 truncate">
@@ -501,12 +610,21 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                     </button>
                   </div>
 
-                  <div className="h-56 sm:h-64 w-full relative">
-                    {g.type === "Courbe" ? (
-                      <Line data={g} options={options} plugins={[pluginValeursSurGraphique]} />
-                    ) : (
-                      <Bar data={g} options={options} plugins={[pluginValeursSurGraphique]} />
-                    )}
+                  {/* CONTENEUR À LARGEUR ÉTIRÉE AVEC DÉFILEMENT POUR TOUT LE JEU DE DONNÉES */}
+                  <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700 pb-2">
+                    <div
+                      style={{
+                        minWidth: calculerLargeurConteneur(nbPoints),
+                        height: "280px",
+                      }}
+                      className="relative"
+                    >
+                      {g.type === "Courbe" ? (
+                        <Line data={g} options={creerOptionsChart(nbPoints)} />
+                      ) : (
+                        <Bar data={g} options={creerOptionsChart(nbPoints)} />
+                      )}
+                    </div>
                   </div>
 
                   <ExplicationDetailleeGraphique graphique={g} nomFichier={nomFichier} />
@@ -517,6 +635,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         </section>
       )}
 
+      {/* Créateur de graphiques manuels */}
       <div className="no-print print:hidden bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
@@ -553,8 +672,8 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
               onChange={(e) => setTypeGraphique(e.target.value as TypeGraphique)}
               className={selectClasse}
             >
-              <option value="Barres">Barres (côte à côte)</option>
-              <option value="Courbe">Courbes superposées</option>
+              <option value="Barres">Barres verticales</option>
+              <option value="Courbe">Courbe d’évolution</option>
               <option value="Camembert">Camembert</option>
               <option value="Anneau">Anneau</option>
               <option value="Carte">Carte géographique</option>
@@ -576,38 +695,50 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
             </select>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-              Opération de calcul
-            </label>
-            <select
-              value={agregation}
-              onChange={(e) => setAgregation(e.target.value as Agregation)}
-              className={selectClasse}
-            >
-              <option value="Somme">Somme cumulée</option>
-              <option value="Moyenne">Moyenne</option>
-              <option value="Nombre">Nombre de lignes (effectif)</option>
-              <option value="Minimum">Minimum</option>
-              <option value="Maximum">Maximum</option>
-            </select>
-          </div>
+          {typeGraphique !== "Carte" && (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                  Opération de calcul
+                </label>
+                <select
+                  value={agregation}
+                  onChange={(e) => setAgregation(e.target.value as Agregation)}
+                  className={selectClasse}
+                >
+                  <option value="Moyenne">Moyenne</option>
+                  <option value="Somme">Somme cumulée</option>
+                  <option value="Nombre">Nombre d’enregistrements</option>
+                  <option value="Minimum">Minimum</option>
+                  <option value="Maximum">Maximum</option>
+                </select>
+              </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-              Axe Y (valeurs numériques)
-            </label>
-            <select
-              value={colonneAxeY}
-              onChange={(e) => setColonneAxeY(e.target.value)}
-              disabled={colonnesSansSource.length === 0 || agregation === "Nombre"}
-              className={`${selectClasse} disabled:opacity-40`}
-            >
-              {colonnesSansSource.map((nom) => (
-                <option key={nom} value={nom}>{nom}</option>
-              ))}
-            </select>
-          </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                  Axe Y (Mesure)
+                </label>
+                <select
+                  value={colonneAxeY}
+                  onChange={(e) => setColonneAxeY(e.target.value)}
+                  disabled={colonnesSansSource.length === 0 || agregation === "Nombre"}
+                  className={`${selectClasse} disabled:opacity-40`}
+                >
+                  {colonnesMesurables
+                    .filter((c) => c !== colonneAxeX)
+                    .map((nom) => (
+                      <option key={nom} value={nom}>{nom}</option>
+                    ))}
+                  {colonnesMesurables.length === 0 &&
+                    colonnesSansSource
+                      .filter((c) => c !== colonneAxeX)
+                      .map((nom) => (
+                        <option key={nom} value={nom}>{nom}</option>
+                      ))}
+                </select>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -628,19 +759,29 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
         </div>
       </div>
 
+      {/* Vos graphiques créés manuellement (Prennent tout l'espace nécessaire) */}
       {graphiquesGeneres.length > 0 && (
         <div className="space-y-4">
           <h4 className="text-sm font-bold text-slate-900 dark:text-white">
             Vos graphiques créés ({graphiquesGeneres.length})
           </h4>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div
+            className={`grid gap-5 ${
+              graphiquesGeneres.length === 1 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2"
+            }`}
+          >
             {graphiquesGeneres.map((g) => {
               const estEpingle = estInclusPptx(g.id);
+              const nbPoints = g.labels?.length || 0;
+              const prendPleinLargeur = graphiquesGeneres.length === 1 || nbPoints > 20;
+
               return (
                 <div
                   key={g.id}
-                  className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm"
+                  className={`print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm ${
+                    prendPleinLargeur ? "lg:col-span-2" : ""
+                  }`}
                 >
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
@@ -668,16 +809,23 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                     </div>
                   </div>
 
-                  <div className={g.type === "Carte" ? "w-full min-h-[340px]" : "h-64 w-full relative"}>
+                  {/* CONTENEUR À LARGEUR ÉTIRÉE AVEC DÉFILEMENT */}
+                  <div className={g.type === "Carte" ? "w-full min-h-[340px]" : "w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700 pb-2"}>
                     {g.type === "Carte" && <CarteGeographique entetes={entetes} corps={corps} />}
-                    {g.type === "Barres" && (
-                      <Bar data={g} options={options} plugins={[pluginValeursSurGraphique]} />
+                    {g.type !== "Carte" && (
+                      <div
+                        style={{
+                          minWidth: g.type === "Camembert" || g.type === "Anneau" ? "100%" : calculerLargeurConteneur(nbPoints),
+                          height: "280px",
+                        }}
+                        className="relative"
+                      >
+                        {g.type === "Barres" && <Bar data={g} options={creerOptionsChart(nbPoints)} />}
+                        {g.type === "Courbe" && <Line data={g} options={creerOptionsChart(nbPoints)} />}
+                        {g.type === "Camembert" && <Pie data={g} options={creerOptionsChart(nbPoints)} />}
+                        {g.type === "Anneau" && <Doughnut data={g} options={{ ...creerOptionsChart(nbPoints), cutout: "68%" }} />}
+                      </div>
                     )}
-                    {g.type === "Courbe" && (
-                      <Line data={g} options={options} plugins={[pluginValeursSurGraphique]} />
-                    )}
-                    {g.type === "Camembert" && <Pie data={g} options={options} />}
-                    {g.type === "Anneau" && <Doughnut data={g} options={{ ...options, cutout: "68%" }} />}
                   </div>
 
                   <ExplicationDetailleeGraphique graphique={g} nomFichier={nomFichier} />
@@ -865,7 +1013,6 @@ Reste concis, précis, direct et professionnel, sans formule d'introduction ni d
 
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60 p-3.5 space-y-2.5 text-[11px] leading-relaxed">
-      {/* En-tête sobre : titre exécutif et bouton discret masqué au PDF */}
       <div className="flex items-center justify-between border-b border-slate-200/60 dark:border-slate-800 pb-2">
         <div className="flex items-center gap-2">
           <BarChart3 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
@@ -961,12 +1108,11 @@ Reste concis, précis, direct et professionnel, sans formule d'introduction ni d
         </div>
       )}
 
-      {/* Rendu sobre et institutionnel de la synthèse managériale (zéro mention d'IA) */}
       {syntheseDecisionnelle && (
         <div className="mt-2.5 pt-2.5 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
           <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100 text-[11px]">
             <span className="w-2 h-2 rounded-full bg-blue-600"></span>
-            <span className="uppercase tracking-wider">Synthèse décisionnelle & Recommandations :</span>
+            <span className="uppercase tracking-wider">Synthèse décisionnelle &amp; Recommandations :</span>
           </div>
           <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_GRAPH}>

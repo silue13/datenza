@@ -1,4 +1,10 @@
-import { arrondir, parseNombre, type Cellule } from "./utils";
+import {
+  arrondir,
+  parseNombre,
+  estValeurVide,
+  estLigneTotal,
+  type Cellule,
+} from "./utils";
 import { convertirDate } from "./detection";
 
 export type TypeAgregationTemporelle = "somme" | "moyenne";
@@ -54,6 +60,37 @@ function quantileStudent95(df: number): number {
   return 1.96;
 }
 
+/**
+ * Assure qu'une série chronologique est toujours ordonnée du passé vers le présent (ordre ascendant).
+ */
+function garantirOrdreAscendant(
+  serie: PointHistorique[],
+  formatTemps: "date_mois" | "annee" | "sequentiel"
+): PointHistorique[] {
+  const n = serie.length;
+  if (n < 2) return serie;
+
+  if (formatTemps === "annee") {
+    const anneeDebut = parseInt(serie[0].periode, 10);
+    const anneeFin = parseInt(serie[n - 1].periode, 10);
+    if (!isNaN(anneeDebut) && !isNaN(anneeFin) && anneeDebut > anneeFin) {
+      return [...serie].reverse();
+    }
+  } else if (formatTemps === "date_mois") {
+    if (serie[0].periode > serie[n - 1].periode) {
+      return [...serie].reverse();
+    }
+  } else {
+    const numDebut = Number(serie[0].periode);
+    const numFin = Number(serie[n - 1].periode);
+    if (!isNaN(numDebut) && !isNaN(numFin) && numDebut > numFin) {
+      return [...serie].reverse();
+    }
+  }
+
+  return serie;
+}
+
 export function agregerSerieGenerique(
   entetes: string[],
   corps: Cellule[][],
@@ -65,33 +102,55 @@ export function agregerSerieGenerique(
   const idxV = entetes.indexOf(colonneMesure);
   if (idxT === -1 || idxV === -1) return { serie: [], format: "sequentiel" };
 
-  const accumulateurs = new Map<string, { total: number; nb: number; ordre: number; premierIndex: number }>();
+  const accumulateurs = new Map<
+    string,
+    { total: number; nb: number; ordre: number; premierIndex: number }
+  >();
 
-  let estFormatDateMois = false;
-  let estFormatAnnee = false;
+  let nbAnnees = 0;
+  let nbDatesMois = 0;
 
   for (let i = 0; i < corps.length; i++) {
-    const rawT = String(corps[i][idxT] ?? "").trim();
-    const val = parseNombre(corps[i][idxV]);
+    const ligne = corps[i];
+    // Exclut d'office les lignes de calcul parasites (Totaux, Sous-totaux, Variations)
+    if (estLigneTotal(ligne)) continue;
+
+    const bruteT = ligne[idxT];
+    if (estValeurVide(bruteT)) continue;
+
+    // Purge des guillemets et du BOM
+    const rawT = String(bruteT)
+      .replace(/^\uFEFF/, "")
+      .replace(/["'«»“”]/g, "")
+      .trim();
+
+    const val = parseNombre(ligne[idxV]);
     if (!rawT || val === null) continue;
 
     let cle = rawT;
     let ordre = i;
 
-    const dateObj = convertirDate(rawT);
-    if (dateObj) {
-      cle = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}`;
-      ordre = dateObj.getTime();
-      estFormatDateMois = true;
-    } else if (!Number.isNaN(Date.parse(rawT)) && /[\/-]|T/.test(rawT)) {
-      const d = new Date(rawT);
-      cle = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      ordre = d.getTime();
-      estFormatDateMois = true;
-    } else if (/^(19|20)\d{2}$/.test(rawT)) {
+    // 1. PRIORITÉ ABSOLUE AUX ANNÉES À 4 CHIFFRES (ex: 2023, 1960)
+    // Empêche convertirDate("2023") de transformer l'année en mois "2023-01"
+    if (/^(18|19|20|21)\d{2}$/.test(rawT)) {
       cle = rawT;
       ordre = parseInt(rawT, 10);
-      estFormatAnnee = true;
+      nbAnnees++;
+    } else {
+      // 2. DATES COMPLÈTES OU MENSUELLES (ex: 2025-03-08, 03/2024)
+      const dateObj = convertirDate(rawT);
+      if (dateObj && !isNaN(dateObj.getTime())) {
+        cle = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}`;
+        ordre = dateObj.getTime();
+        nbDatesMois++;
+      } else if (!Number.isNaN(Date.parse(rawT)) && /[\/-]|T/.test(rawT)) {
+        const d = new Date(rawT);
+        if (!isNaN(d.getTime())) {
+          cle = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          ordre = d.getTime();
+          nbDatesMois++;
+        }
+      }
     }
 
     const existant = accumulateurs.get(cle) ?? { total: 0, nb: 0, ordre, premierIndex: i };
@@ -100,14 +159,28 @@ export function agregerSerieGenerique(
     accumulateurs.set(cle, existant);
   }
 
-  const format: "date_mois" | "annee" | "sequentiel" = estFormatDateMois
-    ? "date_mois"
-    : estFormatAnnee
-    ? "annee"
-    : "sequentiel";
+  const totalPoints = accumulateurs.size;
+  const format: "date_mois" | "annee" | "sequentiel" =
+    nbAnnees >= totalPoints * 0.5
+      ? "annee"
+      : nbDatesMois >= totalPoints * 0.5
+      ? "date_mois"
+      : "sequentiel";
 
+  // Tri chronologique croissant rigoureux (du plus ancien au plus récent)
   const serie: PointHistorique[] = Array.from(accumulateurs.entries())
-    .sort((a, b) => (format === "sequentiel" ? a[1].premierIndex - b[1].premierIndex : a[1].ordre - b[1].ordre))
+    .sort((a, b) => {
+      if (format !== "sequentiel") {
+        return a[1].ordre - b[1].ordre;
+      }
+      // Si séquentiel numérique (ex: périodes 1, 2, 3...)
+      const numA = Number(a[0]);
+      const numB = Number(b[0]);
+      if (!isNaN(numA) && !isNaN(numB)) {
+        return numA - numB;
+      }
+      return a[1].premierIndex - b[1].premierIndex;
+    })
     .map(([periode, acc]) => ({
       periode,
       valeur: arrondir(modeAgregation === "moyenne" ? acc.total / acc.nb : acc.total),
@@ -117,10 +190,12 @@ export function agregerSerieGenerique(
 }
 
 export function calculerPrevisionGenerale(
-  serie: PointHistorique[],
+  serieBrute: PointHistorique[],
   formatTemps: "date_mois" | "annee" | "sequentiel",
   horizon: number = 3
 ): ReponsePrevision {
+  // Garantit que la série est toujours orientée dans le sens chronologique croissant
+  const serie = garantirOrdreAscendant(serieBrute, formatTemps);
   const n = serie.length;
 
   if (n < 3) {
@@ -212,7 +287,9 @@ export function calculerPrevisionGenerale(
     variationEstimeePct = dernierePrevue > 0 ? 100 : -100;
   }
 
-  const sensTendance = Math.abs(a) < 0.001 ? "stable" : a > 0 ? "hausse" : "baisse";
+  // Évaluation relative de la pente (adapte le seuil selon l'échelle des grandeurs)
+  const penteRelative = moyY !== 0 ? Math.abs(a / moyY) : Math.abs(a);
+  const sensTendance = penteRelative < 0.002 ? "stable" : a > 0 ? "hausse" : "baisse";
   const fiabilite = r2 >= 0.7 ? "Élevée" : r2 >= 0.35 ? "Moyenne" : "Faible";
 
   return {

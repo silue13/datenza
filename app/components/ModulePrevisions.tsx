@@ -26,7 +26,13 @@ import {
   calculerPrevisionGenerale,
   type TypeAgregationTemporelle,
 } from "@/lib/analyse/prevision";
-import { parseNombre, type Cellule } from "@/lib/analyse/utils";
+import {
+  parseNombre,
+  type Cellule,
+  estValeurVide,
+  estColonneIdentifiant,
+  estColonneTemporelle,
+} from "@/lib/analyse/utils";
 import { useData } from "../context/DataContext";
 
 interface ModulePrevisionsProps {
@@ -92,7 +98,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     ? sourceRefChoisie
     : sourcesFichiers[0] || "";
 
-  // 2. Détection des colonnes disponibles (hors "Fichier Source")
+  // 2. Détection stricte des colonnes temporelles vs mesurables (Empêche Y = X)
   const colonnesDisponibles = useMemo(() => {
     const temporelles: string[] = [];
     const mesurables: string[] = [];
@@ -102,37 +108,63 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
 
       const nonVides = corps
         .map((ligne) => ligne[colIdx])
-        .filter((v) => v !== null && v !== undefined && String(v).trim() !== "");
+        .filter((v) => !estValeurVide(v));
 
       if (nonVides.length === 0) return;
 
-      const nbDates = nonVides.filter((v) => {
-        const str = String(v).trim();
-        return (/[\/-]|T/.test(str) && !Number.isNaN(Date.parse(str))) || /^(19|20)\d{2}$/.test(str);
-      }).length;
-
+      const estId = estColonneIdentifiant(nom, nonVides);
+      const estTemps = estColonneTemporelle(nom, nonVides);
       const nbNombres = nonVides.filter((v) => parseNombre(v) !== null).length;
+      const estNum = nbNombres / nonVides.length >= 0.6;
 
-      if (nbDates / nonVides.length >= 0.5) temporelles.push(nom);
-      if (nbNombres / nonVides.length >= 0.6) mesurables.push(nom);
+      if (estTemps) {
+        temporelles.push(nom);
+      }
+      // Une colonne est mesurable uniquement si elle est numérique ET n'est ni un ID, ni une date/année
+      if (estNum && !estId && !estTemps) {
+        mesurables.push(nom);
+      }
     });
+
+    // Repli de secours si aucune mesure pure n'a été isolée
+    if (mesurables.length === 0) {
+      entetes.forEach((nom, colIdx) => {
+        if (nom === "Fichier Source" || temporelles.includes(nom)) return;
+        const nonVides = corps.map((ligne) => ligne[colIdx]).filter((v) => !estValeurVide(v));
+        if (nonVides.some((v) => parseNombre(v) !== null)) {
+          mesurables.push(nom);
+        }
+      });
+    }
 
     return { temporelles, mesurables };
   }, [entetes, corps]);
 
-  const [colonneTemps, setColonneTemps] = useState<string>(colonnesDisponibles.temporelles[0] || "");
-  const [colonneMesure, setColonneMesure] = useState<string>(colonnesDisponibles.mesurables[0] || "");
+  const defautTemps = colonnesDisponibles.temporelles[0] || "";
+  const defautMesure =
+    colonnesDisponibles.mesurables.find((c) => c !== defautTemps) ||
+    colonnesDisponibles.mesurables[0] ||
+    "";
+
+  const [colonneTemps, setColonneTemps] = useState<string>(defautTemps);
+  const [colonneMesure, setColonneMesure] = useState<string>(defautMesure);
   const [modeAgregation, setModeAgregation] = useState<TypeAgregationTemporelle>("somme");
   const [horizon, setHorizon] = useState<number>(3);
   const [ongletExplication, setOngletExplication] = useState<"scenarios" | "calendrier" | "historique" | "guide">("scenarios");
 
-  // Synchronisation des colonnes si les en-têtes changent
+  // Synchronisation et protection contre la sélection identique (colonneTemps === colonneMesure)
   useEffect(() => {
     if (!colonneTemps && colonnesDisponibles.temporelles.length > 0) {
       setColonneTemps(colonnesDisponibles.temporelles[0]);
     }
-    if (!colonneMesure && colonnesDisponibles.mesurables.length > 0) {
-      setColonneMesure(colonnesDisponibles.mesurables[0]);
+
+    const mesureValide =
+      colonnesDisponibles.mesurables.find((c) => c !== colonneTemps) ||
+      colonnesDisponibles.mesurables[0] ||
+      "";
+
+    if (!colonneMesure || colonneMesure === colonneTemps) {
+      setColonneMesure(mesureValide);
     }
   }, [colonnesDisponibles, colonneTemps, colonneMesure]);
 
@@ -147,7 +179,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     );
   }, [graphiquesEpingles, idGraphiqueCourant, estDejaInclus]);
 
-  // Réinitialisation du statut d'épinglage lors d'un changement de paramètres
   useEffect(() => {
     setEstDejaInclus(false);
   }, [idGraphiqueCourant, refSource]);
@@ -162,7 +193,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       nom.includes("remise") ||
       nom.includes("marge");
     if (estIntensif && modeAgregation === "somme") {
-      return `Vous appliquez une « Somme cumulée » sur une variable unitaire (${colonneMesure}). Si vous cherchez le niveau moyen constaté, privilégiez le mode « Moyenne de la période ».`;
+      return `Vous appliquez une « Somme cumulée » sur une variable unitaire (${colonneMesure}). Pour observer le niveau réel constaté, privilégiez le mode « Moyenne de la période ».`;
     }
     return null;
   }, [colonneMesure, modeAgregation]);
@@ -177,7 +208,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
         code: "PAS_DE_TEMPS" as const,
         titre: "Aucune colonne temporelle identifiée",
         explication: "Le jeu de données ne comporte aucune colonne reconnue comme date ou année.",
-        actionConseillee: "Une colonne de date (ex: 2024-01-15, 2023...) est indispensable pour ordonner la série temporelle.",
+        actionConseillee: "Une colonne de date ou d'année est indispensable pour ordonner la série temporelle.",
       };
     }
 
@@ -186,7 +217,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
         possible: false as const,
         code: "PAS_DE_MESURE" as const,
         titre: "Aucune mesure chiffrée à projeter",
-        explication: "Toutes les colonnes actuelles sont de nature textuelle.",
+        explication: "Toutes les colonnes actuelles sont de nature textuelle ou temporelle.",
         actionConseillee: "Sélectionnez une variable numérique (montant, volume, quantité, ratio, etc.).",
       };
     }
@@ -281,7 +312,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     return null;
   }, [estBenchmarkActif, calculsComparatifs, diagnosticOuResultat]);
 
-  // Analyse rétrospective avancée (Actif pour 1 fichier ET pour N fichiers)
+  // Analyse rétrospective avancée
   const analyseAvancee = useMemo(() => {
     if (!sourceActive || sourceActive.historique.length === 0 || sourceActive.projections.length === 0) return null;
     const hist = sourceActive.historique;
@@ -315,7 +346,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     };
   }, [sourceActive]);
 
-  // Moteur de calcul des recommandations opérationnelles chiffrées
+  // Moteur de calcul des recommandations opérationnelles
   const calculsDecisionnels = useMemo(() => {
     if (!sourceActive || sourceActive.historique.length === 0 || sourceActive.projections.length === 0) return null;
     const hist = sourceActive.historique;
@@ -353,7 +384,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     };
   }, [sourceActive]);
 
-  // Préparation du dataset Chart.js
+  // 5. Préparation des datasets Chart.js
   let chartData: { labels: string[]; datasets: any[] } = { labels: [], datasets: [] };
 
   if (estBenchmarkActif && calculsComparatifs && calculsComparatifs.possible) {
@@ -370,7 +401,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       const palette = PALETTE_COMPARAISON[idx % PALETTE_COMPARAISON.length];
       const estRef = s.nomSrc === refSource;
 
-      // Courbe historique réalisé
       datasets.push({
         label: `${s.nomSrc} (Réalisé)`,
         data: [...s.historique.map((p) => p.valeur), ...Array(labelsProj.length).fill(null)],
@@ -378,10 +408,9 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
         backgroundColor: palette.reel,
         borderWidth: estRef ? 3 : 2,
         tension: 0.2,
-        pointRadius: estRef ? 4 : 3,
+        pointRadius: estRef ? 3.5 : 2.5,
       });
 
-      // Projection estimée
       datasets.push({
         label: `${s.nomSrc} (Projeté)`,
         data: [...Array(nbHisto - 1).fill(null), s.dernierReel, ...s.projections.map((p) => p.valeurPrevue)],
@@ -408,9 +437,9 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           data: [...res.historique.map((p) => p.valeur), ...Array(res.projections.length).fill(null)],
           borderColor: "#8b5cf6",
           backgroundColor: "#8b5cf6",
-          borderWidth: 3,
+          borderWidth: 2.5,
           tension: 0.2,
-          pointRadius: 4,
+          pointRadius: 3,
         },
         {
           label: "Projection estimée",
@@ -419,7 +448,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           borderDash: [5, 5],
           borderWidth: 2.5,
           tension: 0.2,
-          pointRadius: 4,
+          pointRadius: 3.5,
           pointBackgroundColor: "#0284c7",
         },
         {
@@ -441,7 +470,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     };
   }
 
-  // Export vers PowerPoint
+  // Export PowerPoint
   const preparerExportPptx = () => {
     if (!chartData || !chartData.labels.length) return;
 
@@ -481,11 +510,16 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     setEstDejaInclus(true);
   };
 
+  // Options Chart.js avec désactivation FORMELLE des chiffres à l'intérieur du tracé
   const options = {
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: "index" as const, intersect: false },
     plugins: {
+      // DÉSACTIVATION DES CHIFFRES SUR LA COURBE (Supprime la surcharge visuelle)
+      datalabels: {
+        display: false,
+      },
       legend: {
         position: "bottom" as const,
         labels: {
@@ -589,7 +623,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
         </div>
       )}
 
-      {/* Barre de paramétrage (TOUJOURS VISIBLE, même en cas d'historique court) */}
+      {/* Barre de paramétrage (Empêche de sélectionner l'axe temporel comme indicateur à projeter) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 bg-slate-50 dark:bg-slate-800/40 p-3 sm:p-4 rounded-xl text-xs">
         <div>
           <label className="block font-semibold text-slate-600 dark:text-slate-400 mb-1">Axe temporel / Séquence</label>
@@ -611,9 +645,11 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
             onChange={(e) => setColonneMesure(e.target.value)}
             className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-medium focus:ring-2 focus:ring-purple-500"
           >
-            {colonnesDisponibles.mesurables.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
+            {colonnesDisponibles.mesurables
+              .filter((c) => c !== colonneTemps)
+              .map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
           </select>
         </div>
 
@@ -659,12 +695,12 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
             </select>
           </div>
           <span className="text-[11px] text-slate-500">
-            Le tableau comparatif et les 4 onglets d&apos;explication ci-dessous se synchronisent sur cette série.
+            Le tableau comparatif et les 4 onglets d&apos;explication se synchronisent sur cette série.
           </span>
         </div>
       )}
 
-      {/* CAS D'IMPOSSIBILITÉ OU FILTRES TROP STRICTS */}
+      {/* Cas d'impossibilité ou filtres trop stricts */}
       {!estBenchmarkActif && diagnosticOuResultat && !diagnosticOuResultat.possible && (
         <div className="rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 p-4 text-xs space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -692,15 +728,14 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
         </div>
       )}
 
-      {/* GRAPHIQUE ET ANALYSES LORSQUE LES CALCULS SONT VALIDES */}
+      {/* Rendu graphique épuré */}
       {estPrevisionPossible && (
         <>
-          {/* Graphique */}
           <div className="h-60 sm:h-80 w-full p-2 bg-gradient-to-b from-slate-50/50 to-white dark:from-slate-800/30 dark:to-slate-900 rounded-xl">
             <Line data={chartData} options={options} />
           </div>
 
-          {/* SECTION BENCHMARK COMPARATIF (N SOURCES) */}
+          {/* Section benchmark comparatif */}
           {estBenchmarkActif && calculsComparatifs && calculsComparatifs.possible && (
             <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-5 bg-slate-50/50 dark:bg-slate-900/60 space-y-4 text-xs">
               <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-800 pb-2">
@@ -808,10 +843,9 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
             </div>
           )}
 
-          {/* SECTION EXPLICATIVE APPROFONDIE (ACTIF EN BENCHMARK & UNIQUE) */}
+          {/* Onglets d'explication */}
           {sourceActive && analyseAvancee && calculsDecisionnels && (
             <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-slate-50/40 dark:bg-slate-900/60">
-              {/* Barre d'onglets */}
               <div className="flex border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 pt-2 gap-2 text-xs overflow-x-auto">
                 <button
                   onClick={() => setOngletExplication("scenarios")}
@@ -863,7 +897,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
               </div>
 
               <div className="p-5 text-xs">
-                {/* ONGLET 1 : LES 3 SCÉNARIOS CHIFFRÉS */}
                 {ongletExplication === "scenarios" && (
                   <div className="space-y-4">
                     <p className="text-slate-600 dark:text-slate-400">
@@ -875,7 +908,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                     </p>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {/* Scénario Prudent */}
                       <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -894,7 +926,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                         </p>
                       </div>
 
-                      {/* Scénario Médian */}
                       <div className="p-4 rounded-xl bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
@@ -913,7 +944,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                         </p>
                       </div>
 
-                      {/* Scénario Favorable */}
                       <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -935,7 +965,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                   </div>
                 )}
 
-                {/* ONGLET 2 : DÉCOMPOSITION MOIS PAR MOIS */}
                 {ongletExplication === "calendrier" && (
                   <div className="space-y-3">
                     <p className="text-slate-600 dark:text-slate-400">
@@ -963,7 +992,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                               <tr key={p.periode} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                                 <td className="p-3 font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
                                   <span className="w-2 h-2 rounded-full bg-cyan-600"></span>
-                                  {p.periode} {idx === 0 && <span className="text-[10px] text-slate-400 font-normal">(prochain mois)</span>}
+                                  {p.periode} {idx === 0 && <span className="text-[10px] text-slate-400 font-normal">(prochaine période)</span>}
                                 </td>
                                 <td className="p-3 text-right text-slate-600 dark:text-slate-400 font-mono">
                                   {p.borneBasse.toLocaleString("fr-FR")}
@@ -988,7 +1017,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                   </div>
                 )}
 
-                {/* ONGLET 3 : DIAGNOSTIC DE L'HISTORIQUE PASSÉ */}
                 {ongletExplication === "historique" && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1025,18 +1053,17 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                         Pourquoi la fourchette est-elle aussi large ?
                       </h4>
                       <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                        L&apos;historique de <strong>{sourceActive.nom}</strong> ne suit pas une ligne droite régulière : il a connu un creux prononcé en{" "}
+                        L&apos;historique de <strong>{sourceActive.nom}</strong> a connu un creux en{" "}
                         <strong>{analyseAvancee.pointMin.periode}</strong> ({analyseAvancee.pointMin.valeur.toLocaleString("fr-FR")}) avant de rebondir en{" "}
                         <strong>{analyseAvancee.pointMax.periode}</strong> ({analyseAvancee.pointMax.valeur.toLocaleString("fr-FR")}).
                       </p>
                       <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                        Le moteur statistique prend en compte cette forte fluctuation passée (R² = {sourceActive.metriques.r2}). Pour ne pas vous induire en erreur avec une certitude artificielle, il élargit automatiquement la zone d&apos;incertitude.
+                        Le moteur statistique prend en compte cette fluctuation passée (R² = {sourceActive.metriques.r2}). Pour éviter une certitude artificielle, il élargit proportionnellement l&apos;intervalle de confiance.
                       </p>
                     </div>
                   </div>
                 )}
 
-                {/* ONGLET 4 : RECOMMANDATIONS OPÉRATIONNELLES CHIFFRÉES */}
                 {ongletExplication === "guide" && (
                   <div className="space-y-4">
                     {alerteMetier && (
@@ -1050,7 +1077,6 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                     )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* 1. SEUIL D'ALERTE IMMÉDIAT (J+30) */}
                       <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -1065,21 +1091,20 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                           &lt; {calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}
                         </p>
                         <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                          La cible prévue pour le mois prochain sur <strong>{sourceActive.nom}</strong> est de <strong>{calculsDecisionnels.prochainMois.valeurPrevue.toLocaleString("fr-FR")}</strong>.{" "}
+                          La cible prévue pour la prochaine période sur <strong>{sourceActive.nom}</strong> est de <strong>{calculsDecisionnels.prochainMois.valeurPrevue.toLocaleString("fr-FR")}</strong>.{" "}
                           {sourceActive.metriques.sensTendance === "baisse" ? (
-                            <>La dynamique observée est en recul. Si vous clôturez le mois prochain sous <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong>, la baisse s&apos;accélère au-delà des tolérances : ajustez vos coûts sans attendre la fin du trimestre.</>
+                            <>La dynamique observée est en recul. Une clôture sous <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong> signale une baisse supérieure aux tolérances : ajustez vos coûts sans attendre.</>
                           ) : (
-                            <>Si vous clôturez le mois prochain en dessous de <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong>, la dynamique haussière est compromise : réajustez immédiatement vos objectifs sans attendre la fin du trimestre.</>
+                            <>Une clôture sous <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong> compromet la dynamique haussière : réajustez vos objectifs sans attendre la fin du trimestre.</>
                           )}
                         </p>
                       </div>
 
-                      {/* 2. CADENCE OPÉRATIONNELLE REQUISE */}
                       <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                             <TrendingUp className="w-4 h-4 text-emerald-600" />
-                            Cadence mensuelle requise
+                            Cadence périodique requise
                           </span>
                           <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 px-2 py-0.5 rounded-full">
                             Plan d&apos;action
@@ -1087,14 +1112,13 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                         </div>
                         <p className="text-xl font-black text-slate-900 dark:text-white font-mono">
                           {calculsDecisionnels.effortMensuelMoyen >= 0 ? "+" : ""}
-                          {calculsDecisionnels.effortMensuelMoyen.toLocaleString("fr-FR")} / mois
+                          {calculsDecisionnels.effortMensuelMoyen.toLocaleString("fr-FR")} / période
                         </p>
                         <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                          Pour passer du niveau actuel ({calculsDecisionnels.dernierReelVal.toLocaleString("fr-FR")}) à la cible finale de {calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} en {calculsDecisionnels.cibleFinale.periode}, l&apos;activité de {sourceActive.nom} doit générer cette progression nette régulière chaque mois.
+                          Pour passer du niveau actuel ({calculsDecisionnels.dernierReelVal.toLocaleString("fr-FR")}) à la cible finale de {calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} en {calculsDecisionnels.cibleFinale.periode}, l&apos;activité doit générer cette progression nette régulière.
                         </p>
                       </div>
 
-                      {/* 3. DIMENSIONNEMENT DES COÛTS & CAPACITÉS */}
                       <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -1109,11 +1133,10 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                           {calculsDecisionnels.plafondEngagement.toLocaleString("fr-FR")} max
                         </p>
                         <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                          En raison de l&apos;incertitude constatée ({sourceActive.metriques.fiabilite.toLowerCase()}), ne calibrez pas vos charges fixes ou vos commandes fermes sur la cible de {calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")}. Engagez au maximum ce montant pour préserver vos marges en cas de retournement.
+                          En raison de l&apos;incertitude constatée ({sourceActive.metriques.fiabilite.toLowerCase()}), engagez au maximum ce montant pour préserver vos marges en cas de retournement.
                         </p>
                       </div>
 
-                      {/* 4. PROVISION SUR CHOC PASSÉ */}
                       <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -1128,7 +1151,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                           {calculsDecisionnels.pireChute > 0 ? `${calculsDecisionnels.pireChute.toLocaleString("fr-FR")} de réserve` : "Faible amplitude"}
                         </p>
                         <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                          La plus forte chute mensuelle observée dans l&apos;historique de {sourceActive.nom} a atteint <strong>{calculsDecisionnels.pireChute.toLocaleString("fr-FR")}</strong>. C&apos;est le montant exact de réserve à conserver pour continuer d&apos;opérer sans stress si un creux similaire venait à se reproduire.
+                          La plus forte chute observée dans l&apos;historique de {sourceActive.nom} a atteint <strong>{calculsDecisionnels.pireChute.toLocaleString("fr-FR")}</strong>. C&apos;est le montant de réserve recommandé pour pallier un creux similaire.
                         </p>
                       </div>
                     </div>

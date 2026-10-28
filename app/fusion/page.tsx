@@ -13,9 +13,13 @@ import {
   BarChart2,
   Download,
   ArrowRight,
+  ShieldCheck,
   Settings2,
   Layers,
   GitMerge,
+  Filter,
+  CheckCircle2,
+  ArrowLeftRight,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import {

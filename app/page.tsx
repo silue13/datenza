@@ -5,7 +5,11 @@ import * as XLSX from "xlsx";
 import { useData } from "./context/DataContext";
 import { analyserColonnes } from "../lib/analyse/analyse";
 import { genererRapport } from "../lib/analyse/rapport";
-import type { Cellule } from "../lib/analyse/utils";
+import {
+  type Cellule,
+  estValeurVide,
+  estLigneTotal,
+} from "../lib/analyse/utils";
 import { useRouter } from "next/navigation";
 import BoutonInstallerApp from "./components/BoutonInstallerApp";
 import {
@@ -30,20 +34,36 @@ interface FichierImporte {
   corps: Cellule[][];
 }
 
-/** En-têtes sûrs : jamais vides, jamais en double (évite les conflits d'indexation) */
+/** En-têtes sûrs : purge du BOM, suppression des guillemets et déduplication */
 function nettoyerEntetes(brut: Cellule[]): string[] {
   const vus = new Map<string, number>();
   return brut.map((c, i) => {
-    const base = String(c ?? "").trim() || `Colonne ${i + 1}`;
+    let base = String(c ?? "")
+      .replace(/^\uFEFF/, "")
+      .replace(/^["'«»“”]|["'«»“”]$/g, "")
+      .trim();
+
+    if (!base) base = `Colonne ${i + 1}`;
     const n = (vus.get(base) ?? 0) + 1;
     vus.set(base, n);
     return n === 1 ? base : `${base} (${n})`;
   });
 }
 
-/** Détection automatique du séparateur CSV (; ou ,) */
+/** Détection automatique du séparateur CSV (; ou , ou \t) */
 function detecterSeparateur(texte: string): string {
-  const echantillon = texte.split(/\r\n|\n/).slice(0, 5).join("\n");
+  const lignes = texte.split(/\r\n|\n/).filter((l) => l.trim() !== "").slice(0, 5);
+  if (!lignes.length) return ",";
+
+  const premierLigne = lignes[0];
+  const nbPVTete = (premierLigne.match(/;/g) || []).length;
+  const nbVirgTete = (premierLigne.match(/,/g) || []).length;
+  const nbTabTete = (premierLigne.match(/\t/g) || []).length;
+
+  if (nbPVTete > nbVirgTete && nbPVTete > nbTabTete) return ";";
+  if (nbTabTete > nbVirgTete && nbTabTete > nbPVTete) return "\t";
+
+  const echantillon = lignes.join("\n");
   const nbPointVirgule = (echantillon.match(/;/g) || []).length;
   const nbVirgule = (echantillon.match(/,/g) || []).length;
   const nbTab = (echantillon.match(/\t/g) || []).length;
@@ -51,6 +71,49 @@ function detecterSeparateur(texte: string): string {
   if (nbPointVirgule > nbVirgule && nbPointVirgule > nbTab) return ";";
   if (nbTab > nbVirgule && nbTab > nbPointVirgule) return "\t";
   return ",";
+}
+
+/** Sélectionne intelligemment la feuille de données d'un classeur Excel */
+function selectionnerMeilleureFeuille(wb: XLSX.WorkBook): XLSX.WorkSheet {
+  if (!wb.SheetNames || wb.SheetNames.length === 0) {
+    throw new Error("Le classeur Excel ne contient aucune feuille.");
+  }
+
+  // 1. Priorité aux feuilles dont le nom contient "données", "donnees", "data"
+  const nomDonnees = wb.SheetNames.find((n) =>
+    /donn[eé]es?|data/i.test(n.trim())
+  );
+  if (nomDonnees && wb.Sheets[nomDonnees]) {
+    return wb.Sheets[nomDonnees];
+  }
+
+  // 2. Écarter les feuilles administratives (Métadonnées, Schéma, Requêtes, Sommaire)
+  const feuillesUtiles = wb.SheetNames.filter(
+    (n) =>
+      !/^(m[eé]tadonn[eé]es?|metadata|sch[eé]ma|requ[eê]te|notice|sommaire|notes?|lisez[- ]?moi)$/i.test(
+        n.trim()
+      )
+  );
+
+  const candidates = feuillesUtiles.length > 0 ? feuillesUtiles : wb.SheetNames;
+
+  // 3. Sélectionner celle qui dispose de la plus grande plage utile
+  let meilleure = wb.Sheets[candidates[0]];
+  let maxCellules = 0;
+
+  for (const nom of candidates) {
+    const sh = wb.Sheets[nom];
+    if (sh && sh["!ref"]) {
+      const range = XLSX.utils.decode_range(sh["!ref"]);
+      const nb = (range.e.r - range.s.r + 1) * (range.e.c - range.s.c + 1);
+      if (nb > maxCellules) {
+        maxCellules = nb;
+        meilleure = sh;
+      }
+    }
+  }
+
+  return meilleure || wb.Sheets[wb.SheetNames[0]];
 }
 
 export default function HomePage() {
@@ -70,10 +133,7 @@ export default function HomePage() {
   const [enChargement, setEnChargement] = useState<boolean>(false);
   const [estSurvole, setEstSurvole] = useState<boolean>(false);
 
-  // État local qui conserve tous les fichiers importés
   const [fichiers, setFichiers] = useState<FichierImporte[]>([]);
-
-  // IDs des fichiers sélectionnés pour la comparaison
   const [fichiersSelectionnesPourComparaison, setFichiersSelectionnesPourComparaison] = useState<string[]>([]);
 
   const router = useRouter();
@@ -84,15 +144,20 @@ export default function HomePage() {
     let lignes: Cellule[][] = [];
 
     if (ext === "csv") {
-      const texte = await f.text();
+      const texteBrut = await f.text();
+      // Purge du BOM UTF-8 dès l'entrée
+      const texte = texteBrut.replace(/^\uFEFF/, "");
       const separateur = detecterSeparateur(texte);
+
       const wb = XLSX.read(texte, {
         type: "string",
         raw: false,
         FS: separateur,
       });
+
       const feuille = wb.Sheets[wb.SheetNames[0]];
       if (!feuille) throw new Error(`Le fichier CSV ${f.name} est vide.`);
+
       lignes = XLSX.utils.sheet_to_json<Cellule[]>(feuille, {
         header: 1,
         raw: false,
@@ -101,8 +166,8 @@ export default function HomePage() {
     } else {
       const buffer = await f.arrayBuffer();
       const wb = XLSX.read(new Uint8Array(buffer), { type: "array" });
-      const feuille = wb.Sheets[wb.SheetNames[0]];
-      if (!feuille) throw new Error(`Le classeur Excel ${f.name} ne contient aucune feuille.`);
+      const feuille = selectionnerMeilleureFeuille(wb);
+
       lignes = XLSX.utils.sheet_to_json<Cellule[]>(feuille, {
         header: 1,
         raw: false,
@@ -115,12 +180,16 @@ export default function HomePage() {
       throw new Error(`Fichier ${f.name} vide : aucune colonne détectée.`);
     }
 
-    const resteFiltre = reste.filter((ligne) =>
-      ligne.some((c) => c !== null && c !== undefined && String(c).trim() !== "")
-    );
+    // Filtrage des lignes vides ET des lignes de calcul parasites (Totaux, Variations)
+    const resteFiltre = reste.filter((ligne) => {
+      if (!ligne || ligne.length === 0) return false;
+      const aDesValeurs = ligne.some((c) => !estValeurVide(c));
+      if (!aDesValeurs) return false;
+      return !estLigneTotal(ligne);
+    });
 
     if (resteFiltre.length === 0) {
-      throw new Error(`Le fichier ${f.name} contient des en-têtes mais aucune donnée.`);
+      throw new Error(`Le fichier ${f.name} contient des en-têtes mais aucune donnée exploitable.`);
     }
 
     const entetesNettoyes = nettoyerEntetes(tete);
@@ -185,14 +254,12 @@ export default function HomePage() {
     });
   }
 
-  // Bascule la sélection d'un fichier pour le mode comparaison
   function basculerSelectionComparaison(id: string) {
     setFichiersSelectionnesPourComparaison((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   }
 
-  // LOGIQUE DE COMPARAISON : fusionne sur les colonnes communes + ajoute "Fichier Source"
   function lancerComparaison() {
     setErreurImport("");
     const selection = fichiers.filter((f) => fichiersSelectionnesPourComparaison.includes(f.id));
@@ -202,7 +269,6 @@ export default function HomePage() {
       return;
     }
 
-    // Trouver l'intersection des colonnes communes à tous les fichiers cochés
     let colonnesCommunes = selection[0].entetes;
     for (let i = 1; i < selection.length; i++) {
       colonnesCommunes = colonnesCommunes.filter((col) => selection[i].entetes.includes(col));
@@ -213,7 +279,6 @@ export default function HomePage() {
       return;
     }
 
-    // 1re colonne dédiée à l'étiquetage comparatif
     const entetesComparatifs = ["Fichier Source", ...colonnesCommunes];
     const corpsComparatif: Cellule[][] = [];
 
@@ -260,26 +325,26 @@ export default function HomePage() {
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-16 font-sans">
       {/* En-tête Titre & Statut */}
-   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-     <div className="space-y-1">
-       <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 text-xs font-bold mb-2">
-         <span>DATENZA</span>
-         <span>·</span>
-         <span>Aide à la Décision</span>
-       </div>
-       <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-         Ingestion & Analyse des Données
-       </h1>
-       <p className="text-slate-500 dark:text-slate-400 text-sm">
-         Importez un ou plusieurs classeurs Excel ou fichiers CSV pour les auditer ou les comparer.
-       </p>
-     </div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold mb-2">
+            <span>DATENZA</span>
+            <span>·</span>
+            <span>Aide à la Décision</span>
+          </div>
+          <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            Ingestion & Analyse des Données
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400 text-sm">
+            Importez vos classeurs Excel ou fichiers CSV pour les auditer, les projeter ou les comparer.
+          </p>
+        </div>
 
-     {/* Bouton d'installation de l'application (Android, iPhone, Windows, Mac) */}
-     <div className="sm:w-56 shrink-0">
-       <BoutonInstallerApp />
-     </div>
-   </div>
+        <div className="sm:w-56 shrink-0">
+          <BoutonInstallerApp />
+        </div>
+      </div>
+
       {/* Zone de Glisser-Déposer */}
       <div
         onDragOver={(e) => {
@@ -299,8 +364,8 @@ export default function HomePage() {
         }}
         className={`bg-white dark:bg-slate-900 border-2 border-dashed rounded-3xl p-10 text-center transition-all relative shadow-sm ${
           estSurvole
-            ? "border-purple-600 bg-purple-50/40 dark:bg-purple-950/20 scale-[1.01]"
-            : "border-purple-200 dark:border-purple-900/60 hover:border-purple-400 dark:hover:border-purple-600"
+            ? "border-blue-600 bg-blue-50/40 dark:bg-blue-950/20 scale-[1.01]"
+            : "border-slate-300 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-600"
         }`}
       >
         <input
@@ -318,7 +383,7 @@ export default function HomePage() {
         />
 
         <div className="space-y-3">
-          <div className="w-14 h-14 rounded-2xl bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 flex items-center justify-center mx-auto transition-transform">
+          <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto transition-transform">
             {enChargement ? (
               <Loader2 className="w-7 h-7 animate-spin" />
             ) : (
@@ -359,7 +424,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* ZONE DÉROULANTE CONTENANT LES DIFFÉRENTS FICHIERS IMPORTÉS */}
+      {/* Liste des fichiers importés */}
       {fichiers.length > 0 && (
         <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -372,12 +437,11 @@ export default function HomePage() {
               </p>
             </div>
 
-            {/* Bouton pour déclencher la comparaison dès que 2 fichiers sont cochés */}
             {fichiersSelectionnesPourComparaison.length >= 2 && (
               <button
                 type="button"
                 onClick={lancerComparaison}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-600/20 transition cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 transition cursor-pointer"
               >
                 <Scale className="w-4 h-4" />
                 <span>Comparer les {fichiersSelectionnesPourComparaison.length} fichiers cochés</span>
@@ -385,8 +449,7 @@ export default function HomePage() {
             )}
           </div>
 
-          {/* Boîte déroulante avec barre de défilement (max-h-56) */}
-          <div className="max-h-56 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-purple-200 dark:scrollbar-thumb-purple-900">
+          <div className="max-h-56 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
             {fichiers.map((f) => {
               const estActif = f.nom === nomFichier;
               const estCochePourComparer = fichiersSelectionnesPourComparaison.includes(f.id);
@@ -397,19 +460,18 @@ export default function HomePage() {
                   onClick={() => selectionnerFichierActif(f)}
                   className={`flex items-center justify-between p-3.5 rounded-2xl border text-xs cursor-pointer transition select-none ${
                     estActif
-                      ? "border-purple-500 bg-purple-50/60 dark:bg-purple-950/30 text-purple-950 dark:text-purple-200 shadow-sm"
+                      ? "border-blue-500 bg-blue-50/60 dark:bg-blue-950/30 text-blue-950 dark:text-blue-200 shadow-sm"
                       : "border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/40 hover:bg-slate-100/60 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-300"
                   }`}
                 >
                   <div className="flex items-center gap-3 truncate">
-                    {/* Case à cocher pour la comparaison */}
                     <input
                       type="checkbox"
                       checked={estCochePourComparer}
                       onClick={(e) => e.stopPropagation()}
                       onChange={() => basculerSelectionComparaison(f.id)}
                       title="Cocher pour comparer ce fichier"
-                      className="accent-purple-600 h-4 w-4 rounded cursor-pointer"
+                      className="accent-blue-600 h-4 w-4 rounded cursor-pointer"
                     />
 
                     <span className="font-bold truncate">{f.nom}</span>
@@ -420,7 +482,7 @@ export default function HomePage() {
 
                   <div className="flex items-center gap-2">
                     {estActif && (
-                      <span className="text-[10px] bg-purple-200/60 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 font-bold px-2 py-0.5 rounded-md">
+                      <span className="text-[10px] bg-blue-200/60 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 font-bold px-2 py-0.5 rounded-md">
                         Actif
                       </span>
                     )}
@@ -445,7 +507,7 @@ export default function HomePage() {
 
       {/* Confirmation du fichier importé actif */}
       {nomFichier && (
-        <div className="bg-purple-50/70 dark:bg-purple-950/30 border border-purple-200/80 dark:border-purple-900/40 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+        <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/40 rounded-2xl p-4 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center font-bold">
               <Check className="w-4 h-4" />
@@ -460,12 +522,12 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Section Préparation de l'Analyse */}
+      {/* Section Périmètre de l'Analyse */}
       {entetes.length > 0 && (
         <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 md:p-8 space-y-6 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
             <div>
-              <span className="text-[11px] font-black uppercase tracking-wider text-purple-600 dark:text-purple-400">
+              <span className="text-[11px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400">
                 Étape 2 · Sélection des variables
               </span>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">
@@ -482,7 +544,7 @@ export default function HomePage() {
                 onClick={toutCocher}
                 className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition"
               >
-                <CheckSquare className="w-3.5 h-3.5 text-purple-600" />
+                <CheckSquare className="w-3.5 h-3.5 text-blue-600" />
                 Tout cocher
               </button>
               <button
@@ -496,7 +558,6 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Grille de sélection des colonnes */}
           <div className="max-h-72 overflow-y-auto pr-1">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               {entetes.map((nom) => {
@@ -506,7 +567,7 @@ export default function HomePage() {
                     key={nom}
                     className={`flex items-center gap-3 p-3.5 rounded-2xl border text-xs font-semibold cursor-pointer transition select-none ${
                       estCoche
-                        ? "border-purple-500 bg-purple-50/50 dark:bg-purple-950/40 text-purple-950 dark:text-purple-200 shadow-sm"
+                        ? "border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 text-blue-950 dark:text-blue-200 shadow-sm"
                         : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-600 dark:text-slate-400"
                     }`}
                   >
@@ -514,7 +575,7 @@ export default function HomePage() {
                       type="checkbox"
                       checked={estCoche}
                       onChange={() => basculer(nom)}
-                      className="accent-purple-600 h-4 w-4 rounded cursor-pointer"
+                      className="accent-blue-600 h-4 w-4 rounded cursor-pointer"
                     />
                     <span className="truncate">{nom}</span>
                   </label>
@@ -523,12 +584,11 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Bouton de confirmation principal */}
           <button
             type="button"
             onClick={lancerAnalyse}
             disabled={choisies.length === 0}
-            className="w-full py-4 bg-purple-600 hover:bg-purple-700 text-white font-bold text-sm rounded-2xl shadow-lg shadow-purple-600/20 transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-2xl shadow-lg shadow-blue-600/20 transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             <span>Lancer l&apos;analyse décisionnelle</span>
             <ArrowRight className="w-4 h-4" />
@@ -573,7 +633,6 @@ export default function HomePage() {
             </table>
           </div>
 
-          {/* Contrôle de pagination */}
           <div className="flex items-center justify-between pt-2 text-xs">
             <button
               type="button"

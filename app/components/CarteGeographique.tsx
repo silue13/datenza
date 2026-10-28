@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import "leaflet/dist/leaflet.css";
-import { Sparkles, MapPin, Presentation } from "lucide-react";
-import { trouverLieuCI, cleGeo } from "../../lib/geoci/data";
-import { parseNombre, type Cellule, estValeurVide } from "../../lib/analyse/utils";
+import { MapPin, Presentation, Calendar } from "lucide-react";
+import { trouverLieuCI, cleGeo, PAYS_DU_MONDE } from "../../lib/geoci/data";
+// APRÈS
+import { parseNombre, type Cellule, estValeurVide, arrondir } from "../../lib/analyse/utils";
 import { useData } from "../context/DataContext";
 
 const MapContainer = dynamic(() => import("react-leaflet").then((m) => m.MapContainer), { ssr: false });
@@ -41,43 +42,25 @@ function nombreCellule(v: Cellule): number | null {
   return parseNombre(v);
 }
 
-const MAX_LIEUX = 50;
+const MAX_LIEUX = 80;
 
 const MOTS_CLES_GEO = /(ville|city|commune|region|pays|country|departement|department|district|adresse|lieu|location|zone|secteur|territoire|localite|village|prefecture|province|quartier)/i;
 const MOTS_CLES_EXCLUS = /(categorie|category|statut|status|mois|month|annee|year|commercial|vendeur|client|devise|type|produit|article|id|num|reference|ref|remise|taux)/i;
 
 const COULEURS_COMPARAISON = [
-  { fill: "#4f46e5", border: "#3730a3" },
+  { fill: "#2563eb", border: "#1d4ed8" },
   { fill: "#0891b2", border: "#0e7490" },
-  { fill: "#f59e0b", border: "#d97706" },
-  { fill: "#10b981", border: "#059669" },
-  { fill: "#ec4899", border: "#be185d" },
-  { fill: "#8b5cf6", border: "#6d28d9" },
+  { fill: "#d97706", border: "#b45309" },
+  { fill: "#059669", border: "#047857" },
+  { fill: "#dc2626", border: "#b91c1c" },
+  { fill: "#7c3aed", border: "#6d28d9" },
 ];
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const COORDONNEES_FRANCE: Record<string, [number, number]> = {
-  "ile-de-france": [48.8499, 2.637],
-  idf: [48.8499, 2.637],
-  paris: [48.8566, 2.3522],
-  nord: [50.4, 3.1],
-  sud: [43.6, 3.88],
-  est: [48.6, 6.2],
-  ouest: [47.8, -1.8],
-  centre: [46.8, 2.4],
-  "auvergne-rhone-alpes": [45.76, 4.83],
-  aura: [45.76, 4.83],
-  "provence-alpes-cote d'azur": [43.93, 6.06],
-  paca: [43.93, 6.06],
-  occitanie: [43.6, 1.44],
-  "nouvelle-aquitaine": [44.83, -0.57],
-  bretagne: [48.11, -1.67],
-  normandie: [49.18, -0.37],
-  "grand est": [48.58, 7.75],
-  "hauts-de-france": [50.62, 3.05],
-  "pays de la loire": [47.21, -1.55],
-};
+function estDansFrontieresCI(lat: number, lng: number): boolean {
+  return lat >= 4.2 && lat <= 10.9 && lng >= -8.7 && lng <= -2.4;
+}
 
 export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Props) {
   const { graphiquesEpingles, epinglerGraphique } = useData();
@@ -97,43 +80,61 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     ? sourceRefChoisie
     : sourcesFichiers[0] || "";
 
+  // 1. DÉTECTION DU FORMAT MATRICIEL (Les colonnes elles-mêmes sont des villes/stations CI)
+  const colonnesEnTetesGeographiques = useMemo(() => {
+    return entetes.filter((h) => {
+      if (h === "Fichier Source") return false;
+      return trouverLieuCI(h) !== null;
+    });
+  }, [entetes]);
+
+  const estFormatMatriciel = colonnesEnTetesGeographiques.length >= 2;
+
+  // 2. DÉTECTION DU FORMAT STANDARD (Une colonne de lieux textuels en lignes)
   const colonnesGeographiquesEligibles = useMemo(() => {
     return entetes.filter((nom, idx) => {
       if (nom === "Fichier Source") return false;
 
-      const nomNorm = nom.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-
-      if (MOTS_CLES_EXCLUS.test(nomNorm)) return false;
-      if (MOTS_CLES_GEO.test(nomNorm)) return true;
-
       const echantillon = corps.map((ligne) => ligne[idx]).filter((v) => !estValeurVide(v));
       if (echantillon.length === 0) return false;
 
+      // FILTRAGE STRICT : Une colonne dont les valeurs sont des nombres ou des années n'est JAMAIS géographique
       const nbNombres = echantillon.filter((v) => parseNombre(v) !== null).length;
-      if (nbNombres / echantillon.length >= 0.5) return false;
+      if (nbNombres / echantillon.length >= 0.4) return false;
 
-      const echantillonTexte = echantillon.slice(0, 15).map((l) => String(l).trim().toLowerCase());
-      return echantillonTexte.some(
-        (v) =>
-          trouverLieuCI(v) !== null ||
-          COORDONNEES_FRANCE[cleGeo(v)] !== undefined ||
-          /abidjan|paris|bouake|lyon|marseille|yamoussoukro|daloa|bordeaux/i.test(v)
-      );
+      const sontDesAnnees = echantillon.every((v) => /^(19|20)\d{2}$/.test(String(v).trim()));
+      if (sontDesAnnees) return false;
+
+      const nomNorm = nom.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      if (MOTS_CLES_EXCLUS.test(nomNorm)) return false;
+
+      const echantillonTexte = echantillon.slice(0, 25).map((l) => String(l).trim());
+      const aLieuxReconnus = echantillonTexte.some((v) => trouverLieuCI(v) !== null);
+      if (aLieuxReconnus) return true;
+
+      return MOTS_CLES_GEO.test(nomNorm);
     });
   }, [entetes, corps]);
 
-  const defaut = useMemo(() => {
-    const prioVille = colonnesGeographiquesEligibles.find((h) => /(ville|city|commune)/i.test(h));
-    if (prioVille) return prioVille;
-
-    const prioGeo = colonnesGeographiquesEligibles.find((h) => MOTS_CLES_GEO.test(h));
-    if (prioGeo) return prioGeo;
-
+  // Sélecteur pour le format standard
+  const defautStandard = useMemo(() => {
     return colonnesGeographiquesEligibles[0] || "";
   }, [colonnesGeographiquesEligibles]);
 
   const [choix, setChoix] = useState<string | null>(null);
-  const colonneGeo = choix !== null && colonnesGeographiquesEligibles.includes(choix) ? choix : defaut;
+  const colonneGeo = choix !== null && colonnesGeographiquesEligibles.includes(choix) ? choix : defautStandard;
+
+  // Sélecteur de période en format matriciel (ex: 2022, 2021...)
+  const periodesDisponibles = useMemo(() => {
+    if (!estFormatMatriciel || corps.length === 0) return [];
+    // La 1re colonne non géographique contient généralement l'année/la période
+    const idxPeriode = entetes.findIndex((h) => !colonnesEnTetesGeographiques.includes(h) && h !== "Fichier Source");
+    if (idxPeriode === -1) return [];
+    const vals = Array.from(new Set(corps.map((l) => String(l[idxPeriode] ?? "").trim()).filter(Boolean)));
+    return vals;
+  }, [estFormatMatriciel, corps, entetes, colonnesEnTetesGeographiques]);
+
+  const [periodeChoisie, setPeriodeChoisie] = useState<string>("Toutes");
 
   const colonnesNumeriques = useMemo(() => {
     return entetes
@@ -151,126 +152,143 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
   const demandes = useRef(new Set<string>());
   const [estDejaInclus, setEstDejaInclus] = useState(false);
 
-  const contexteTerritorial = useMemo<"FR" | "CI" | "MONDE">(() => {
-    const idx = entetes.indexOf(colonneGeo);
-    if (idx === -1) return "MONDE";
+  // 3. CONSTRUCTION DES POINTS GÉOGRAPHIQUES
+  const points = useMemo<PointComparatif[]>(() => {
+    const pts: PointComparatif[] = [];
 
-    const valeursLieux = corps.map((r) => String(r[idx] ?? "").toLowerCase().trim());
-    const aIndicesFrance = valeursLieux.some((v) =>
-      /ile-de-france|idf|paris|lyon|marseille|bretagne|normandie|bordeaux|nord|sud|est|ouest/i.test(v)
-    );
-    const aIndicesCI = valeursLieux.some((v) =>
-      /abidjan|yamoussoukro|bouake|san-pedro|korhogo|gagnoa|daloa/i.test(v)
-    );
+    // CAS A : FORMAT MATRICIEL (Les colonnes représentent les villes/stations)
+    if (estFormatMatriciel) {
+      const idxPeriodeCol = entetes.findIndex((h) => !colonnesEnTetesGeographiques.includes(h) && h !== "Fichier Source");
 
-    if (aIndicesFrance && !aIndicesCI) return "FR";
-    if (aIndicesCI && !aIndicesFrance) return "CI";
-    return "MONDE";
-  }, [entetes, corps, colonneGeo]);
+      const lignesFiltrees = periodeChoisie === "Toutes" || idxPeriodeCol === -1
+        ? corps
+        : corps.filter((l) => String(l[idxPeriodeCol] ?? "").trim() === periodeChoisie);
 
-  const donneesAgregees = useMemo(() => {
+      colonnesEnTetesGeographiques.forEach((nomVille) => {
+        const coord = trouverLieuCI(nomVille);
+        if (!coord) return;
+
+        const idxCol = entetes.indexOf(nomVille);
+        const valeurs = lignesFiltrees.map((l) => nombreCellule(l[idxCol])).filter((n): n is number => n !== null);
+        if (!valeurs.length) return;
+
+        const somme = valeurs.reduce((a, b) => a + b, 0);
+        const totalGlobal = agregation === "Moyenne" ? arrondir(somme / valeurs.length) : arrondir(somme);
+
+        pts.push({
+          nom: nomVille,
+          lat: coord[0],
+          lng: coord[1],
+          totalGlobal,
+          valeursParSource: { Defaut: totalGlobal },
+          leader: "Général",
+          valeurLeader: totalGlobal,
+          amplitude: 0,
+          ecartVsRef: 0,
+          variationPctVsRef: 0,
+        });
+      });
+
+      return pts.sort((a, b) => b.totalGlobal - a.totalGlobal);
+    }
+
+    // CAS B : FORMAT STANDARD (Une colonne de lieux en lignes)
     const idxGeo = entetes.indexOf(colonneGeo);
-    if (idxGeo === -1) return [] as { nom: string; totalGlobal: number; parSource: Record<string, number> }[];
+    if (idxGeo === -1) return [];
 
     const idxMesure = entetes.indexOf(colonneMesure);
-    const mapLieux = new Map<string, { totalSomme: number; totalN: number; totalCompte: number; sources: Map<string, { somme: number; n: number; compte: number }> }>();
+    const mapLieux = new Map<string, { totalSomme: number; totalN: number; totalCompte: number }>();
 
     for (const ligne of corps) {
-      const lieu = String(ligne[idxGeo] ?? "").trim();
-      if (!lieu || lieu === "—" || lieu === "-") continue;
-
-      const sourceActuelle = estModeComparaison && idxSource >= 0 ? String(ligne[idxSource] ?? "").trim() : "Defaut";
+      const lieu = String(ligne[idxGeo] ?? "").replace(/["'«»“”]/g, "").trim();
+      // GARDE-FOU : Écarte formellement les années et les nombres purs
+      if (!lieu || /^\d+$/.test(lieu) || lieu === "—" || lieu === "-" || /^total/i.test(lieu)) continue;
 
       let gLieu = mapLieux.get(lieu);
       if (!gLieu) {
-        gLieu = { totalSomme: 0, totalN: 0, totalCompte: 0, sources: new Map() };
+        gLieu = { totalSomme: 0, totalN: 0, totalCompte: 0 };
         mapLieux.set(lieu, gLieu);
       }
 
       gLieu.totalCompte++;
-      let gSrc = gLieu.sources.get(sourceActuelle);
-      if (!gSrc) {
-        gSrc = { somme: 0, n: 0, compte: 0 };
-        gLieu.sources.set(sourceActuelle, gSrc);
-      }
-      gSrc.compte++;
-
       if (agregation !== "Nombre" && idxMesure >= 0) {
         const val = nombreCellule(ligne[idxMesure]);
         if (val !== null) {
           gLieu.totalSomme += val;
           gLieu.totalN++;
-          gSrc.somme += val;
-          gSrc.n++;
         }
       }
     }
 
-    const calculerValeurFinale = (g: { somme: number; n: number; compte: number }) => {
-      if (agregation === "Nombre") return g.compte;
-      if (agregation === "Moyenne") return g.n ? Math.round((g.somme / g.n) * 100) / 100 : 0;
-      return Math.round(g.somme * 100) / 100;
-    };
+    Array.from(mapLieux.entries()).forEach(([nom, g]) => {
+      let coord = trouverLieuCI(nom) || (PAYS_DU_MONDE[cleGeo(nom)] ?? null);
+      if (!coord && externes[nom]) coord = [externes[nom]!.lat, externes[nom]!.lng];
+      if (!coord) return;
 
-    setEstDejaInclus(false);
+      const totalGlobal = agregation === "Nombre"
+        ? g.totalCompte
+        : agregation === "Moyenne"
+        ? (g.totalN ? arrondir(g.totalSomme / g.totalN) : 0)
+        : arrondir(g.totalSomme);
 
-    return Array.from(mapLieux.entries())
-      .map(([nom, gLieu]) => {
-        const parSource: Record<string, number> = {};
-        for (const [srcNom, gSrc] of gLieu.sources.entries()) {
-          parSource[srcNom] = calculerValeurFinale(gSrc);
-        }
+      pts.push({
+        nom,
+        lat: coord[0],
+        lng: coord[1],
+        totalGlobal,
+        valeursParSource: { Defaut: totalGlobal },
+        leader: "Général",
+        valeurLeader: totalGlobal,
+        amplitude: 0,
+        ecartVsRef: 0,
+        variationPctVsRef: 0,
+      });
+    });
 
-        const totalGlobal = calculerValeurFinale({
-          somme: gLieu.totalSomme,
-          n: gLieu.totalN,
-          compte: gLieu.totalCompte,
-        });
+    return pts.sort((a, b) => b.totalGlobal - a.totalGlobal).slice(0, MAX_LIEUX);
+  }, [
+    estFormatMatriciel,
+    colonnesEnTetesGeographiques,
+    corps,
+    entetes,
+    periodeChoisie,
+    agregation,
+    colonneGeo,
+    colonneMesure,
+    externes,
+  ]);
 
-        return { nom, totalGlobal, parSource };
-      })
-      .sort((a, b) => b.totalGlobal - a.totalGlobal)
-      .slice(0, MAX_LIEUX);
-  }, [entetes, corps, colonneGeo, colonneMesure, agregation, estModeComparaison, idxSource]);
-
-  function resoudreCoordonnees(nom: string): [number, number] | null {
-    const cle = cleGeo(nom);
-    if (contexteTerritorial === "FR" && COORDONNEES_FRANCE[cle]) return COORDONNEES_FRANCE[cle];
-    if (contexteTerritorial === "CI") {
-      const lieuCI = trouverLieuCI(nom);
-      if (lieuCI) return lieuCI;
-    }
-    if (COORDONNEES_FRANCE[cle]) return COORDONNEES_FRANCE[cle];
-    const lieuCI = trouverLieuCI(nom);
-    if (lieuCI) return lieuCI;
-    return null;
-  }
-
-  const inconnus = useMemo(
-    () => donneesAgregees.map((d) => d.nom).filter((nom) => !resoudreCoordonnees(nom)),
-    [donneesAgregees, contexteTerritorial]
-  );
-
+  // 4. GÉOCODAGE OPENSTREETMAP SÉCURISÉ (Ne géocode JAMAIS des chiffres ou années)
   useEffect(() => {
+    if (estFormatMatriciel) return;
     let annule = false;
+
     async function executer() {
-      for (const nom of inconnus) {
+      const idxGeo = entetes.indexOf(colonneGeo);
+      if (idxGeo === -1) return;
+
+      const candidats = Array.from(new Set(corps.map((l) => String(l[idxGeo] ?? "").trim())));
+
+      for (const nom of candidats) {
         if (annule) return;
+        // Interdiction formelle de chercher des années ou des nombres purs
+        if (!nom || /^\d+$/.test(nom) || nom === "—" || nom === "-" || /^total/i.test(nom)) continue;
+        if (trouverLieuCI(nom) || PAYS_DU_MONDE[cleGeo(nom)]) continue;
         if (demandes.current.has(nom)) continue;
         demandes.current.add(nom);
 
         let resultat: { lat: number; lng: number } | null = null;
         try {
-          const suffixePays =
-            contexteTerritorial === "FR" ? ", France" : contexteTerritorial === "CI" ? ", Côte d'Ivoire" : "";
-          const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
-            nom + suffixePays
-          )}`;
+          const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ci&q=${encodeURIComponent(nom)}`;
           const res = await fetch(url, { headers: { "Accept-Language": "fr" } });
           if (res.ok) {
             const data = (await res.json()) as { lat: string; lon: string }[];
             if (data.length > 0) {
-              resultat = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+              const lat = parseFloat(data[0].lat);
+              const lng = parseFloat(data[0].lon);
+              if (estDansFrontieresCI(lat, lng)) {
+                resultat = { lat, lng };
+              }
             }
           }
         } catch {
@@ -280,68 +298,20 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
         if (!annule) {
           setExternes((prev) => ({ ...prev, [nom]: resultat }));
         }
-        await pause(1050);
+        await pause(1000);
       }
     }
+
     void executer();
     return () => {
       annule = true;
     };
-  }, [inconnus, contexteTerritorial]);
-
-  const points = useMemo<PointComparatif[]>(() => {
-    const pts: PointComparatif[] = [];
-
-    for (const d of donneesAgregees) {
-      const coord = resoudreCoordonnees(d.nom) || (externes[d.nom] ? [externes[d.nom]!.lat, externes[d.nom]!.lng] : null);
-      if (!coord) continue;
-
-      let leader = sourcesFichiers[0] || "Général";
-      let maxVal = -Infinity;
-      let minVal = Infinity;
-
-      sourcesFichiers.forEach((src) => {
-        const v = d.parSource[src] || 0;
-        if (v > maxVal) {
-          maxVal = v;
-          leader = src;
-        }
-        if (v < minVal) {
-          minVal = v;
-        }
-      });
-
-      const valeurLeader = maxVal === -Infinity ? 0 : maxVal;
-      const amplitude = Math.round((valeurLeader - (minVal === Infinity ? 0 : minVal)) * 100) / 100;
-
-      const vRef = d.parSource[refSource] || 0;
-      const ecartVsRef = Math.round((valeurLeader - vRef) * 100) / 100;
-      const variationPctVsRef = vRef > 0 ? Math.round((ecartVsRef / vRef) * 1000) / 10 : 0;
-
-      pts.push({
-        nom: d.nom,
-        lat: coord[0],
-        lng: coord[1],
-        totalGlobal: d.totalGlobal,
-        valeursParSource: d.parSource,
-        leader,
-        valeurLeader,
-        amplitude,
-        ecartVsRef,
-        variationPctVsRef,
-      });
-    }
-
-    return pts;
-  }, [donneesAgregees, externes, sourcesFichiers, refSource, contexteTerritorial]);
+  }, [colonneGeo, corps, entetes, estFormatMatriciel]);
 
   const maxValMesure = useMemo(() => {
     if (!points.length) return 1;
     let m = 0;
     points.forEach((p) => {
-      Object.values(p.valeursParSource).forEach((v) => {
-        if (v > m) m = v;
-      });
       if (p.totalGlobal > m) m = p.totalGlobal;
     });
     return m || 1;
@@ -349,176 +319,175 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
   const rayonPoint = (val: number) => {
     const ratio = Math.max(0, val / maxValMesure);
-    return Math.round(7 + ratio * 20);
+    return Math.round(9 + ratio * 24);
   };
 
-  const analyseBenchmark = useMemo(() => {
-    if (!estBenchmarkActif || sourcesFichiers.length < 2 || points.length === 0) return null;
+  const centreCI: [number, number] = [7.54, -5.55];
+  const zoomCI = 6.8;
 
-    const victoiresParSource: Record<string, number> = {};
-    sourcesFichiers.forEach((s) => (victoiresParSource[s] = 0));
-
-    let plusGrosEcart = points[0];
-
-    points.forEach((p) => {
-      if (p.leader && victoiresParSource[p.leader] !== undefined) {
-        victoiresParSource[p.leader]++;
-      }
-      if (p.amplitude > plusGrosEcart.amplitude) {
-        plusGrosEcart = p;
-      }
-    });
-
-    const classementVictoires = Object.entries(victoiresParSource).sort((a, b) => b[1] - a[1]);
-    const grandGagnant = classementVictoires[0];
-
-    return {
-      victoiresParSource,
-      classementVictoires,
-      grandGagnant,
-      plusGrosEcart,
-      nbZones: points.length,
-    };
-  }, [estBenchmarkActif, sourcesFichiers, points]);
-
-  const idGraphiqueCarte = `carte-geo-${colonneGeo}-${agregation}-${colonneMesure || "compte"}`;
-
-  const estInclusPptx = useMemo(() => {
-    return (
-      (graphiquesEpingles || []).some((g) => String(g.id) === String(idGraphiqueCarte)) || estDejaInclus
-    );
-  }, [graphiquesEpingles, idGraphiqueCarte, estDejaInclus]);
+  const idGraphiqueCarte = `carte-geo-${estFormatMatriciel ? "stations-colonnes" : colonneGeo}-${agregation}`;
+  const estInclusPptx =
+    (graphiquesEpingles || []).some((g) => String(g.id) === String(idGraphiqueCarte)) || estDejaInclus;
 
   const preparerExportPptx = () => {
-    if (!points.length) return;
+    if (!points.length || !onAjouterPptx) return;
     const topPoints = points.slice(0, 10);
     const labels = topPoints.map((p) => p.nom);
 
-    let datasets: { label: string; data: number[]; backgroundColor?: string; borderColor?: string }[] = [];
-
-    if (estBenchmarkActif && sourcesFichiers.length >= 2) {
-      datasets = sourcesFichiers.map((src, i) => {
-        const couleur = COULEURS_COMPARAISON[i % COULEURS_COMPARAISON.length];
-        return {
-          label: src,
-          data: topPoints.map((p) => p.valeursParSource[src] || 0),
-          backgroundColor: couleur.fill,
-          borderColor: couleur.border,
-        };
-      });
-    } else {
-      datasets = [
-        {
-          label: agregation === "Nombre" ? "Nombre d'enregistrements" : `${agregation} — ${colonneMesure}`,
-          data: topPoints.map((p) => p.totalGlobal),
-          backgroundColor: "#0891b2",
-          borderColor: "#0e7490",
-        },
-      ];
-    }
-
-    const titrePptx = estBenchmarkActif
-      ? `Benchmark Spatial : ${agregation === "Nombre" ? "Effectifs" : agregation + " de " + colonneMesure} par ${colonneGeo}`
-      : `Synthèse Géographique : ${agregation === "Nombre" ? "Effectifs" : agregation + " de " + colonneMesure} par ${colonneGeo}`;
-
-    const interpretation = estBenchmarkActif
-      ? `Confrontation territoriale sur les ${topPoints.length} premiers pôles géographiques.\n\nLeader spatial : « ${analyseBenchmark?.grandGagnant?.[0] || topPoints[0]?.nom || ""} » avec ${analyseBenchmark?.grandGagnant?.[1] || 1} zone(s) dominée(s).`
-      : `Répartition spatiale sur les ${topPoints.length} premiers territoires.\n\nPôle dominant : « ${topPoints[0]?.nom || ""} » avec ${topPoints[0]?.totalGlobal.toLocaleString("fr-FR")} enregistrés.`;
-
     const objetExport = {
       id: idGraphiqueCarte,
-      titre: titrePptx,
+      titre: estFormatMatriciel
+        ? `Répartition Spatiale des Stations (${periodeChoisie === "Toutes" ? "Cumul" : periodeChoisie})`
+        : `Synthèse Territoriale : ${agregation} de ${colonneMesure || "volumes"} par ${colonneGeo}`,
       type: "Barres",
       chartType: "bar",
       labels,
-      datasets,
-      interpretation,
+      datasets: [
+        {
+          label: agregation === "Nombre" ? "Effectifs" : `${agregation}`,
+          data: topPoints.map((p) => p.totalGlobal),
+          backgroundColor: "#2563eb",
+          borderColor: "#1d4ed8",
+        },
+      ],
+      interpretation: `Pôle dominant : « ${topPoints[0]?.nom || ""} » avec ${topPoints[0]?.totalGlobal.toLocaleString("fr-FR")}.`,
     };
 
-    if (onAjouterPptx) {
-      onAjouterPptx(objetExport);
-    }
-    if (epinglerGraphique) {
-      epinglerGraphique(objetExport as any);
-    }
+    onAjouterPptx(objetExport as any);
+    if (epinglerGraphique) epinglerGraphique(objetExport as any);
     setEstDejaInclus(true);
   };
 
-  const centreDefaut: [number, number] = contexteTerritorial === "FR" ? [46.8, 2.5] : [7.54, -5.55];
-  const zoomDefaut = contexteTerritorial === "FR" ? 5 : 6;
-
-  return (
-    <div className="bloc-carte-print print-eviter-coupure bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
-      {/* En-tête de la carte */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-purple-100 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold">
+  // GARDE-FOU : Aucune donnée géographique
+  if (!estFormatMatriciel && colonnesGeographiquesEligibles.length === 0) {
+    return (
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
+        <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3">
+          <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center font-bold">
             <MapPin className="w-4 h-4" />
           </div>
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">
-              {estBenchmarkActif
-                ? `Cartographie Comparative des Territoires (${sourcesFichiers.length} fichiers)`
+              Carte géographique
+            </h3>
+            <p className="text-xs text-slate-400">
+              Module de cartographie territoriale
+            </p>
+          </div>
+        </div>
+
+        <div className="py-8 px-4 text-center space-y-2">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400">
+            <MapPin className="w-6 h-6 stroke-1" />
+          </div>
+          <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300">
+            Aucune donnée géographique détectée
+          </h4>
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+            Ce fichier ne comporte aucune variable spatiale reconnue (région, district, département, ville, commune ou pays). La carte interactive est automatiquement masquée pour ce jeu de données.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bloc-carte-print print-eviter-coupure bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
+      {/* En-tête */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+            <MapPin className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              {estFormatMatriciel
+                ? `Cartographie des Stations (${colonnesEnTetesGeographiques.length} pôles localisés)`
                 : `Carte géographique — ${colonneGeo}`}
             </h3>
             <p className="text-xs text-slate-400">
-              {estBenchmarkActif
-                ? "Confrontation géographique multi-sources (cercles concentriques imbriqués du plus grand au plus petit)"
+              {estFormatMatriciel
+                ? "Données matricielles : chaque colonne correspond à une station géographique officielle"
                 : "Répartition spatiale et concentration territoriale"}
             </p>
           </div>
         </div>
 
-        {/* Sélecteurs de configuration & Bouton PPTX */}
-        <div className="no-print flex flex-wrap items-center gap-2">
-          {estBenchmarkActif && (
-            <select
-              value={refSource}
-              onChange={(e) => setSourceRefChoisie(e.target.value)}
-              className="bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-lg p-2 text-xs font-bold text-indigo-700 dark:text-indigo-300"
-            >
-              {sourcesFichiers.map((s) => (
-                <option key={s} value={s}>Réf : {s}</option>
-              ))}
-            </select>
-          )}
+        {/* Contrôles interactifs */}
+        <div className="no-print print:hidden flex flex-wrap items-center gap-2">
+          {/* FORMAT MATRICIEL : Sélecteur de période */}
+          {estFormatMatriciel ? (
+            <>
+              {periodesDisponibles.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-lg px-2.5 py-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  <select
+                    value={periodeChoisie}
+                    onChange={(e) => setPeriodeChoisie(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-blue-700 dark:text-blue-300 focus:outline-none cursor-pointer"
+                  >
+                    <option value="Toutes">Toutes les années (Cumul)</option>
+                    {periodesDisponibles.map((p) => (
+                      <option key={p} value={p}>
+                        Année : {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-          <select
-            value={colonneGeo}
-            onChange={(e) => setChoix(e.target.value)}
-            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-purple-700 dark:text-purple-300"
-          >
-            {colonnesGeographiquesEligibles.map((h) => (
-              <option key={h} value={h}>{h}</option>
-            ))}
-          </select>
+              <select
+                value={agregation}
+                onChange={(e) => setAgregation(e.target.value as AgregationCarte)}
+                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium"
+              >
+                <option value="Somme">Somme</option>
+                <option value="Moyenne">Moyenne</option>
+              </select>
+            </>
+          ) : (
+            /* FORMAT STANDARD : Sélecteurs habituels */
+            <>
+              <select
+                value={colonneGeo}
+                onChange={(e) => setChoix(e.target.value)}
+                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-700 dark:text-slate-300"
+              >
+                {colonnesGeographiquesEligibles.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
 
-          <select
-            value={agregation}
-            onChange={(e) => {
-              const val = e.target.value as AgregationCarte;
-              setAgregation(val);
-              if (val !== "Nombre" && !colonneMesure && colonnesNumeriques.length) {
-                setColonneMesure(colonnesNumeriques[0]);
-              }
-            }}
-            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium"
-          >
-            <option value="Somme" disabled={!colonnesNumeriques.length}>Somme cumulée</option>
-            <option value="Moyenne" disabled={!colonnesNumeriques.length}>Moyenne</option>
-            <option value="Nombre">Nombre d’enregistrements</option>
-          </select>
+              <select
+                value={agregation}
+                onChange={(e) => setAgregation(e.target.value as AgregationCarte)}
+                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium"
+              >
+                <option value="Somme" disabled={!colonnesNumeriques.length}>
+                  Somme cumulée
+                </option>
+                <option value="Moyenne" disabled={!colonnesNumeriques.length}>
+                  Moyenne
+                </option>
+                <option value="Nombre">Nombre d’enregistrements</option>
+              </select>
 
-          {agregation !== "Nombre" && (
-            <select
-              value={colonneMesure}
-              onChange={(e) => setColonneMesure(e.target.value)}
-              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium"
-            >
-              {colonnesNumeriques.map((h) => (
-                <option key={h} value={h}>{h}</option>
-              ))}
-            </select>
+              {agregation !== "Nombre" && (
+                <select
+                  value={colonneMesure}
+                  onChange={(e) => setColonneMesure(e.target.value)}
+                  className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium"
+                >
+                  {colonnesNumeriques.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
           )}
 
           <button
@@ -535,224 +504,83 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
         </div>
       </div>
 
-      {/* Légende comparative multi-sources */}
-      {estBenchmarkActif && (
-        <div className="flex flex-wrap items-center gap-3 text-xs font-bold pt-1">
-          <span className="text-slate-400 text-[11px] uppercase tracking-wider">Légende :</span>
-          {sourcesFichiers.map((src, i) => {
-            const couleur = COULEURS_COMPARAISON[i % COULEURS_COMPARAISON.length];
-            const estRef = src === refSource;
+      {/* Rendu Leaflet */}
+      <div className="h-72 sm:h-96 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0">
+        <MapContainer
+          center={centreCI}
+          zoom={zoomCI}
+          scrollWheelZoom={false}
+          dragging={typeof window !== "undefined" && window.innerWidth > 768}
+          touchZoom={false}
+          className="h-full w-full"
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+
+          <AjusterVue points={points} />
+
+          {points.map((p) => {
+            const r = rayonPoint(p.totalGlobal);
+
             return (
-              <div key={src} className="flex items-center gap-1.5">
-                <span
-                  className="w-3 h-3 rounded-full border shadow-xs"
-                  style={{ backgroundColor: couleur.fill, borderColor: couleur.border }}
-                />
-                <span className={`text-slate-700 dark:text-slate-300 ${estRef ? "font-black underline decoration-purple-500" : ""}`}>
-                  {src} {estRef && <span className="text-[10px] text-purple-600 dark:text-purple-400">(Réf)</span>}
-                </span>
-              </div>
+              <CircleMarker
+                key={p.nom}
+                center={[p.lat, p.lng]}
+                radius={r}
+                pathOptions={{
+                  fillColor: "#2563eb",
+                  color: "#1d4ed8",
+                  weight: 2,
+                  fillOpacity: 0.65,
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -r - 2]} opacity={0.95}>
+                  <div className="text-xs font-bold font-sans text-slate-900 leading-tight">
+                    <span>{p.nom}</span>
+                    <span className="block font-black text-blue-600 mt-0.5">
+                      {p.totalGlobal.toLocaleString("fr-FR")}
+                    </span>
+                  </div>
+                </Tooltip>
+
+                <Popup>
+                  <div className="text-xs font-sans space-y-1 p-1">
+                    <p className="font-bold text-slate-900 text-sm border-b pb-1">{p.nom}</p>
+                    <p className="text-slate-600 pt-1">
+                      Valeur :{" "}
+                      <strong className="text-blue-600">
+                        {p.totalGlobal.toLocaleString("fr-FR")}
+                      </strong>
+                    </p>
+                  </div>
+                </Popup>
+              </CircleMarker>
             );
           })}
-        </div>
-      )}
-
-      {/* Rendu Leaflet avec étiquette Tooltip permanente */}
-      {colonneGeo === "" ? (
-        <p className="text-xs text-slate-500 p-4 border border-dashed rounded-xl">
-          Aucune colonne géographique reconnue.
-        </p>
-      ) : (
-        <div className="h-64 sm:h-80 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0">
-          <MapContainer
-            center={centreDefaut}
-            zoom={zoomDefaut}
-            scrollWheelZoom={false}
-            dragging={typeof window !== "undefined" && window.innerWidth > 768}
-            touchZoom={false}
-            className="h-full w-full"
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            <AjusterVue points={points} />
-
-            {/* Rendu des points */}
-            {points.map((p) => {
-              if (estBenchmarkActif) {
-                const itemsTries = sourcesFichiers
-                  .map((src, i) => ({
-                    nom: src,
-                    val: p.valeursParSource[src] || 0,
-                    couleur: COULEURS_COMPARAISON[i % COULEURS_COMPARAISON.length],
-                    estRef: src === refSource,
-                  }))
-                  .sort((a, b) => b.val - a.val);
-
-                return (
-                  <div key={p.nom}>
-                    {itemsTries.map((item, idx) => {
-                      const opacite = idx === 0 ? 0.4 : 0.65 + (idx / itemsTries.length) * 0.25;
-                      const estDernier = idx === itemsTries.length - 1;
-
-                      return (
-                        <CircleMarker
-                          key={`${p.nom}-${item.nom}`}
-                          center={[p.lat, p.lng]}
-                          radius={rayonPoint(item.val)}
-                          pathOptions={{
-                            fillColor: item.couleur.fill,
-                            color: item.couleur.border,
-                            weight: item.estRef ? 2.5 : 1.5,
-                            fillOpacity: opacite,
-                          }}
-                        >
-                          {estDernier && (
-                            <Tooltip permanent direction="top" offset={[0, -rayonPoint(p.valeurLeader) - 3]} opacity={0.95}>
-                              <span className="font-bold text-[11px] text-slate-900 bg-white/95 px-1.5 py-0.5 rounded shadow border border-slate-200">
-                                {p.nom} : <strong>{p.valeurLeader.toLocaleString("fr-FR")}</strong>
-                              </span>
-                            </Tooltip>
-                          )}
-                          <Popup>
-                            <div className="text-xs font-sans space-y-1.5 p-0.5 min-w-[180px]">
-                              <div className="border-b pb-1">
-                                <p className="font-bold text-slate-900 text-sm">{p.nom}</p>
-                                <p className="text-[10px] text-slate-400">
-                                  {agregation} : {colonneMesure || "Enregistrements"}
-                                </p>
-                              </div>
-
-                              <div className="space-y-1 pt-0.5">
-                                {sourcesFichiers.map((src, i) => {
-                                  const v = p.valeursParSource[src] || 0;
-                                  const c = COULEURS_COMPARAISON[i % COULEURS_COMPARAISON.length];
-                                  const estLeader = src === p.leader;
-
-                                  return (
-                                    <div key={src} className="flex justify-between items-center text-[11px]">
-                                      <span style={{ color: c.fill }} className="font-semibold flex items-center gap-1">
-                                        {src} {estLeader && <span className="text-[9px] px-1 bg-amber-100 text-amber-800 rounded font-bold">1er</span>}
-                                      </span>
-                                      <span className="font-mono font-bold text-slate-800">
-                                        {v.toLocaleString("fr-FR")}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-
-                              <div className="pt-1.5 border-t text-[11px] font-bold text-slate-700 flex justify-between items-center">
-                                <span>Leader ({p.leader}) vs {refSource} :</span>
-                                <span className={p.ecartVsRef >= 0 ? "text-emerald-600 font-mono" : "text-rose-600 font-mono"}>
-                                  {p.ecartVsRef >= 0 ? `+${p.ecartVsRef.toLocaleString("fr-FR")}` : `-${p.ecartVsRef.toLocaleString("fr-FR")}`} ({p.variationPctVsRef >= 0 ? "+" : ""}{p.variationPctVsRef} %)
-                                </span>
-                              </div>
-                            </div>
-                          </Popup>
-                        </CircleMarker>
-                      );
-                    })}
-                  </div>
-                );
-              }
-
-              return (
-                <CircleMarker
-                  key={p.nom}
-                  center={[p.lat, p.lng]}
-                  radius={rayonPoint(p.totalGlobal)}
-                  pathOptions={{
-                    fillColor: "#7c3aed",
-                    color: "#5b21b6",
-                    weight: 2,
-                    fillOpacity: 0.7,
-                  }}
-                >
-                  <Tooltip permanent direction="top" offset={[0, -rayonPoint(p.totalGlobal) - 3]} opacity={0.95}>
-                    <span className="font-bold text-[11px] text-slate-900 bg-white/95 px-1.5 py-0.5 rounded shadow border border-slate-200">
-                      {p.nom} : <strong>{p.totalGlobal.toLocaleString("fr-FR")}</strong>
-                    </span>
-                  </Tooltip>
-                  <Popup>
-                    <div className="text-xs font-semibold p-1">
-                      <p className="text-purple-700 font-bold">{p.nom}</p>
-                      <p className="text-slate-700 mt-0.5">
-                        {p.totalGlobal.toLocaleString("fr-FR")}{" "}
-                        {agregation === "Nombre" ? "enregistrements" : `(${agregation} de ${colonneMesure})`}
-                      </p>
-                    </div>
-                  </Popup>
-                </CircleMarker>
-              );
-            })}
-          </MapContainer>
-        </div>
-      )}
-
-      {/* Récapitulatif avec les chiffres de chaque zone sous la carte */}
-      <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
-        <span className="font-semibold text-slate-500 dark:text-slate-400">
-          {points.length} zone(s) localisée(s) :
-        </span>
-        {points.map((p) => (
-          <span
-            key={p.nom}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-medium border border-slate-200/60 dark:border-slate-700 text-[11px]"
-          >
-            <span className="w-2 h-2 rounded-full bg-purple-600"></span>
-            <strong>{p.nom}</strong> :{" "}
-            <span className="text-purple-700 dark:text-purple-300 font-bold font-mono">
-              {p.totalGlobal.toLocaleString("fr-FR")}
-            </span>
-          </span>
-        ))}
+        </MapContainer>
       </div>
 
-      {/* Synthèse comparative multi-sources */}
-      {analyseBenchmark && (
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 p-4 space-y-2.5 text-xs leading-relaxed">
-          <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-800 pb-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
-            <h5 className="font-bold text-slate-800 dark:text-slate-200">
-              Diagnostic territorial comparatif ({sourcesFichiers.length} fichiers confrontés) :
-            </h5>
-          </div>
-
-          <p className="text-slate-600 dark:text-slate-400">
-            Confrontation spatiale sur <strong>{analyseBenchmark.nbZones} zones géographiques</strong>.
-          </p>
-
-          <div className="space-y-1.5 pt-0.5">
-            <div className="flex items-start gap-1.5">
-              <span className="font-bold text-indigo-600">•</span>
-              <p className="text-slate-700 dark:text-slate-300">
-                <strong>Répartition de la domination territoriale : </strong>
-                {analyseBenchmark.classementVictoires.map(([nom, victoires], i) => (
-                  <span key={nom}>
-                    <strong>« {nom} »</strong> mène sur {victoires} zone(s)
-                    {i < analyseBenchmark.classementVictoires.length - 1 ? ", " : "."}
-                  </span>
-                ))}
-              </p>
-            </div>
-
-            <div className="flex items-start gap-1.5">
-              <span className="font-bold text-indigo-600">•</span>
-              <p className="text-slate-700 dark:text-slate-300">
-                <strong>Leader spatial global : </strong>
-                <strong>« {analyseBenchmark.grandGagnant[0]} »</strong> domine la couverture géographique avec {analyseBenchmark.grandGagnant[1]} zone(s) en première position sur {analyseBenchmark.nbZones}.
-              </p>
-            </div>
-
-            <div className="flex items-start gap-1.5">
-              <span className="font-bold text-indigo-600">•</span>
-              <p className="text-slate-700 dark:text-slate-300">
-                <strong>Plus forte divergence territoriale : </strong>
-                La zone <strong>« {analyseBenchmark.plusGrosEcart.nom} »</strong> enregistre le contraste le plus marqué avec une amplitude de <strong>{analyseBenchmark.plusGrosEcart.amplitude.toLocaleString("fr-FR")}</strong> entre la source en tête (<strong>{analyseBenchmark.plusGrosEcart.leader}</strong>) et la source la plus faible.
-              </p>
-            </div>
+      {/* Ruban des zones localisées */}
+      {points.length > 0 && (
+        <div className="space-y-1.5 pt-1 text-xs">
+          <span className="font-bold text-slate-600 dark:text-slate-300">
+            {points.length} station(s) localisée(s) en Côte d&apos;Ivoire :
+          </span>
+          <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1 scrollbar-thin">
+            {points.map((p) => (
+              <span
+                key={p.nom}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px]"
+              >
+                <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                <strong>{p.nom}</strong> :{" "}
+                <span className="text-blue-600 dark:text-blue-400 font-bold font-mono">
+                  {p.totalGlobal.toLocaleString("fr-FR")}
+                </span>
+              </span>
+            ))}
           </div>
         </div>
       )}
