@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import {
   Check,
   Download,
+  Laptop,
   Monitor,
   Moon,
   Palette,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import { appliquerTheme, enregistrerTheme, lireTheme, type Theme } from "../../lib/prefs";
 
-type Plateforme = "windows" | "android" | "ios";
+type Plateforme = "windows" | "android" | "ios" | "mac";
 
 const THEMES: { id: Theme; nom: string; aide: string; Icone: LucideIcon }[] = [
   { id: "clair", nom: "Clair", aide: "Fond blanc, idéal en plein jour", Icone: Sun },
@@ -63,10 +64,14 @@ export default function ParametresPage() {
   // Détection automatique du système d'exploitation
   useEffect(() => {
     const ua = window.navigator.userAgent.toLowerCase();
-    if (/iphone|ipad|ipod/i.test(ua)) {
+    const estIpadTactile = /macintosh/i.test(ua) && window.navigator.maxTouchPoints > 1;
+
+    if (/iphone|ipad|ipod/i.test(ua) || estIpadTactile) {
       setPlateforme("ios");
     } else if (/android/i.test(ua)) {
       setPlateforme("android");
+    } else if (/macintosh|mac os x/i.test(ua)) {
+      setPlateforme("mac");
     } else {
       setPlateforme("windows");
     }
@@ -80,23 +85,33 @@ export default function ParametresPage() {
     setTimeout(() => setConfirme(false), 2500);
   }
 
-  // Configuration des téléchargements binaires (Android / Windows)
-  const estAndroid = plateforme === "android";
-  const configurationBinaire = estAndroid
-    ? {
-        href: "/datenza.apk?v=2",
-        download: "DATENZA.apk",
-        label: "Télécharger pour Android (.apk)",
-        couleur: "bg-emerald-600 hover:bg-emerald-700",
-        Icone: Smartphone,
-      }
-    : {
-        href: "/datenza.msi",
-        download: "DATENZA-Setup.msi",
-        label: "Télécharger pour Windows (.msi)",
-        couleur: "bg-blue-600 hover:bg-blue-700",
-        Icone: Monitor,
-      };
+  // Configurations des installateurs selon la plateforme
+  const configurationsBinaires = {
+    android: {
+      href: "/datenza.apk?v=2",
+      download: "DATENZA.apk",
+      label: "Télécharger pour Android (.apk)",
+      couleur: "bg-emerald-600 hover:bg-emerald-700",
+      Icone: Smartphone,
+    },
+    mac: {
+      href: "/datenza.dmg",
+      download: "DATENZA.dmg",
+      label: "Télécharger pour macOS (.dmg)",
+      couleur: "bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100",
+      Icone: Laptop,
+    },
+    windows: {
+      href: "/datenza.msi",
+      download: "DATENZA-Setup.msi",
+      label: "Télécharger pour Windows (.msi)",
+      couleur: "bg-blue-600 hover:bg-blue-700",
+      Icone: Monitor,
+    },
+  };
+
+  const configCourante = plateforme === "ios" ? configurationsBinaires.android : configurationsBinaires[plateforme];
+  const IconeActive = configCourante.Icone;
 
   return (
     <div className="mx-auto max-w-3xl pb-12 font-sans text-slate-800 dark:text-slate-100">
@@ -157,7 +172,7 @@ export default function ParametresPage() {
         </div>
       </section>
 
-      {/* Section 2 : Application Native & Installation */}
+      {/* Section 2 : Application & Téléchargements */}
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-8">
         <div>
           <div className="flex items-center gap-2">
@@ -169,12 +184,10 @@ export default function ParametresPage() {
           </p>
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center gap-4">
-          {plateforme === "ios" ? (
-            /* ========================================================
-               Affichage spécifique iPhone / iPad
-               ======================================================== */
-            <>
+        <div className="mt-6 flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            {plateforme === "ios" ? (
+              /* Bouton spécifique iOS */
               <button
                 type="button"
                 onClick={() => setAfficherGuideIos(true)}
@@ -183,44 +196,61 @@ export default function ParametresPage() {
                 <Smartphone className="h-4 w-4" aria-hidden />
                 <span>Installer sur iPhone / iPad</span>
               </button>
+            ) : (
+              /* Bouton principal adapté (Android, Mac ou Windows) */
+              <a
+                href={configCourante.href}
+                download={configCourante.download}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`inline-flex items-center justify-center gap-2.5 px-5 py-2.5 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer ${configCourante.couleur}`}
+              >
+                <IconeActive className="h-4 w-4" aria-hidden />
+                <span>{configCourante.label}</span>
+              </a>
+            )}
+          </div>
 
+          {/* Liens secondaires discrets pour les autres plateformes */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 text-xs text-slate-500 dark:text-slate-400">
+            <span className="font-medium text-slate-700 dark:text-slate-300">Autres systèmes :</span>
+
+            {plateforme !== "windows" && (
+              <a
+                href="/datenza.msi"
+                download="DATENZA-Setup.msi"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white transition"
+              >
+                Windows (.msi)
+              </a>
+            )}
+
+            {plateforme !== "mac" && (
+              <a
+                href="/datenza.dmg"
+                download="DATENZA.dmg"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white transition"
+              >
+                macOS (.dmg)
+              </a>
+            )}
+
+            {plateforme !== "android" && (
               <a
                 href="/datenza.apk?v=2"
                 download="DATENZA.apk"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-4 transition"
+                className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white transition"
               >
-                Besoin du package Android (.apk) ?
+                Android (.apk)
               </a>
-            </>
-          ) : (
-            /* ========================================================
-               Affichage standard Android / Windows
-               ======================================================== */
-            <>
-              <a
-                href={configurationBinaire.href}
-                download={configurationBinaire.download}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`inline-flex items-center justify-center gap-2.5 px-5 py-2.5 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer ${configurationBinaire.couleur}`}
-              >
-                <Download className="h-4 w-4" aria-hidden />
-                <span>{configurationBinaire.label}</span>
-              </a>
-
-              <a
-                href={estAndroid ? "/datenza.msi" : "/datenza.apk?v=2"}
-                download={estAndroid ? "DATENZA-Setup.msi" : "DATENZA.apk"}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-4 transition"
-              >
-                {estAndroid ? "Besoin de la version Windows (.msi) ?" : "Besoin de la version Android (.apk) ?"}
-              </a>
-            </>
-          )}
+            )}
+          </div>
         </div>
       </section>
 

@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Share, PlusSquare, X, Smartphone, Monitor } from "lucide-react";
+import { Download, Share, PlusSquare, X, Smartphone, Monitor, Laptop } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
+
+type Plateforme = "android" | "ios" | "windows" | "mac";
 
 export default function BoutonInstallerApp() {
   const [estInstalle, setEstInstalle] = useState(false);
-  const [os, setOs] = useState<"android" | "ios" | "windows">("windows");
+  const [os, setOs] = useState<Plateforme>("windows");
   const [modalIosOuverte, setModalIosOuverte] = useState(false);
 
   useEffect(() => {
-    // 1. Détection si l'application est déjà lancée en mode natif ou PWA
+    // 1. Détection mode autonome / app déjà installée
     const enModeAutonome =
       (typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches) ||
       (typeof window !== "undefined" && (window.navigator as unknown as { standalone?: boolean }).standalone === true) ||
@@ -23,16 +25,19 @@ export default function BoutonInstallerApp() {
 
     // 2. Détection du système d'exploitation
     const userAgent = window.navigator.userAgent.toLowerCase();
-    if (/iphone|ipad|ipod/.test(userAgent)) {
+    const estIpadTactile = /macintosh/i.test(userAgent) && window.navigator.maxTouchPoints > 1;
+
+    if (/iphone|ipad|ipod/.test(userAgent) || estIpadTactile) {
       setOs("ios");
     } else if (/android/.test(userAgent)) {
       setOs("android");
+    } else if (/macintosh|mac os x/.test(userAgent)) {
+      setOs("mac");
     } else {
       setOs("windows");
     }
   }, []);
 
-  // Ne rien afficher si l'utilisateur est déjà dans l'application installée
   if (estInstalle) return null;
 
   const styleBouton =
@@ -40,7 +45,7 @@ export default function BoutonInstallerApp() {
 
   return (
     <>
-      {/* 1. Cas iPhone / iPad : Déclenche la modale avec les instructions Safari */}
+      {/* iOS (iPhone / iPad) */}
       {os === "ios" && (
         <button
           type="button"
@@ -52,7 +57,7 @@ export default function BoutonInstallerApp() {
         </button>
       )}
 
-      {/* 2. Cas Android : Téléchargement direct de l'APK officiel */}
+      {/* Android (.apk) */}
       {os === "android" && (
         <a
           href="/datenza.apk?v=2"
@@ -66,7 +71,21 @@ export default function BoutonInstallerApp() {
         </a>
       )}
 
-      {/* 3. Cas Ordinateur / Windows : Téléchargement de l'installateur MSI */}
+      {/* macOS (.dmg) */}
+      {os === "mac" && (
+        <a
+          href="/datenza.dmg"
+          download="DATENZA.dmg"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styleBouton}
+        >
+          <Laptop className="w-4 h-4 shrink-0" />
+          <span>Télécharger pour Mac (.dmg)</span>
+        </a>
+      )}
+
+      {/* Windows (.msi) */}
       {os === "windows" && (
         <a
           href="/datenza.msi"
@@ -101,28 +120,21 @@ export default function BoutonInstallerApp() {
 
             <ol className="space-y-3 text-xs text-slate-300">
               <li className="flex items-start gap-2.5">
-                <span className="w-5 h-5 rounded-full bg-blue-600/30 text-blue-400 font-bold flex items-center justify-center shrink-0 text-[11px]">
-                  1
-                </span>
+                <span className="w-5 h-5 rounded-full bg-blue-600/30 text-blue-400 font-bold flex items-center justify-center shrink-0 text-[11px]">1</span>
                 <span>
                   Appuyez sur le bouton <strong>Partager</strong>{" "}
                   <Share className="w-4 h-4 inline-block text-blue-400 mx-1 align-sub" /> en bas de Safari.
                 </span>
               </li>
               <li className="flex items-start gap-2.5">
-                <span className="w-5 h-5 rounded-full bg-blue-600/30 text-blue-400 font-bold flex items-center justify-center shrink-0 text-[11px]">
-                  2
-                </span>
+                <span className="w-5 h-5 rounded-full bg-blue-600/30 text-blue-400 font-bold flex items-center justify-center shrink-0 text-[11px]">2</span>
                 <span>
-                  Faites défiler et sélectionnez{" "}
-                  <strong>Sur l&apos;écran d&apos;accueil</strong>{" "}
+                  Faites défiler et sélectionnez <strong>Sur l&apos;écran d&apos;accueil</strong>{" "}
                   <PlusSquare className="w-4 h-4 inline-block text-emerald-400 mx-1 align-sub" />.
                 </span>
               </li>
               <li className="flex items-start gap-2.5">
-                <span className="w-5 h-5 rounded-full bg-blue-600/30 text-blue-400 font-bold flex items-center justify-center shrink-0 text-[11px]">
-                  3
-                </span>
+                <span className="w-5 h-5 rounded-full bg-blue-600/30 text-blue-400 font-bold flex items-center justify-center shrink-0 text-[11px]">3</span>
                 <span>
                   Appuyez sur <strong>Ajouter</strong> en haut à droite.
                 </span>
