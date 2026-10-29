@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Check, Download, Monitor, Moon, Palette, Smartphone, Sun, type LucideIcon } from "lucide-react";
 import { appliquerTheme, enregistrerTheme, lireTheme, type Theme } from "../../lib/prefs";
 
@@ -38,6 +38,17 @@ function Apercu({ id }: { id: Theme }) {
 export default function ParametresPage() {
   const [theme, setTheme] = useState<Theme>(() => (typeof window === "undefined" ? "systeme" : lireTheme()));
   const [confirme, setConfirme] = useState(false);
+  const [os, setOs] = useState<"windows" | "android">("windows");
+
+  // Détection automatique du système d'exploitation de l'utilisateur
+  useEffect(() => {
+    const ua = window.navigator.userAgent.toLowerCase();
+    if (/android/i.test(ua)) {
+      setOs("android");
+    } else {
+      setOs("windows");
+    }
+  }, []);
 
   function choisirTheme(t: Theme) {
     setTheme(t);
@@ -46,6 +57,37 @@ export default function ParametresPage() {
     setConfirme(true);
     setTimeout(() => setConfirme(false), 2500);
   }
+
+  const estAndroid = os === "android";
+  const configurationPrincipale = estAndroid
+    ? {
+        href: "/datenza.apk",
+        download: "DATENZA.apk",
+        label: "Télécharger pour Android (.apk ~1 Mo)",
+        couleur: "bg-emerald-600 hover:bg-emerald-700",
+        Icone: Smartphone,
+      }
+    : {
+        href: "/datenza.msi",
+        download: "DATENZA-Setup.msi",
+        label: "Télécharger pour Windows (.msi ~3 Mo)",
+        couleur: "bg-blue-600 hover:bg-blue-700",
+        Icone: Monitor,
+      };
+
+  const configurationSecondaire = estAndroid
+    ? {
+        href: "/datenza.msi",
+        download: "DATENZA-Setup.msi",
+        label: "Besoin de la version Windows (.msi) ?",
+      }
+    : {
+        href: "/datenza.apk",
+        download: "DATENZA.apk",
+        label: "Besoin de la version Android (.apk) ?",
+      };
+
+  const IconePrincipale = configurationPrincipale.Icone;
 
   return (
     <div className="mx-auto max-w-3xl pb-12 font-sans text-slate-800 dark:text-slate-100">
@@ -106,37 +148,36 @@ export default function ParametresPage() {
         </div>
       </section>
 
-      {/* Section 2 : Applications Natives (Windows & Android) */}
+      {/* Section 2 : Application Native Auto-Adaptative */}
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-8">
         <div>
           <div className="flex items-center gap-2">
-            <Smartphone className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden />
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Applications natives</h2>
+            <IconePrincipale className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Application native DATENZA</h2>
           </div>
           <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
             Installez DATENZA sur vos appareils pour un lancement rapide et direct sans passer par un navigateur web.
           </p>
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-3">
-          {/* Bouton Windows Installer (.msi) */}
+        <div className="mt-6 flex flex-wrap items-center gap-4">
+          {/* Bouton principal adapté au système courant */}
           <a
-            href="/datenza.msi"
-            download="DATENZA-Setup.msi"
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer"
+            href={configurationPrincipale.href}
+            download={configurationPrincipale.download}
+            className={`inline-flex items-center justify-center gap-2.5 px-5 py-2.5 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer ${configurationPrincipale.couleur}`}
           >
             <Download className="h-4 w-4" aria-hidden />
-            <span>Windows (.msi ~3 Mo)</span>
+            <span>{configurationPrincipale.label}</span>
           </a>
 
-          {/* Bouton Android (.apk) */}
+          {/* Lien secondaire discret vers l'autre système */}
           <a
-            href="/datenza.apk"
-            download="DATENZA.apk"
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer"
+            href={configurationSecondaire.href}
+            download={configurationSecondaire.download}
+            className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-4 transition"
           >
-            <Download className="h-4 w-4" aria-hidden />
-            <span>Android (.apk ~1 Mo)</span>
+            {configurationSecondaire.label}
           </a>
         </div>
       </section>
