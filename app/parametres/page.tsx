@@ -187,7 +187,7 @@ export default function ParametresPage() {
         <div className="mt-6 flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-4">
             {plateforme === "ios" ? (
-              /* Bouton spécifique iOS */
+              /* Bouton principal spécifique iOS */
               <button
                 type="button"
                 onClick={() => setAfficherGuideIos(true)}
@@ -211,9 +211,31 @@ export default function ParametresPage() {
             )}
           </div>
 
-          {/* Liens secondaires discrets pour les autres plateformes */}
+          {/* Liens secondaires : tous les autres systèmes non sélectionnés */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 text-xs text-slate-500 dark:text-slate-400">
             <span className="font-medium text-slate-700 dark:text-slate-300">Autres systèmes :</span>
+
+            {plateforme !== "android" && (
+              <a
+                href="/datenza.apk?v=2"
+                download="DATENZA.apk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white transition"
+              >
+                Android (.apk)
+              </a>
+            )}
+
+            {plateforme !== "ios" && (
+              <button
+                type="button"
+                onClick={() => setAfficherGuideIos(true)}
+                className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white transition cursor-pointer"
+              >
+                iPhone / iPad (iOS)
+              </button>
+            )}
 
             {plateforme !== "windows" && (
               <a
@@ -236,18 +258,6 @@ export default function ParametresPage() {
                 className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white transition"
               >
                 macOS (.dmg)
-              </a>
-            )}
-
-            {plateforme !== "android" && (
-              <a
-                href="/datenza.apk?v=2"
-                download="DATENZA.apk"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white transition"
-              >
-                Android (.apk)
               </a>
             )}
           </div>
