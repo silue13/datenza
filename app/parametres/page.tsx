@@ -106,26 +106,37 @@ export default function ParametresPage() {
         </div>
       </section>
 
-      {/* Section 2 : Application Mobile & Installation */}
+      {/* Section 2 : Applications Natives (Windows & Android) */}
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <Smartphone className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden />
-              <h2 className="text-base font-semibold text-slate-900 dark:text-white">Application Android (APK)</h2>
-            </div>
-            <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-              Installez le paquet natif autonome DATENZA directement sur votre téléphone ou tablette Android.
-            </p>
+        <div>
+          <div className="flex items-center gap-2">
+            <Smartphone className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Applications natives</h2>
           </div>
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+            Installez DATENZA sur vos appareils pour un lancement rapide et direct sans passer par un navigateur web.
+          </p>
+        </div>
 
+        <div className="mt-6 flex flex-wrap gap-3">
+          {/* Bouton Windows Installer (.msi) */}
+          <a
+            href="/datenza.msi"
+            download="DATENZA-Setup.msi"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer"
+          >
+            <Download className="h-4 w-4" aria-hidden />
+            <span>Windows (.msi ~3 Mo)</span>
+          </a>
+
+          {/* Bouton Android (.apk) */}
           <a
             href="/datenza.apk"
             download="DATENZA.apk"
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all shrink-0 cursor-pointer"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer"
           >
             <Download className="h-4 w-4" aria-hidden />
-            <span>Télécharger l'APK (~1 Mo)</span>
+            <span>Android (.apk ~1 Mo)</span>
           </a>
         </div>
       </section>

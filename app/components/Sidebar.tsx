@@ -106,29 +106,52 @@ export default function Sidebar() {
           </nav>
         </div>
 
-        {/* Bas de barre latérale : Installation PWA + Téléchargement direct APK */}
+        {/* Bas de barre latérale : Installation PWA + Téléchargements natifs */}
         <div className="pt-4 border-t border-slate-800 space-y-2">
           {!estReduit ? (
             <>
               <BoutonInstallerApp />
-              <a
-                href="/datenza.apk"
-                download="DATENZA.apk"
-                className="flex items-center justify-center gap-2 w-full py-2 px-3 bg-emerald-600/15 hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-500 text-emerald-400 hover:text-white rounded-xl text-xs font-semibold shadow-xs transition-all duration-200"
-              >
-                <Download className="w-4 h-4 shrink-0" />
-                <span>Télécharger l'APK</span>
-              </a>
+              <div className="grid grid-cols-2 gap-1.5">
+                {/* Téléchargement Windows MSI */}
+                <a
+                  href="/datenza.msi"
+                  download="DATENZA-Setup.msi"
+                  title="Télécharger l'installateur Windows (.msi)"
+                  className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-blue-600/15 hover:bg-blue-600 border border-blue-500/30 hover:border-blue-500 text-blue-400 hover:text-white rounded-lg text-[11px] font-semibold transition-all duration-200"
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span>Windows</span>
+                </a>
+
+                {/* Téléchargement Android APK */}
+                <a
+                  href="/datenza.apk"
+                  download="DATENZA.apk"
+                  title="Télécharger le package Android (.apk)"
+                  className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-emerald-600/15 hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-500 text-emerald-400 hover:text-white rounded-lg text-[11px] font-semibold transition-all duration-200"
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span>Android</span>
+                </a>
+              </div>
             </>
           ) : (
-            <div className="flex justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <a
+                href="/datenza.msi"
+                download="DATENZA-Setup.msi"
+                title="Télécharger pour Windows (.msi)"
+                className="p-2 rounded-xl text-blue-400 hover:text-white hover:bg-blue-600 border border-blue-500/30 hover:border-blue-500 transition-all duration-200"
+              >
+                <Download className="w-4 h-4" />
+              </a>
               <a
                 href="/datenza.apk"
                 download="DATENZA.apk"
-                title="Télécharger l'APK Android"
-                className="p-2.5 rounded-xl text-emerald-400 hover:text-white hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-500 transition-all duration-200"
+                title="Télécharger pour Android (.apk)"
+                className="p-2 rounded-xl text-emerald-400 hover:text-white hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-500 transition-all duration-200"
               >
-                <Download className="w-5 h-5" />
+                <Download className="w-4 h-4" />
               </a>
             </div>
           )}
