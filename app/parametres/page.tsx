@@ -1,7 +1,21 @@
 "use client";
+
 import { useState, useEffect } from "react";
-import { Check, Download, Monitor, Moon, Palette, Smartphone, Sun, type LucideIcon } from "lucide-react";
+import {
+  Check,
+  Download,
+  Monitor,
+  Moon,
+  Palette,
+  Share,
+  Smartphone,
+  Sun,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { appliquerTheme, enregistrerTheme, lireTheme, type Theme } from "../../lib/prefs";
+
+type Plateforme = "windows" | "android" | "ios";
 
 const THEMES: { id: Theme; nom: string; aide: string; Icone: LucideIcon }[] = [
   { id: "clair", nom: "Clair", aide: "Fond blanc, idéal en plein jour", Icone: Sun },
@@ -15,7 +29,12 @@ const FOCUS =
 /** Mini-tableau de bord qui montre à quoi ressemblera le thème. */
 function Apercu({ id }: { id: Theme }) {
   const fond =
-    id === "clair" ? "bg-white" : id === "sombre" ? "bg-slate-900" : "bg-gradient-to-r from-white from-50% to-slate-900 to-50%";
+    id === "clair"
+      ? "bg-white"
+      : id === "sombre"
+      ? "bg-slate-900"
+      : "bg-gradient-to-r from-white from-50% to-slate-900 to-50%";
+
   return (
     <div className={`flex h-24 w-full gap-2 overflow-hidden rounded-lg border border-slate-200 p-2.5 dark:border-slate-700 ${fond}`}>
       <div className="flex w-5 flex-col gap-1.5 rounded bg-purple-500/80 p-1">
@@ -38,15 +57,18 @@ function Apercu({ id }: { id: Theme }) {
 export default function ParametresPage() {
   const [theme, setTheme] = useState<Theme>(() => (typeof window === "undefined" ? "systeme" : lireTheme()));
   const [confirme, setConfirme] = useState(false);
-  const [os, setOs] = useState<"windows" | "android">("windows");
+  const [plateforme, setPlateforme] = useState<Plateforme>("windows");
+  const [afficherGuideIos, setAfficherGuideIos] = useState(false);
 
-  // Détection automatique du système d'exploitation de l'utilisateur
+  // Détection automatique du système d'exploitation
   useEffect(() => {
     const ua = window.navigator.userAgent.toLowerCase();
-    if (/android/i.test(ua)) {
-      setOs("android");
+    if (/iphone|ipad|ipod/i.test(ua)) {
+      setPlateforme("ios");
+    } else if (/android/i.test(ua)) {
+      setPlateforme("android");
     } else {
-      setOs("windows");
+      setPlateforme("windows");
     }
   }, []);
 
@@ -58,8 +80,9 @@ export default function ParametresPage() {
     setTimeout(() => setConfirme(false), 2500);
   }
 
-  const estAndroid = os === "android";
-  const configurationPrincipale = estAndroid
+  // Configuration des téléchargements binaires (Android / Windows)
+  const estAndroid = plateforme === "android";
+  const configurationBinaire = estAndroid
     ? {
         href: "/datenza.apk?v=2",
         download: "DATENZA.apk",
@@ -74,20 +97,6 @@ export default function ParametresPage() {
         couleur: "bg-blue-600 hover:bg-blue-700",
         Icone: Monitor,
       };
-
-  const configurationSecondaire = estAndroid
-    ? {
-        href: "/datenza.msi",
-        download: "DATENZA-Setup.msi",
-        label: "Besoin de la version Windows (.msi) ?",
-      }
-    : {
-        href: "/datenza.apk?v=2",
-        download: "DATENZA.apk",
-        label: "Besoin de la version Android (.apk) ?",
-      };
-
-  const IconePrincipale = configurationPrincipale.Icone;
 
   return (
     <div className="mx-auto max-w-3xl pb-12 font-sans text-slate-800 dark:text-slate-100">
@@ -148,43 +157,141 @@ export default function ParametresPage() {
         </div>
       </section>
 
-      {/* Section 2 : Application Native Auto-Adaptative */}
+      {/* Section 2 : Application Native & Installation */}
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-8">
         <div>
           <div className="flex items-center gap-2">
-            <IconePrincipale className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden />
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Application native DATENZA</h2>
+            <Smartphone className="h-4 w-4 text-purple-600 dark:text-purple-400" aria-hidden />
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Application DATENZA</h2>
           </div>
           <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-            Installez DATENZA sur vos appareils pour un lancement rapide et direct sans passer par un navigateur web.
+            Installez DATENZA sur vos appareils pour un lancement rapide et direct sans passer par la barre d'adresse d'un navigateur.
           </p>
         </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-4">
-          {/* Bouton principal adapté au système courant */}
-          <a
-            href={configurationPrincipale.href}
-            download={configurationPrincipale.download}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`inline-flex items-center justify-center gap-2.5 px-5 py-2.5 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer ${configurationPrincipale.couleur}`}
-          >
-            <Download className="h-4 w-4" aria-hidden />
-            <span>{configurationPrincipale.label}</span>
-          </a>
+          {plateforme === "ios" ? (
+            /* ========================================================
+               Affichage spécifique iPhone / iPad
+               ======================================================== */
+            <>
+              <button
+                type="button"
+                onClick={() => setAfficherGuideIos(true)}
+                className="inline-flex items-center justify-center gap-2.5 px-5 py-2.5 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100"
+              >
+                <Smartphone className="h-4 w-4" aria-hidden />
+                <span>Installer sur iPhone / iPad</span>
+              </button>
 
-          {/* Lien secondaire discret vers l'autre système */}
-          <a
-            href={configurationSecondaire.href}
-            download={configurationSecondaire.download}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-4 transition"
-          >
-            {configurationSecondaire.label}
-          </a>
+              <a
+                href="/datenza.apk?v=2"
+                download="DATENZA.apk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-4 transition"
+              >
+                Besoin du package Android (.apk) ?
+              </a>
+            </>
+          ) : (
+            /* ========================================================
+               Affichage standard Android / Windows
+               ======================================================== */
+            <>
+              <a
+                href={configurationBinaire.href}
+                download={configurationBinaire.download}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`inline-flex items-center justify-center gap-2.5 px-5 py-2.5 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer ${configurationBinaire.couleur}`}
+              >
+                <Download className="h-4 w-4" aria-hidden />
+                <span>{configurationBinaire.label}</span>
+              </a>
+
+              <a
+                href={estAndroid ? "/datenza.msi" : "/datenza.apk?v=2"}
+                download={estAndroid ? "DATENZA-Setup.msi" : "DATENZA.apk"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-4 transition"
+              >
+                {estAndroid ? "Besoin de la version Windows (.msi) ?" : "Besoin de la version Android (.apk) ?"}
+              </a>
+            </>
+          )}
         </div>
       </section>
+
+      {/* Modale d'instructions d'installation dédiée à Safari sur iOS */}
+      {afficherGuideIos && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs animate-in fade-in duration-200"
+        >
+          <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <button
+              type="button"
+              onClick={() => setAfficherGuideIos(false)}
+              className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              aria-label="Fermer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-blue-500/10 p-2.5 text-blue-600 dark:text-blue-400">
+                <Smartphone className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Installer sur iOS</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Ajout à l'écran d'accueil</p>
+              </div>
+            </div>
+
+            <ol className="mt-5 space-y-3.5 text-xs text-slate-700 dark:text-slate-300">
+              <li className="flex items-start gap-3">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white">
+                  1
+                </span>
+                <span>
+                  Ouvrez cette page dans le navigateur <strong>Safari</strong>.
+                </span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white">
+                  2
+                </span>
+                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                  Touchez le bouton de partage
+                  <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                    <Share className="h-3 w-3" /> Partager
+                  </span>
+                  en bas de l'écran.
+                </span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white">
+                  3
+                </span>
+                <span>
+                  Faites défiler vers le bas et sélectionnez <strong>« Sur l'écran d'accueil »</strong>, puis touchez <strong>Ajouter</strong>.
+                </span>
+              </li>
+            </ol>
+
+            <button
+              type="button"
+              onClick={() => setAfficherGuideIos(false)}
+              className="mt-6 w-full rounded-xl bg-blue-600 py-2.5 text-xs font-semibold text-white transition hover:bg-blue-700 active:scale-95"
+            >
+              J'ai compris
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
