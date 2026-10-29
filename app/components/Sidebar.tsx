@@ -11,6 +11,7 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  Download,
 } from "lucide-react";
 import LogoDatenza from "./LogoDatenza";
 import BoutonInstallerApp from "./BoutonInstallerApp";
@@ -105,12 +106,33 @@ export default function Sidebar() {
           </nav>
         </div>
 
-        {/* Bouton d'installation de l'application (bas de barre latérale) */}
-        {!estReduit && (
-          <div className="pt-4 border-t border-slate-800">
-            <BoutonInstallerApp />
-          </div>
-        )}
+        {/* Bas de barre latérale : Installation PWA + Téléchargement direct APK */}
+        <div className="pt-4 border-t border-slate-800 space-y-2">
+          {!estReduit ? (
+            <>
+              <BoutonInstallerApp />
+              <a
+                href="/datenza.apk"
+                download="DATENZA.apk"
+                className="flex items-center justify-center gap-2 w-full py-2 px-3 bg-emerald-600/15 hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-500 text-emerald-400 hover:text-white rounded-xl text-xs font-semibold shadow-xs transition-all duration-200"
+              >
+                <Download className="w-4 h-4 shrink-0" />
+                <span>Télécharger l'APK</span>
+              </a>
+            </>
+          ) : (
+            <div className="flex justify-center">
+              <a
+                href="/datenza.apk"
+                download="DATENZA.apk"
+                title="Télécharger l'APK Android"
+                className="p-2.5 rounded-xl text-emerald-400 hover:text-white hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-500 transition-all duration-200"
+              >
+                <Download className="w-5 h-5" />
+              </a>
+            </div>
+          )}
+        </div>
       </aside>
 
       {/* ========================================================
