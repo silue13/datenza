@@ -61,16 +61,16 @@ export default function ParametresPage() {
   const estAndroid = os === "android";
   const configurationPrincipale = estAndroid
     ? {
-        href: "/datenza.apk",
+        href: "/datenza.apk?v=2",
         download: "DATENZA.apk",
-        label: "Télécharger pour Android (.apk ~1 Mo)",
+        label: "Télécharger pour Android (.apk)",
         couleur: "bg-emerald-600 hover:bg-emerald-700",
         Icone: Smartphone,
       }
     : {
         href: "/datenza.msi",
         download: "DATENZA-Setup.msi",
-        label: "Télécharger pour Windows (.msi ~3 Mo)",
+        label: "Télécharger pour Windows (.msi)",
         couleur: "bg-blue-600 hover:bg-blue-700",
         Icone: Monitor,
       };
@@ -82,7 +82,7 @@ export default function ParametresPage() {
         label: "Besoin de la version Windows (.msi) ?",
       }
     : {
-        href: "/datenza.apk",
+        href: "/datenza.apk?v=2",
         download: "DATENZA.apk",
         label: "Besoin de la version Android (.apk) ?",
       };
@@ -165,6 +165,8 @@ export default function ParametresPage() {
           <a
             href={configurationPrincipale.href}
             download={configurationPrincipale.download}
+            target="_blank"
+            rel="noopener noreferrer"
             className={`inline-flex items-center justify-center gap-2.5 px-5 py-2.5 active:scale-95 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer ${configurationPrincipale.couleur}`}
           >
             <Download className="h-4 w-4" aria-hidden />
@@ -175,6 +177,8 @@ export default function ParametresPage() {
           <a
             href={configurationSecondaire.href}
             download={configurationSecondaire.download}
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 underline underline-offset-4 transition"
           >
             {configurationSecondaire.label}

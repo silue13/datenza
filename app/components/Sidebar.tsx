@@ -42,9 +42,9 @@ export default function Sidebar() {
   }, []);
 
   const estAndroid = os === "android";
-  const lienTelechargement = estAndroid ? "/datenza.apk" : "/datenza.msi";
+  const lienTelechargement = estAndroid ? "/datenza.apk?v=2" : "/datenza.msi?v=2";
   const nomFichierTelecharge = estAndroid ? "DATENZA.apk" : "DATENZA-Setup.msi";
-  const libelleBouton = estAndroid ? "Installer pour Android (.apk)" : "Installer pour Windows (.msi)";
+  const libelleBouton = estAndroid ? "Télécharger pour Android (.apk)" : "Télécharger pour Windows (.msi)";
   const texteInfoBouton = estAndroid ? "Télécharger le package Android" : "Télécharger l'installateur Windows";
   const IconeOs = estAndroid ? Smartphone : Monitor;
   const styleCouleur = estAndroid
@@ -137,6 +137,8 @@ export default function Sidebar() {
               <a
                 href={lienTelechargement}
                 download={nomFichierTelecharge}
+                target="_blank"
+                rel="noopener noreferrer"
                 title={texteInfoBouton}
                 className={`flex items-center justify-center gap-2 w-full py-2 px-3 border rounded-xl text-xs font-semibold shadow-xs transition-all duration-200 ${styleCouleur}`}
               >
@@ -149,6 +151,8 @@ export default function Sidebar() {
               <a
                 href={lienTelechargement}
                 download={nomFichierTelecharge}
+                target="_blank"
+                rel="noopener noreferrer"
                 title={texteInfoBouton}
                 className={`p-2.5 rounded-xl border transition-all duration-200 ${styleCouleur}`}
               >
