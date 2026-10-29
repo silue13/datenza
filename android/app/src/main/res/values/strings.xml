@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">DATENZA</string>
+    <string name="title_activity_main">DATENZA</string>
+    <string name="package_name">com.datenza.app</string>
+    <string name="custom_url_scheme">com.datenza.app</string>
+</resources>
