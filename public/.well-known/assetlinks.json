@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.datenza.app",
+        "sha256_cert_fingerprints": ["B4:FC:62:E3:21:1E:CD:53:31:1B:67:6E:43:AA:82:CB:96:3D:0F:31:8D:16:BD:8B:4D:13:FE:B7:23:2B:F4:6B"]
+      }
+    }]
