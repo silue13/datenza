@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Compass,
@@ -16,12 +16,6 @@ import {
   CheckCircle2,
   ExternalLink,
   ShieldCheck,
-  FileSpreadsheet,
-  Presentation,
-  MapPin,
-  Table,
-  Cpu,
-  Lock,
 } from "lucide-react";
 
 interface ModuleGuide {
@@ -47,7 +41,7 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
     nomMenu: "Accueil",
     route: "/",
     badge: "Phase 1 · Cadrage & Ingestion",
-    titre: "Cadrage du Périmètre & Ingestion Sécurisée",
+    titre: "Cadrage & Ingestion des Données",
     finaliteMetier:
       "Normaliser les fichiers bruts (XLSX, CSV), purger les artefacts de calcul et fixer formellement le champ d'audit avant tout traitement analytique.",
     icone: Home,
@@ -70,7 +64,7 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
       },
     ],
     standardsEtRegles: [
-      "Purge automatique du BOM UTF-8 et détection déterministe des séparateurs (; , \\t).",
+      "Purge automatique du BOM UTF-8 et détection des séparateurs (; , \\t).",
       "Élimination stricte des lignes de totaux partiels pour ne pas fausser les moyennes.",
       "Vérification de l'unicité des enregistrements et marquage des doublons.",
     ],
@@ -87,7 +81,7 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
     nomMenu: "Analyse",
     route: "/analyse",
     badge: "Phase 2 · Diagnostic & Visualisation",
-    titre: "Exploration Multidimensionnelle & Restitution Exécutive",
+    titre: "Exploration & Restitution Exécutive",
     finaliteMetier:
       "Profiler les indicateurs univariés et bivariés, cartographier les concentrations territoriales et produire les supports de présentation pour les instances dirigeantes.",
     icone: BarChart3,
@@ -127,7 +121,7 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
     nomMenu: "Assistant IA",
     route: "/ia",
     badge: "Phase 3 · Copilote Décisionnel",
-    titre: "Requêtage en Langage Naturel & Synthèse Stratégique",
+    titre: "Requêtage Naturel & Synthèse",
     finaliteMetier:
       "Interroger la donnée consolidée par questions ouvertes pour obtenir des notes de synthèse formulées sous l'angle de la prise de décision managériale.",
     icone: Sparkles,
@@ -163,7 +157,7 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
     nomMenu: "Fusion",
     route: "/fusion",
     badge: "Phase 4 · Consolidation Multi-Bases",
-    titre: "Rapprochement Référentiel & Analyse Comparative",
+    titre: "Rapprochement & Analyse Comparative",
     finaliteMetier:
       "Harmoniser plusieurs fichiers d'origines ou de millésimes distincts (ex. RGPH 2014 vs 2021) pour quantifier l'évolution des indicateurs par rapport à un étalon.",
     icone: Layers,
@@ -203,7 +197,7 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
     nomMenu: "Paramètres",
     route: "/parametres",
     badge: "Gouvernance · Souveraineté & Clés",
-    titre: "Gouvernance des Données & Configuration des Moteurs",
+    titre: "Gouvernance & Configuration",
     finaliteMetier:
       "Administrer les connexions d'intelligence artificielle, contrôler la politique de rétention en mémoire et paramétrer l'environnement d'exécution selon vos exigences de conformité.",
     icone: Settings,
@@ -240,10 +234,10 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
   },
   {
     id: "desktop",
-    nomMenu: "Application Windows",
+    nomMenu: "Windows",
     route: "/",
     badge: "Infrastructure · Poste Isolé",
-    titre: "Client Windows Natif & Exploitation Hors-Ligne",
+    titre: "Client Windows Natif & Hors-Ligne",
     finaliteMetier:
       "Déployer DATENZA sur station de travail dédiée pour traiter des jeux de données volumineux sans aucune dépendance à une liaison Internet, dans des conditions d'isolation étanche.",
     icone: Laptop,
@@ -280,8 +274,31 @@ export default function GuideUtilisation() {
   const [ouvert, setOuvert] = useState(false);
   const [indexActif, setIndexActif] = useState(0);
   const router = useRouter();
+  
+  // Référence pour la zone défilante des onglets
+  const ongletsConteneurRef = useRef<HTMLDivElement>(null);
+  const zoneContenuRef = useRef<HTMLDivElement>(null);
 
   const moduleActuel = REFERENTIEL_DATENZA[indexActif];
+
+  // Effet pour faire défiler automatiquement la barre d'onglets
+  useEffect(() => {
+    if (ongletsConteneurRef.current && ouvert) {
+      const boutonActif = ongletsConteneurRef.current.querySelector(`[data-index="${indexActif}"]`);
+      if (boutonActif) {
+        boutonActif.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+          inline: "center", // Centre l'onglet actif dans la vue
+        });
+      }
+    }
+    
+    // Remonter le contenu en haut à chaque changement d'onglet
+    if (zoneContenuRef.current && ouvert) {
+      zoneContenuRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [indexActif, ouvert]);
 
   const naviguerVersInterface = (route: string) => {
     setOuvert(false);
@@ -290,58 +307,60 @@ export default function GuideUtilisation() {
 
   return (
     <>
+      {/* BOUTON DÉCLENCHEUR NAVBAR / HEADER */}
       <button
         onClick={() => setOuvert(true)}
-        className="group inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white text-xs font-bold transition shadow-xs cursor-pointer select-none border border-slate-700/50 dark:border-slate-300"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white text-[11px] sm:text-xs font-bold transition shadow-xs cursor-pointer select-none border border-slate-700/50 dark:border-slate-300"
       >
-        <Compass className="w-3.5 h-3.5 text-blue-400 dark:text-blue-600 group-hover:rotate-45 transition-transform" />
-        <span className="hidden sm:inline">Référentiel Méthodologique &amp; Exploitation</span>
-        <span className="sm:hidden">Guide Métier</span>
+        <Compass className="w-3.5 h-3.5 text-blue-400 dark:text-blue-600" />
+        <span className="hidden sm:inline">Référentiel Méthodologique</span>
+        <span className="sm:inline font-bold">Guide</span>
       </button>
 
+      {/* DIALOGUE MODAL */}
       {ouvert && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-150">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-            {/* EN-TÊTE SUPÉRIEUR */}
-            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60">
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white dark:bg-blue-600 flex items-center justify-center shadow-md shrink-0">
-                  <Compass className="w-5 h-5 text-blue-400 dark:text-white" />
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 w-full h-[96vh] sm:h-auto sm:max-h-[92vh] sm:max-w-4xl flex flex-col rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+            
+            {/* 1. EN-TÊTE FIXE COMPACT */}
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/70 shrink-0">
+              <div className="flex items-center gap-2.5 truncate">
+                <div className="w-8 h-8 rounded-xl bg-slate-900 text-white dark:bg-blue-600 flex items-center justify-center shrink-0">
+                  <Compass className="w-4 h-4 text-blue-400 dark:text-white" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2.5">
-                    <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white tracking-tight">
-                      DATENZA · Architecture &amp; Guide d&apos;Arbitrage
-                    </h2>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300">
-                      Standard Exécutif
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Guide d&apos;exploitation opérationnelle pour les 6 espaces de la barre latérale
+                <div className="truncate">
+                  <h2 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate tracking-tight">
+                    DATENZA · Guide d&apos;Arbitrage
+                  </h2>
+                  <p className="text-[10px] text-slate-400 truncate">
+                    {indexActif + 1}/6 : {moduleActuel.nomMenu}
                   </p>
                 </div>
               </div>
 
               <button
                 onClick={() => setOuvert(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-slate-800 transition cursor-pointer"
-                title="Fermer le guide"
+                className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-slate-800 transition cursor-pointer shrink-0"
+                title="Fermer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* BARRE D'ONGLETS SÉLECTIONNABLES */}
-            <div className="flex items-center gap-1.5 px-4 sm:px-6 py-2.5 bg-slate-100/70 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800 overflow-x-auto scrollbar-none">
+            {/* 2. SÉLECTEUR D'ONGLETS HORIZONTAL (TOUCH-SCROLLABLE & AUTO-SCROLL) */}
+            <div 
+              ref={ongletsConteneurRef}
+              className="flex items-center gap-1.5 px-3 sm:px-6 py-2 bg-slate-100/70 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 overflow-x-auto scrollbar-none snap-x shrink-0 transition-transform scroll-smooth"
+            >
               {REFERENTIEL_DATENZA.map((mod, i) => {
                 const Icone = mod.icone;
                 const estActif = i === indexActif;
                 return (
                   <button
                     key={mod.id}
+                    data-index={i}
                     onClick={() => setIndexActif(i)}
-                    className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer shrink-0 ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] font-bold transition whitespace-nowrap cursor-pointer shrink-0 snap-center ${
                       estActif
                         ? "bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 shadow-xs border border-slate-200 dark:border-slate-700"
                         : "text-slate-600 dark:text-slate-400 hover:bg-white/60 dark:hover:bg-slate-800/70"
@@ -354,125 +373,130 @@ export default function GuideUtilisation() {
               })}
             </div>
 
-            {/* CONTENU TECHNIQUE DU MODULE */}
-            <div className="p-6 overflow-y-auto space-y-6 scrollbar-thin">
-              {/* Cadrage stratégique */}
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 dark:text-blue-400">
+            {/* 3. CONTENU DÉFILABLE DU MODULE */}
+            <div ref={zoneContenuRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scrollbar-thin">
+              
+              {/* Titre & Finalité Métier */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400">
                     {moduleActuel.badge}
                   </span>
-                  <h3 className="text-xl font-black text-slate-900 dark:text-white">
-                    {moduleActuel.titre}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed max-w-3xl pt-1">
-                    {moduleActuel.finaliteMetier}
+                  <button
+                    onClick={() => naviguerVersInterface(moduleActuel.route)}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    <span>Ouvrir</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </button>
+                </div>
+
+                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white leading-snug">
+                  {moduleActuel.titre}
+                </h3>
+                
+                <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-300 leading-relaxed pt-0.5">
+                  {moduleActuel.finaliteMetier}
+                </p>
+              </div>
+
+              {/* PROTOCOLE OPÉRATOIRE SOUS FORME DE TIMELINE VERTICALE */}
+              <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 space-y-2.5">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                  Procédure Opérationnelle :
+                </span>
+
+                <div className="space-y-2 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-700">
+                  {moduleActuel.protocole.map((p, idx) => (
+                    <div key={idx} className="flex items-start gap-2.5 relative pl-1">
+                      <span className="w-5 h-5 rounded-md bg-blue-600 text-white font-mono font-bold text-[10px] flex items-center justify-center shrink-0 z-10">
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-bold text-[11px] sm:text-xs text-slate-900 dark:text-slate-100">
+                          {p.etape}
+                        </p>
+                        <p className="text-[10px] sm:text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                          {p.description}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* RÈGLES DE CONTRÔLE & RESTITUTIONS (GRILLE 2 COLONNES MÊME SUR SMARTPHONE) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-4">
+                
+                {/* Règles & Contrôles */}
+                <div className="p-3 sm:p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 space-y-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                    Garanties &amp; Conformité
+                  </span>
+                  <ul className="space-y-1.5 text-[10px] sm:text-[11px] text-slate-700 dark:text-slate-300">
+                    {moduleActuel.standardsEtRegles.map((regle, i) => (
+                      <li key={i} className="flex items-start gap-1.5 leading-snug">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                        <span>{regle}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {/* Restitutions associées */}
+                <div className="p-3 sm:p-4 rounded-2xl bg-slate-900 text-white border border-slate-800 space-y-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-blue-400 block">
+                    Livrables Décisionnels
+                  </span>
+                  <ul className="space-y-1.5 text-[10px] sm:text-[11px] text-slate-300">
+                    {moduleActuel.livrables.map((livrable, i) => (
+                      <li key={i} className="flex items-start gap-1.5 leading-snug">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-1.5"></span>
+                        <span>{livrable}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+              </div>
+
+              {/* RECOMMANDATION DE GOUVERNANCE / DIRECTION */}
+              <div className="p-3 sm:p-3.5 rounded-2xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/70 dark:border-blue-900/50 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <span className="font-bold text-blue-950 dark:text-blue-200 block text-[10px] uppercase tracking-wide">
+                    Arbitrage de Direction
+                  </span>
+                  <p className="text-[10px] sm:text-[11px] text-blue-900 dark:text-blue-200/90 leading-snug mt-0.5">
+                    {moduleActuel.arbitrageDirection}
                   </p>
                 </div>
-
-                <button
-                  onClick={() => naviguerVersInterface(moduleActuel.route)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition self-start shrink-0 cursor-pointer shadow-xs"
-                >
-                  <span>Accéder à {moduleActuel.nomMenu}</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </button>
               </div>
 
-              {/* GRILLE À DEUX COLONNES */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Colonne gauche : Protocole opératoire en 4 temps */}
-                <div className="lg:col-span-7 space-y-4">
-                  <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 space-y-3.5">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-slate-900 dark:text-slate-200 block">
-                      Protocole d&apos;Exploitation Standardisé
-                    </span>
-
-                    <div className="space-y-3">
-                      {moduleActuel.protocole.map((p, idx) => (
-                        <div key={idx} className="flex items-start gap-3">
-                          <span className="w-6 h-6 rounded-lg bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
-                            0{idx + 1}
-                          </span>
-                          <div>
-                            <p className="font-bold text-xs text-slate-900 dark:text-slate-100">
-                              {p.etape}
-                            </p>
-                            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mt-0.5">
-                              {p.description}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Recommandation managériale */}
-                  <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/40 space-y-1">
-                    <div className="flex items-center gap-1.5 text-blue-900 dark:text-blue-200 font-bold text-xs uppercase tracking-wider">
-                      <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      <span>Recommandation de Gouvernance</span>
-                    </div>
-                    <p className="text-xs text-blue-950 dark:text-blue-200/90 leading-relaxed">
-                      {moduleActuel.arbitrageDirection}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Colonne droite : Standards techniques et livrables associés */}
-                <div className="lg:col-span-5 space-y-4">
-                  <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 space-y-3">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-slate-900 dark:text-slate-200 block">
-                      Règles de Contrôle &amp; Conformité
-                    </span>
-                    <ul className="space-y-2">
-                      {moduleActuel.standardsEtRegles.map((regle, i) => (
-                        <li key={i} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                          <span className="leading-snug">{regle}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="p-5 rounded-2xl bg-slate-900 text-white border border-slate-800 space-y-3">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-blue-400 block">
-                      Restitutions &amp; Formats Générés
-                    </span>
-                    <ul className="space-y-2">
-                      {moduleActuel.livrables.map((livrable, i) => (
-                        <li key={i} className="flex items-start gap-2 text-xs text-slate-300">
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-1.5"></span>
-                          <span className="leading-snug">{livrable}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </div>
             </div>
 
-            {/* PIED DE MODAL AVEC NAVIGATION INTÉGRÉE */}
-            <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60">
+            {/* 4. PIED FIXE FLUIDE POUR LE POUCE (STICKY BOTTOM BAR) */}
+            <div className="p-3 sm:p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/80 flex items-center justify-between gap-2 shrink-0">
               <button
                 type="button"
                 disabled={indexActif === 0}
                 onClick={() => setIndexActif((i) => i - 1)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Précédent</span>
+                <span>Préc.</span>
               </button>
 
-              <div className="flex items-center gap-2">
+              {/* Indicateur de position compact */}
+              <div className="flex items-center gap-1">
                 {REFERENTIEL_DATENZA.map((_, i) => (
                   <button
                     key={i}
                     onClick={() => setIndexActif(i)}
-                    className={`h-2 rounded-full transition-all cursor-pointer ${
-                      i === indexActif ? "w-6 bg-blue-600" : "w-2 bg-slate-300 dark:bg-slate-700"
+                    className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                      i === indexActif ? "w-4 bg-blue-600" : "w-1.5 bg-slate-300 dark:bg-slate-700"
                     }`}
-                    title={`Écran ${i + 1}`}
+                    title={`Module ${i + 1}`}
                   />
                 ))}
               </div>
@@ -481,7 +505,7 @@ export default function GuideUtilisation() {
                 <button
                   type="button"
                   onClick={() => setIndexActif((i) => i + 1)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
                 >
                   <span>Suivant</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -490,13 +514,14 @@ export default function GuideUtilisation() {
                 <button
                   type="button"
                   onClick={() => setOuvert(false)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Terminer la revue</span>
+                  <span>Terminé</span>
                 </button>
               )}
             </div>
+
           </div>
         </div>
       )}
