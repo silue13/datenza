@@ -12,6 +12,7 @@ import {
 } from "../lib/analyse/utils";
 import { useRouter } from "next/navigation";
 import BoutonInstallerApp from "./components/BoutonInstallerApp";
+import GuideUtilisation from "./components/GuideUtilisation";
 import {
   UploadCloud,
   FileSpreadsheet,
@@ -322,7 +323,7 @@ export default function HomePage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-16 font-sans">
-      {/* En-tête Titre & Statut */}
+      {/* En-tête Titre & Statut avec Guide et Installation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold mb-1 sm:mb-2">
@@ -338,8 +339,11 @@ export default function HomePage() {
           </p>
         </div>
 
-        <div className="sm:w-56 shrink-0">
-          <BoutonInstallerApp />
+        <div className="flex flex-wrap items-center gap-2.5 sm:justify-end shrink-0">
+          <GuideUtilisation />
+          <div className="w-full sm:w-auto">
+            <BoutonInstallerApp />
+          </div>
         </div>
       </div>
 
@@ -653,7 +657,9 @@ export default function HomePage() {
                     className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 space-y-2"
                   >
                     <div className="flex items-center justify-between border-b border-slate-200/50 dark:border-slate-800 pb-1.5 text-xs font-bold text-slate-900 dark:text-white">
-                      <span className="truncate">{val0 !== undefined && val0 !== "" ? String(val0) : `Ligne ${pageIndex * lignesParPage + idx + 1}`}</span>
+                      <span className="truncate">
+                        {val0 !== undefined && val0 !== "" ? String(val0) : `Ligne ${pageIndex * lignesParPage + idx + 1}`}
+                      </span>
                       <span className="text-[10px] text-slate-400 font-mono">
                         #{pageIndex * lignesParPage + idx + 1}
                       </span>
