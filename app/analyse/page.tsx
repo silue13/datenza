@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ModulePrevisions from "../components/ModulePrevisions";
 import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
-import CarteGeographique from "../components/CarteGeographique";
 import TableauCroiseDynamique from "../components/TableauCroiseDynamique";
 import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
@@ -44,8 +44,20 @@ import {
   Sparkles,
   Loader2,
   RefreshCw,
-  Calendar,
 } from "lucide-react";
+
+// Import dynamique sans SSR pour éviter le conflit d'instance DOM de Leaflet
+const CarteGeographique = dynamic(
+  () => import("../components/CarteGeographique"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-96 w-full rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 animate-pulse flex items-center justify-center text-xs text-slate-400">
+        Chargement de la carte géographique...
+      </div>
+    ),
+  }
+);
 
 interface Cat {
   total: number;
@@ -78,6 +90,22 @@ const carteStyle =
   "bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm";
 const fmt = (v: number | null | undefined) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("fr-FR");
+
+function nettoyerNomAffichage(nom?: string): string {
+  if (!nom) return "";
+  let s = String(nom).trim();
+  s = s.replace(/\.(xlsx|xls|csv|json)/gi, "");
+  s = s.replace(/RGPH\d{4}_region_/gi, "").replace(/rgph\d{4}_/gi, "");
+  s = s.replace(/_sous_prefectures/gi, " (Sous-préf.)");
+  s = s.replace(/taille_moyenne_menage/gi, "Taille moyenne ménage");
+  s = s.replace(/rapport_masculinite/gi, "Rapport masculinité");
+  s = s.replace(/population_totale/gi, "Population totale");
+  s = s.replace(/sous_prefecture/gi, "Sous-préfecture");
+  s = s.replace(/departement/gi, "Département");
+  s = s.replace(/_/g, " ");
+  s = s.replace(/([a-z])([A-Z])/g, "$1 $2");
+  return s.charAt(0).toUpperCase() + s.slice(1).trim();
+}
 
 const H_CORR = ({ children }: { children?: ReactNode }) => (
   <h6 className="text-[11px] font-bold mt-2 mb-1 text-slate-900 dark:text-slate-100 uppercase tracking-wide">
@@ -161,18 +189,18 @@ function expliquerCorrelationSimple(colA: string, colB: string, r: number): stri
   }
 
   if (r >= 0.7) {
-    return `Forte synergie directe : lorsque « ${colA} » augmente, « ${colB} » progresse presque systématiquement de façon proportionnelle.`;
+    return `Forte synergie directe : lorsque « ${colA} » augmente, « ${colB} » progresse presque proportionnellement.`;
   }
   if (r >= 0.3) {
-    return `Liaison positive modérée : « ${colA} » et « ${colB} » ont tendance à évoluer dans la même direction, avec quelques variations.`;
+    return `Liaison positive modérée : « ${colA} » et « ${colB} » ont tendance à évoluer dans la même direction.`;
   }
   if (r > -0.3) {
     return `Indépendance statistique : les variations de « ${colA} » n'ont pas d'impact linéaire perceptible sur « ${colB} ».`;
   }
   if (r > -0.7) {
-    return `Liaison négative modérée : une hausse de « ${colA} » s'accompagne généralement d'un recul mesuré de « ${colB} ».`;
+    return `Liaison négative modérée : une hausse de « ${colA} » s'accompagne d'un recul de « ${colB} ».`;
   }
-  return `Forte relation inverse : une progression de « ${colA} » entraîne une baisse prononcée et systématique de « ${colB} ».`;
+  return `Forte relation inverse : une progression de « ${colA} » entraîne une baisse systématique de « ${colB} ».`;
 }
 
 function expliquerEvolutionCorrelation(
@@ -186,7 +214,7 @@ function expliquerEvolutionCorrelation(
   if (r1 === null || r2 === null) {
     return {
       diagnostic: "Données insuffisantes",
-      detail: "Pas assez d'observations communes pour comparer les tendances.",
+      detail: "Pas assez d'observations communes.",
       alerte: false,
     };
   }
@@ -195,24 +223,24 @@ function expliquerEvolutionCorrelation(
 
   if ((r1 < -0.15 && r2 > 0.15) || (r1 > 0.15 && r2 < -0.15)) {
     return {
-      diagnostic: "Inversion complète de la dynamique",
-      detail: `La relation s'est totalement inversée d'un fichier à l'autre. Dans ${nom1}, la liaison était ${r1 < 0 ? "négative" : "positive"} (${r1}), alors que dans ${nom2}, elle est devenue ${r2 > 0 ? "positive" : "négative"} (${r2 > 0 ? `+${r2}` : r2}). Ce facteur agit désormais en sens inverse.`,
+      diagnostic: "Inversion de dynamique",
+      detail: `Liaison passée de ${r1} dans ${nom1} à ${r2 > 0 ? `+${r2}` : r2} dans ${nom2}.`,
       alerte: true,
     };
   }
 
   if (Math.abs(r1) >= 0.4 && Math.abs(r2) < 0.25) {
     return {
-      diagnostic: "Découplage / Perte d'influence",
-      detail: `Le lien marqué dans ${nom1} (${r1}) s'est effondré dans ${nom2} (${r2}). Les deux grandeurs sont devenues quasi-indépendantes l'une de l'autre.`,
+      diagnostic: "Découplage",
+      detail: `Lien fort (${r1}) retombé à (${r2}). Les variables sont devenues indépendantes.`,
       alerte: false,
     };
   }
 
   if (Math.abs(r2) - Math.abs(r1) >= 0.25) {
     return {
-      diagnostic: "Intensification de la corrélation",
-      detail: `Le lien s'est nettement raffermi dans ${nom2}. « ${colB} » est désormais beaucoup plus sensible et prévisible en fonction de « ${colA} ».`,
+      diagnostic: "Intensification",
+      detail: `Lien nettement raffermi dans ${nom2}. Sensibilité accrue.`,
       alerte: false,
     };
   }
@@ -220,22 +248,22 @@ function expliquerEvolutionCorrelation(
   if (Math.abs(diff) < 0.15) {
     return {
       diagnostic: "Comportement stable",
-      detail: `La structure de dépendance entre « ${colA} » et « ${colB} » reste globalement inchangée entre vos deux fichiers (variation marginale de ${diff >= 0 ? `+${diff}` : diff}).`,
+      detail: `Structure inchangée (variation marginale de ${diff >= 0 ? `+${diff}` : diff}).`,
       alerte: false,
     };
   }
 
   if (diff > 0) {
     return {
-      diagnostic: "Progression vers une corrélation positive",
-      detail: `Le coefficient gagne +${diff} points dans ${nom2}, traduisant un effet d'entraînement plus favorable entre « ${colA} » et « ${colB} ».`,
+      diagnostic: "Gain de synergie",
+      detail: `Coefficient gagne +${diff} points dans ${nom2}.`,
       alerte: false,
     };
   }
 
   return {
-    diagnostic: "Dégradation / Frein plus marqué",
-    detail: `Le coefficient recule de ${diff} points dans ${nom2}, signalant un antagonisme plus fort entre ces deux variables.`,
+    diagnostic: "Antagonisme accru",
+    detail: `Coefficient recule de ${diff} points dans ${nom2}.`,
     alerte: false,
   };
 }
@@ -325,7 +353,6 @@ export default function AnalysePage() {
     return map;
   }, [sourcesFichiers, corps, idxSource]);
 
-  // 1. CLASSIFICATION RIGOUREUSE DES COLONNES (Évite de sommer les années et les identifiants)
   const { colonnesMesurables, colonnesTemporelles, colonnesIdentifiants } = useMemo(() => {
     const mesurables: string[] = [];
     const temporelles: string[] = [];
@@ -355,7 +382,6 @@ export default function AnalysePage() {
     return { colonnesMesurables: mesurables, colonnesTemporelles: temporelles, colonnesIdentifiants: identifiants };
   }, [noms, entetes, corps]);
 
-  // Colonnes admissibles aux corrélations (Mesures + 1 colonne Temporelle pour dégager la tendance)
   const colonnesPourCorrelations = useMemo(() => {
     const list = [...colonnesMesurables];
     if (colonnesTemporelles.length > 0) {
@@ -364,7 +390,6 @@ export default function AnalysePage() {
     return list;
   }, [colonnesMesurables, colonnesTemporelles]);
 
-  // Calcul du taux réel de complétude des données
   const completudeGlobale = useMemo(() => {
     if (!corps.length || !noms.length) return 100;
     let totalCellules = 0;
@@ -435,8 +460,8 @@ export default function AnalysePage() {
       cartes.push({
         type: "qualite",
         titre: "Écart de volumétrie",
-        detail: `${s2} compte ${l2} lignes contre ${l1} dans ${s1} (${delta >= 0 ? "+" : ""}${pct} %).`,
-        deltaBadge: `${delta >= 0 ? "+" : ""}${delta} lignes`,
+        detail: `« ${nettoyerNomAffichage(s2)} » compte ${l2} lignes contre ${l1} dans « ${nettoyerNomAffichage(s1)} » (${delta >= 0 ? "+" : ""}${pct} %).`,
+        deltaBadge: `${delta >= 0 ? "+" : ""}${delta} lig.`,
         estHausse: delta >= 0,
       });
     } else {
@@ -444,14 +469,13 @@ export default function AnalysePage() {
       const plusPetit = [...statsGlobalesMulti.resumeSources].sort((a, b) => a.nbLignes - b.nbLignes)[0];
       cartes.push({
         type: "qualite",
-        titre: `Volumétrie sur ${sourcesFichiers.length} fichiers`,
-        detail: `Le fichier le plus volumineux est « ${plusGros.nom} » (${plusGros.nbLignes} lignes) contre « ${plusPetit.nom} » (${plusPetit.nbLignes} lignes). Référence fixée sur « ${refSource} » (${statsGlobalesMulti.refInfo.nbLignes} lignes).`,
+        titre: `Volumétrie (${sourcesFichiers.length} fichiers)`,
+        detail: `Dominance : « ${nettoyerNomAffichage(plusGros.nom)} » (${plusGros.nbLignes} lig.) vs « ${nettoyerNomAffichage(plusPetit.nom)} » (${plusPetit.nbLignes} lig.). Réf : « ${nettoyerNomAffichage(refSource)} » (${statsGlobalesMulti.refInfo.nbLignes} lig.).`,
         deltaBadge: `${sourcesFichiers.length} sources`,
         estHausse: true,
       });
     }
 
-    // Uniquement sur les vraies métriques mesurables (exclut Année et ID)
     colonnesMesurables.forEach((nomCol) => {
       const idx = entetes.indexOf(nomCol);
       const perfParSource = sourcesFichiers.map((src) => {
@@ -471,17 +495,16 @@ export default function AnalysePage() {
 
         cartes.push({
           type: "numerique",
-          titre: `Volume total de ${nomCol}`,
-          detail: `Dominé par ${leaderSomme.src} (${fmt(arrondir(leaderSomme.sum))}). Référence ${refSource} : ${fmt(
+          titre: `Volume : ${nettoyerNomAffichage(nomCol)}`,
+          detail: `Leader : « ${nettoyerNomAffichage(leaderSomme.src)} » (${fmt(arrondir(leaderSomme.sum))}). Réf « ${nettoyerNomAffichage(refSource)} » : ${fmt(
             arrondir(refData.sum)
-          )} (moyenne : ${fmt(arrondir(leaderSomme.moy))} vs ${fmt(arrondir(refData.moy))}).`,
-          deltaBadge: leaderSomme.src === refSource ? "Réf en tête" : `+${pctDiff} % vs Réf`,
+          )} (moy. ${fmt(arrondir(leaderSomme.moy))} vs ${fmt(arrondir(refData.moy))}).`,
+          deltaBadge: leaderSomme.src === refSource ? "Réf leader" : `+${pctDiff}% vs Réf`,
           estHausse: deltaRefLeader >= 0,
         });
       }
     });
 
-    // Synthèse pour les colonnes catégorielles réelles
     const categorielles = noms.filter(
       (nom) => !colonnesMesurables.includes(nom) && !colonnesTemporelles.includes(nom) && !colonnesIdentifiants.includes(nom)
     );
@@ -506,10 +529,10 @@ export default function AnalysePage() {
 
       cartes.push({
         type: "categorie",
-        titre: `Dominance sur ${nomCol}`,
+        titre: `Dominance : ${nettoyerNomAffichage(nomCol)}`,
         detail: tousIdentiques
-          ? `Convergence : « ${topParSource[0].premierVal} » arrive en tête dans l'ensemble des ${sourcesFichiers.length} fichiers.`
-          : `Divergence constatée : ${topParSource.map((t) => `${t.src} : « ${t.premierVal} » (${t.pct} %)`).join(", ")}.`,
+          ? `Convergence unanime : « ${topParSource[0].premierVal} » arrive en tête dans tous les fichiers.`
+          : `Dispersion : ${topParSource.map((t) => `${nettoyerNomAffichage(t.src)}: « ${t.premierVal} » (${t.pct}%)`).join(", ")}.`,
         deltaBadge: tousIdentiques ? "Unanime" : "Dispersion",
         estHausse: tousIdentiques,
       });
@@ -529,7 +552,6 @@ export default function AnalysePage() {
     corpsParSource,
   ]);
 
-  // 2. CORRÉLATIONS BENCHMARK SÉCURISÉES (Exclut les identifiants)
   const correlationsBenchmark = useMemo(() => {
     if (!estBenchmarkActif || colonnesPourCorrelations.length < 2) return [];
 
@@ -551,7 +573,6 @@ export default function AnalysePage() {
         const colA = colonnesPourCorrelations[i];
         const colB = colonnesPourCorrelations[j];
 
-        // Ne pas corréler deux colonnes temporelles entre elles
         if (colonnesTemporelles.includes(colA) && colonnesTemporelles.includes(colB)) {
           continue;
         }
@@ -607,7 +628,9 @@ export default function AnalysePage() {
         entetes,
         corps,
         resultatActif,
-        rapportActif
+        estBenchmarkActif
+          ? syntheseComparativeCards.map((c) => ({ type: c.type, texte: `${c.titre} : ${c.detail}` }))
+          : rapportActif
       );
     } catch (error) {
       console.error("Erreur lors de l'export Excel :", error);
@@ -620,14 +643,130 @@ export default function AnalysePage() {
     if (!entetes.length || !corps.length || exportPptxEnCours) return;
     setExportPptxEnCours(true);
     await new Promise((r) => setTimeout(r, 50));
+
     try {
+      const rapportFinal = estBenchmarkActif
+        ? syntheseComparativeCards.map((c) => ({
+            type: c.type,
+            texte: `${c.titre} : ${c.detail}`,
+          }))
+        : (rapportActif as any);
+
+      let tdcManuelExport: any = undefined;
+      if (estBenchmarkActif && colonnesMesurables.length > 0) {
+        const colCat = noms.find((n) => {
+          const idx = entetes.indexOf(n);
+          const vals = Array.from(new Set(corps.map((l) => String(l[idx] ?? "").trim()).filter(Boolean)));
+          return vals.length >= 2 && vals.length <= 10 && !colonnesMesurables.includes(n) && !colonnesTemporelles.includes(n);
+        });
+
+        const metriquePrincipale = colonnesMesurables[0];
+        const idxMetrique = entetes.indexOf(metriquePrincipale);
+
+        if (colCat && idxMetrique !== -1) {
+          const idxCat = entetes.indexOf(colCat);
+          const modalites = Array.from(new Set(corps.map((l) => String(l[idxCat] ?? "").trim()).filter(Boolean))).slice(0, 8);
+
+          const entetesTdc = [
+            `${nettoyerNomAffichage(colCat)} \\ Fichier`,
+            `${nettoyerNomAffichage(refSource)} (Réf)`,
+            ...autresSources.map((s) => nettoyerNomAffichage(s)),
+            "Écart",
+            "Variation %",
+          ];
+
+          let totalRef = 0;
+          let totalAutre = 0;
+
+          const lignesTdc = modalites.map((mod) => {
+            const lRef = (corpsParSource.get(refSource) || []).filter((l) => String(l[idxCat] ?? "").trim() === mod);
+            const sumRef = lRef.map((l) => parseNombre(l[idxMetrique])).filter((n): n is number => n !== null).reduce((a, b) => a + b, 0);
+
+            const row: (string | number)[] = [mod, arrondir(sumRef)];
+            totalRef += sumRef;
+
+            autresSources.forEach((src) => {
+              const lSrc = (corpsParSource.get(src) || []).filter((l) => String(l[idxCat] ?? "").trim() === mod);
+              const sumSrc = lSrc.map((l) => parseNombre(l[idxMetrique])).filter((n): n is number => n !== null).reduce((a, b) => a + b, 0);
+              row.push(arrondir(sumSrc));
+              totalAutre += sumSrc;
+            });
+
+            const ecart = arrondir((Number(row[2]) || 0) - sumRef);
+            const pctVar = sumRef > 0 ? `${ecart >= 0 ? "+" : ""}${Math.round((ecart / sumRef) * 1000) / 10} %` : "—";
+
+            row.push(ecart >= 0 ? `+${fmt(ecart)}` : fmt(ecart));
+            row.push(pctVar);
+            return row;
+          });
+
+          const ecartTotal = arrondir(totalAutre - totalRef);
+          const pctTotal = totalRef > 0 ? `${ecartTotal >= 0 ? "+" : ""}${Math.round((ecartTotal / totalRef) * 1000) / 10} %` : "—";
+
+          lignesTdc.push([
+            "Total Général",
+            arrondir(totalRef),
+            arrondir(totalAutre),
+            ecartTotal >= 0 ? `+${fmt(ecartTotal)}` : fmt(ecartTotal),
+            pctTotal,
+          ]);
+
+          tdcManuelExport = {
+            titre: "TABLEAU CROISÉ DYNAMIQUE COMPARATIF",
+            sousTitre: `Confrontation ${nettoyerNomAffichage(metriquePrincipale)} par ${nettoyerNomAffichage(colCat)} (${sourcesFichiers.length} fichiers)`,
+            entetes: entetesTdc,
+            lignes: lignesTdc,
+          };
+        }
+      }
+
+      let graphiquesExport: any[] = (graphiquesEpingles || []) as any;
+      if (graphiquesExport.length === 0 && estBenchmarkActif) {
+        const colCat = noms.find((n) => {
+          const idx = entetes.indexOf(n);
+          const vals = Array.from(new Set(corps.map((l) => String(l[idx] ?? "").trim()).filter(Boolean)));
+          return vals.length >= 2 && vals.length <= 8 && !colonnesMesurables.includes(n) && !colonnesTemporelles.includes(n);
+        });
+
+        if (colCat) {
+          const idxCat = entetes.indexOf(colCat);
+          const categories = Array.from(new Set(corps.map((l) => String(l[idxCat] ?? "").trim()).filter(Boolean))).slice(0, 6);
+
+          colonnesMesurables.slice(0, 2).forEach((colMesure, idxChart) => {
+            const idxMes = entetes.indexOf(colMesure);
+            const datasets = sourcesFichiers.map((src) => {
+              const lignesSrc = corpsParSource.get(src) || [];
+              const data = categories.map((cat) => {
+                const sousLignes = lignesSrc.filter((l) => String(l[idxCat] ?? "").trim() === cat);
+                const nums = sousLignes.map((l) => parseNombre(l[idxMes])).filter((n): n is number => n !== null);
+                const sum = nums.reduce((a, b) => a + b, 0);
+                return nums.length ? Math.round(sum / nums.length) : 0;
+              });
+              return {
+                label: `${nettoyerNomAffichage(src)} (Moy.)`,
+                data,
+              };
+            });
+
+            graphiquesExport.push({
+              id: idxChart + 1,
+              titre: `Benchmark : ${nettoyerNomAffichage(colMesure)} par ${nettoyerNomAffichage(colCat)}`,
+              type: "bar",
+              labels: categories,
+              datasets,
+            });
+          });
+        }
+      }
+
       await exporterRapportPowerPoint({
         nomProjet: nomFichier || "Analyse Datenza",
         entetes: entetes,
         corps: corps,
         analyse: resultatActif as any,
-        rapport: rapportActif as any,
-        graphiquesEpingles: (graphiquesEpingles || []) as any,
+        rapport: rapportFinal,
+        graphiquesEpingles: graphiquesExport,
+        tdcManuel: tdcManuelExport,
         syntheseCorrelationsIA: syntheseCorrIA ?? undefined,
       } as any);
     } catch (error) {
@@ -637,7 +776,6 @@ export default function AnalysePage() {
     }
   };
 
-  // 3. CORRÉLATIONS STANDARDS FILTRÉES (Exclut fichiers sources et identifiants)
   const correlationsStandard = useMemo(() => {
     return [...(resultatActif?.correlations ?? [])]
       .filter((c) => {
@@ -658,9 +796,9 @@ export default function AnalysePage() {
           if (estBenchmarkActif) {
             return {
               relation: `${c.colA} ↔ ${c.colB}`,
-              reference: `${refSource} (r = ${c.rRef})`,
+              reference: `${nettoyerNomAffichage(refSource)} (r = ${c.rRef})`,
               comparaisons: c.comparaisons.map(
-                (comp: any) => `${comp.source}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`
+                (comp: any) => `${nettoyerNomAffichage(comp.source)}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`
               ),
             };
           }
@@ -727,7 +865,7 @@ Ne mets ni introduction ni conclusion.`;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-16 text-slate-800 dark:text-slate-100 font-sans">
-      {/* EN-TÊTE FORMEL EXCLUSIF À L'EXPORT PDF */}
+      {/* EN-TÊTE EXCLUSIF À L'EXPORT PDF */}
       <div className="print-only mb-6 pb-3 border-b-2 border-slate-900">
         <div className="flex justify-between items-end">
           <div>
@@ -738,7 +876,7 @@ Ne mets ni introduction ni conclusion.`;
               Synthèse Décisionnelle &amp; Tableau de Bord
             </h1>
             <p className="text-xs text-slate-600">
-              Jeu de données : <strong>{nomFichier || "Données importées"}</strong> ({corps.length.toLocaleString("fr-FR")} lignes)
+              Jeu de données : <strong>{nettoyerNomAffichage(nomFichier) || "Données importées"}</strong> ({corps.length.toLocaleString("fr-FR")} lignes)
             </p>
           </div>
           <div className="text-right text-[10px] text-slate-500 font-medium">
@@ -749,21 +887,21 @@ Ne mets ni introduction ni conclusion.`;
       </div>
 
       {/* 1. BANDEAU DE PILOTAGE COBALT EXECUTIVE */}
-      <section className="bg-slate-900 border border-slate-800 text-white rounded-3xl p-6 md:p-8 shadow-xs">
+      <section className="bg-slate-900 border border-slate-800 text-white rounded-3xl p-5 sm:p-8 shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 text-xs font-bold tracking-wide uppercase">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[11px] sm:text-xs font-bold tracking-wide uppercase">
               <span className="w-2 h-2 rounded-full bg-blue-400"></span>
               {estBenchmarkActif
                 ? `DATENZA · Benchmark Multi-Sources (${sourcesFichiers.length} fichiers)`
                 : "DATENZA · Centre de pilotage & Analyse"}
             </div>
-            <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight text-white">
               {estBenchmarkActif ? "Tableau de Bord & Benchmark Comparatif" : "Tableau de bord & Rapport d'analyse"}
             </h1>
             <p className="text-xs md:text-sm text-slate-400 max-w-2xl leading-relaxed">
               {estBenchmarkActif
-                ? "Confrontation directe des indicateurs clés, profils détaillés par fichier et analyse des dynamiques de séries."
+                ? "Confrontation directe des indicateurs clés, profils détaillés par fichier et analyse des séries."
                 : "Vue synthétique, indicateurs clés de qualité et analyses détaillées de votre jeu de données."}
             </p>
 
@@ -776,37 +914,38 @@ Ne mets ni introduction ni conclusion.`;
                   {sourcesFichiers.map((src) => (
                     <span
                       key={src}
-                      className={`px-2.5 py-1 rounded-lg border font-mono text-[11px] ${
+                      title={src}
+                      className={`px-2.5 py-1 rounded-lg border font-mono text-[10px] sm:text-[11px] ${
                         src === refSource
                           ? "bg-blue-900/60 border-blue-500 text-blue-200 font-bold"
                           : "bg-slate-800 border-slate-700 text-slate-300"
                       }`}
                     >
-                      {src} {src === refSource && "(Réf)"}
+                      {nettoyerNomAffichage(src)} {src === refSource && "(Réf)"}
                     </span>
                   ))}
                 </div>
               ) : (
-                <span className="bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700 text-blue-300 font-mono">
-                  {nomFichier || "Données importées"}
+                <span className="bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700 text-blue-300 font-mono text-xs">
+                  {nettoyerNomAffichage(nomFichier) || "Données importées"}
                 </span>
               )}
             </div>
 
             {estBenchmarkActif && (
               <div className="flex items-center gap-2 pt-2 text-xs">
-                <span className="font-semibold text-slate-300">Référence étalon (Pivot) :</span>
+                <span className="font-semibold text-slate-300">Réf étalon (Pivot) :</span>
                 <select
                   value={refSource}
                   onChange={(e) => setSourceRefChoisie(e.target.value)}
-                  className="bg-slate-800 border border-slate-700 text-blue-300 text-xs font-bold rounded-lg px-2.5 py-1 focus:ring-1 focus:ring-blue-500"
+                  className="bg-slate-800 border border-slate-700 text-blue-300 text-xs font-bold rounded-lg px-2 py-1 focus:ring-1 focus:ring-blue-500"
                 >
                   {sourcesFichiers.map((src) => (
-                    <option key={src} value={src}>{src}</option>
+                    <option key={src} value={src}>{nettoyerNomAffichage(src)}</option>
                   ))}
                 </select>
                 <span className="text-[11px] text-slate-400">
-                  ({autresSources.length} autre(s) fichier(s) jaugé(s) par rapport à cette base)
+                  ({autresSources.length} autre(s) comparé(s))
                 </span>
               </div>
             )}
@@ -844,67 +983,65 @@ Ne mets ni introduction ni conclusion.`;
         </div>
       </section>
 
-      {/* 2. CARTES D'INDICATEURS CLÉS (KPIs RÉELS) */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:grid-cols-4">
-        <div className={`${carteStyle} p-5 flex items-center justify-between`}>
+      {/* 2. CARTES D'INDICATEURS CLÉS (2x2 SUR MOBILE) */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 print:grid-cols-4">
+        <div className={`${carteStyle} p-3.5 sm:p-5 flex items-center justify-between`}>
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-              {estBenchmarkActif ? "Volumétrie Totale" : "Lignes analysées"}
+            <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">
+              {estBenchmarkActif ? "Volumétrie" : "Lignes"}
             </p>
-            <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">
+            <h3 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white mt-0.5">
               {fmt(corps.length)}
             </h3>
-            <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium">
+            <p className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium truncate">
               {estBenchmarkActif ? (
-                <span>
-                  Réf {refSource} : <strong>{fmt(corpsParSource.get(refSource)?.length || 0)}</strong> lignes
-                </span>
+                <span>Réf : <strong>{fmt(corpsParSource.get(refSource)?.length || 0)}</strong> lig.</span>
               ) : (
-                "• Enregistrements filtrés"
+                "Enregistrements"
               )}
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
-            {estBenchmarkActif ? <Scale className="w-6 h-6" /> : <Database className="w-6 h-6" />}
+          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold shrink-0">
+            {estBenchmarkActif ? <Scale className="w-4 h-4 sm:w-6 sm:h-6" /> : <Database className="w-4 h-4 sm:w-6 sm:h-6" />}
           </div>
         </div>
 
-        <div className={`${carteStyle} p-5 flex items-center justify-between`}>
+        <div className={`${carteStyle} p-3.5 sm:p-5 flex items-center justify-between`}>
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Variables Évaluées</p>
-            <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">
+            <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">Variables</p>
+            <h3 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white mt-0.5">
               {noms.length}
             </h3>
-            <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium">
-              • {colonnesMesurables.length} métriques · {colonnesTemporelles.length} temporelles
+            <p className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium truncate">
+              {colonnesMesurables.length} métriques
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold">
-            <Layers className="w-6 h-6" />
+          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold shrink-0">
+            <Layers className="w-4 h-4 sm:w-6 sm:h-6" />
           </div>
         </div>
 
-        <div className={`${carteStyle} p-5 flex items-center justify-between`}>
+        <div className={`${carteStyle} p-3.5 sm:p-5 flex items-center justify-between`}>
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-              {estBenchmarkActif ? "Sources Confrontées" : "Visualisations"}
+            <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">
+              {estBenchmarkActif ? "Sources" : "Graphiques"}
             </p>
-            <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-              {estBenchmarkActif ? `${sourcesFichiers.length} fichiers` : graphiquesEpingles.length}
+            <h3 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white mt-0.5">
+              {estBenchmarkActif ? `${sourcesFichiers.length}` : graphiquesEpingles.length}
             </h3>
-            <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium">
-              {estBenchmarkActif ? "• Séries synchronisées" : "• Incluses au rapport"}
+            <p className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium truncate">
+              {estBenchmarkActif ? "Séries sync" : "Inclus"}
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
-            <BarChart3 className="w-6 h-6" />
+          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold shrink-0">
+            <BarChart3 className="w-4 h-4 sm:w-6 sm:h-6" />
           </div>
         </div>
 
-        <div className={`${carteStyle} p-5 flex items-center justify-between`}>
+        <div className={`${carteStyle} p-3.5 sm:p-5 flex items-center justify-between`}>
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Complétude Réelle</p>
-            <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">
+            <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">Complétude</p>
+            <h3 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white mt-0.5">
               {estBenchmarkActif && statsGlobalesMulti
                 ? `${Math.round(
                     statsGlobalesMulti.resumeSources.reduce((a, b) => a + b.completude, 0) /
@@ -912,16 +1049,12 @@ Ne mets ni introduction ni conclusion.`;
                   )} %`
                 : `${completudeGlobale} %`}
             </h3>
-            <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium">
-              {estBenchmarkActif ? (
-                <span>Réf {refSource} : {statsGlobalesMulti?.refInfo.completude} %</span>
-              ) : (
-                "• Données qualifiées"
-              )}
+            <p className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium truncate">
+              Données intègres
             </p>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
-            <CheckCircle2 className="w-6 h-6" />
+          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold shrink-0">
+            <CheckCircle2 className="w-4 h-4 sm:w-6 sm:h-6" />
           </div>
         </div>
       </section>
@@ -1004,52 +1137,52 @@ Ne mets ni introduction ni conclusion.`;
         </button>
       </nav>
 
-      {/* 4. DÉPLIANT 1 : SYNTHÈSE EXÉCUTIVE */}
+      {/* 4. DÉPLIANT 1 : SYNTHÈSE EXÉCUTIVE (2 COLONNES SUR MOBILE) */}
       <Depliant
         id="sec-synthese"
-        titre={estBenchmarkActif ? `Synthèse exécutive du Benchmark (${sourcesFichiers.length} fichiers)` : "Synthèse exécutive & Faits marquants"}
-        detail={estBenchmarkActif ? `${syntheseComparativeCards.length} constats multi-sources` : `${rapportActif.length} points clés identifiés`}
+        titre={estBenchmarkActif ? `Synthèse exécutive (${sourcesFichiers.length} fichiers)` : "Synthèse exécutive & Faits marquants"}
+        detail={estBenchmarkActif ? `${syntheseComparativeCards.length} constats` : `${rapportActif.length} points clés`}
         parDefautOuvert={true}
       >
-        <div className="space-y-5">
+        <div className="space-y-4">
           {estBenchmarkActif && (
-            <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs text-blue-950 dark:text-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs text-blue-950 dark:text-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
               <div>
-                <p className="font-bold text-sm text-blue-900 dark:text-blue-100 flex items-center gap-1.5">
-                  <Scale className="w-4 h-4 text-blue-600" />
-                  Confrontation multi-sources · Référence pivot : {refSource}
+                <p className="font-bold text-xs sm:text-sm text-blue-900 dark:text-blue-100 flex items-center gap-1.5">
+                  <Scale className="w-4 h-4 text-blue-600 shrink-0" />
+                  Pivot : {nettoyerNomAffichage(refSource)}
                 </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  Les indicateurs ci-dessous mesurent directement les écarts constatés entre vos {sourcesFichiers.length} fichiers importés.
+                <p className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Écarts mesurés entre vos {sourcesFichiers.length} fichiers.
                 </p>
               </div>
-              <div className="text-right shrink-0">
-                <span className="inline-block px-3 py-1 rounded-full font-bold text-xs bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-200">
-                  {fmt(corps.length)} lignes au total
+              <div className="text-left sm:text-right shrink-0">
+                <span className="inline-block px-2.5 py-0.5 rounded-full font-bold text-[10px] sm:text-xs bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-200">
+                  {fmt(corps.length)} lignes
                 </span>
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
             {estBenchmarkActif
               ? syntheseComparativeCards.map((c, i) => (
-                  <div key={i} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between shadow-xs">
+                  <div key={i} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl sm:rounded-2xl p-2.5 sm:p-4 flex flex-col justify-between shadow-xs">
                     <div>
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800">
-                          {c.type === "numerique" && <BarChart3 className="w-4 h-4 text-blue-600" />}
-                          {c.type === "categorie" && <PieChart className="w-4 h-4 text-slate-600" />}
-                          {c.type === "qualite" && <Scale className="w-4 h-4 text-emerald-600" />}
+                      <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5 sm:mb-2">
+                        <div className="p-1 sm:p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800">
+                          {c.type === "numerique" && <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600" />}
+                          {c.type === "categorie" && <PieChart className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600" />}
+                          {c.type === "qualite" && <Scale className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600" />}
                         </div>
                         {c.deltaBadge && (
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${c.estHausse ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"}`}>
+                          <span className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-full ${c.estHausse ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"}`}>
                             {c.deltaBadge}
                           </span>
                         )}
                       </div>
-                      <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 mb-1">{c.titre}</h4>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">{c.detail}</p>
+                      <h4 className="font-bold text-[11px] sm:text-xs text-slate-800 dark:text-slate-200 mb-0.5 sm:mb-1 truncate">{c.titre}</h4>
+                      <p className="text-[10px] sm:text-xs text-slate-600 dark:text-slate-400 leading-snug line-clamp-3 sm:line-clamp-none">{c.detail}</p>
                     </div>
                   </div>
                 ))
@@ -1062,13 +1195,13 @@ Ne mets ni introduction ni conclusion.`;
         </div>
       </Depliant>
 
-      {/* DÉPLIANT 2 : STATISTIQUES DÉTAILLÉES PAR COLONNE */}
+      {/* DÉPLIANT 2 : STATISTIQUES PAR COLONNE (2 COLONNES SUR MOBILE) */}
       <Depliant
         id="sec-stats"
-        titre={estBenchmarkActif ? `Statistiques détaillées par colonne (vs ${refSource})` : "Statistiques détaillées par colonne"}
+        titre={estBenchmarkActif ? `Statistiques par colonne (vs ${nettoyerNomAffichage(refSource)})` : "Statistiques par colonne"}
         detail={`${noms.length} colonnes profilées`}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
           {noms.map((nom) => {
             const info = resultatActif?.statistiques?.[nom];
             if (!info) return null;
@@ -1086,27 +1219,26 @@ Ne mets ni introduction ni conclusion.`;
                 const statsRef = calculerStatsComplet(numsRef);
 
                 return (
-                  <div key={nom} className={`${carteStyle} p-4 space-y-3`}>
-                    <div className="flex justify-between items-center gap-2 border-b pb-2 border-slate-100 dark:border-slate-800">
-                      <span className="font-bold text-sm truncate text-slate-900 dark:text-slate-100">{nom}</span>
-                      <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 px-2 py-0.5 rounded-md whitespace-nowrap">
-                        Numérique
+                  <div key={nom} className={`${carteStyle} p-2.5 sm:p-4 space-y-2 sm:space-y-3`}>
+                    <div className="flex justify-between items-center gap-1 border-b pb-1.5 border-slate-100 dark:border-slate-800">
+                      <span className="font-bold text-xs sm:text-sm truncate text-slate-900 dark:text-slate-100">{nettoyerNomAffichage(nom)}</span>
+                      <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 px-1.5 py-0.5 rounded whitespace-nowrap shrink-0">
+                        Num
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-200/50 dark:border-blue-800/40 text-xs space-y-1">
-                      <div className="flex justify-between font-bold text-blue-900 dark:text-blue-200 pb-1 border-b border-blue-200/40">
-                        <span>Référence : {refSource}</span>
-                        <span className="font-mono">{fmt(statsRef.moy)} (Moy)</span>
+                    <div className="p-2 sm:p-3 rounded-xl bg-blue-50/50 dark:bg-blue-950/30 border border-blue-200/50 dark:border-blue-800/40 text-[10px] sm:text-xs space-y-1">
+                      <div className="flex justify-between font-bold text-blue-900 dark:text-blue-200 pb-1 border-b border-blue-200/40 truncate">
+                        <span>Réf : {nettoyerNomAffichage(refSource)}</span>
+                        <span className="font-mono">{fmt(statsRef.moy)}</span>
                       </div>
                       <Ligne l="Médiane" v={fmt(statsRef.med)} />
-                      <Ligne l="Min / Max" v={`${fmt(statsRef.min)} / ${fmt(statsRef.max)}`} />
-                      <Ligne l="Somme cumulée" v={fmt(statsRef.somme)} />
-                      {statsRef.atypiques > 0 && <Ligne l="Valeurs atypiques" v={fmt(statsRef.atypiques)} fort />}
-                      <Ligne l="Complétude" v={`${completudeRef} %`} />
+                      <Ligne l="Min/Max" v={`${fmt(statsRef.min)}/${fmt(statsRef.max)}`} />
+                      <Ligne l="Somme" v={fmt(statsRef.somme)} />
+                      <Ligne l="Rempli" v={`${completudeRef}%`} />
                     </div>
 
-                    <div className="space-y-2.5 text-xs">
+                    <div className="space-y-1.5 text-[10px] sm:text-xs">
                       {autresSources.map((src) => {
                         const lignesSrc = corpsParSource.get(src) || [];
                         const valsSrc = lignesSrc.map((l) => l[colIdx]).filter((v) => !estValeurVide(v));
@@ -1115,28 +1247,17 @@ Ne mets ni introduction ni conclusion.`;
 
                         const deltaMoy = statsSrc.moy !== null && statsRef.moy !== null ? arrondir(statsSrc.moy - statsRef.moy) : 0;
                         const pctMoy = statsRef.moy && statsRef.moy > 0 ? Math.round((deltaMoy / statsRef.moy) * 1000) / 10 : 0;
-                        const deltaSomme = arrondir(statsSrc.somme - statsRef.somme);
-                        const pctSomme = statsRef.somme > 0 ? Math.round((deltaSomme / statsRef.somme) * 1000) / 10 : 0;
-                        const completudeSrc = lignesSrc.length ? Math.round((valsSrc.length / lignesSrc.length) * 100) : 0;
 
                         return (
-                          <div key={src} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-1">
-                            <div className="flex justify-between items-center font-bold text-slate-800 dark:text-slate-200 pb-1 border-b border-slate-200/40 dark:border-slate-700/40">
-                              <span className="truncate max-w-[140px]">{src}</span>
-                              <span className={deltaMoy >= 0 ? "text-emerald-600 font-mono text-[11px]" : "text-rose-600 font-mono text-[11px]"}>
-                                {fmt(statsSrc.moy)} ({deltaMoy >= 0 ? "+" : ""}{pctMoy} %)
+                          <div key={src} className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-0.5">
+                            <div className="flex justify-between items-center font-bold text-slate-800 dark:text-slate-200 pb-0.5 border-b border-slate-200/40">
+                              <span className="truncate max-w-[80px] sm:max-w-[120px]">{nettoyerNomAffichage(src)}</span>
+                              <span className={deltaMoy >= 0 ? "text-emerald-600 font-mono text-[10px]" : "text-rose-600 font-mono text-[10px]"}>
+                                {deltaMoy >= 0 ? "+" : ""}{pctMoy}%
                               </span>
                             </div>
-                            <Ligne l="Médiane" v={fmt(statsSrc.med)} />
-                            <Ligne l="Min / Max" v={`${fmt(statsSrc.min)} / ${fmt(statsSrc.max)}`} />
-                            <div className="flex justify-between text-[11px] text-slate-600 dark:text-slate-400">
-                              <span>Somme</span>
-                              <span className="font-mono font-semibold">
-                                {fmt(statsSrc.somme)} <span className={deltaSomme >= 0 ? "text-emerald-600" : "text-rose-600"}>({deltaSomme >= 0 ? "+" : ""}{pctSomme} %)</span>
-                              </span>
-                            </div>
-                            {statsSrc.atypiques > 0 && <Ligne l="Valeurs atypiques" v={fmt(statsSrc.atypiques)} fort />}
-                            <Ligne l="Complétude" v={`${completudeSrc} %`} />
+                            <Ligne l="Moyenne" v={fmt(statsSrc.moy)} />
+                            <Ligne l="Somme" v={fmt(statsSrc.somme)} />
                           </div>
                         );
                       })}
@@ -1151,64 +1272,49 @@ Ne mets ni introduction ni conclusion.`;
               const setRef = new Set(valsRef.map((v) => String(v).trim()));
 
               return (
-                <div key={nom} className={`${carteStyle} p-4 space-y-3`}>
-                  <div className="flex justify-between items-center gap-2 border-b pb-2 border-slate-100 dark:border-slate-800">
-                    <span className="font-bold text-sm truncate text-slate-900 dark:text-slate-100">{nom}</span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 px-2 py-0.5 rounded-md whitespace-nowrap">
-                      {info.type}
+                <div key={nom} className={`${carteStyle} p-2.5 sm:p-4 space-y-2 sm:space-y-3`}>
+                  <div className="flex justify-between items-center gap-1 border-b pb-1.5 border-slate-100 dark:border-slate-800">
+                    <span className="font-bold text-xs sm:text-sm truncate text-slate-900 dark:text-slate-100">{nettoyerNomAffichage(nom)}</span>
+                    <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 px-1.5 py-0.5 rounded shrink-0">
+                      Cat
                     </span>
                   </div>
 
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/40 text-xs space-y-1">
+                  <div className="p-2 sm:p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/40 text-[10px] sm:text-xs space-y-1">
                     <div className="flex justify-between font-bold text-slate-900 dark:text-slate-200 pb-1 border-b border-slate-200/40">
-                      <span>Référence : {refSource}</span>
-                      <span>{setRef.size} modalité(s)</span>
+                      <span>Réf : {nettoyerNomAffichage(refSource)}</span>
+                      <span>{setRef.size} cat.</span>
                     </div>
                     {topRef && (
                       <Ligne
                         l="Dominant"
-                        v={`${topRef[0]} (${Math.round((topRef[1] / (valsRef.length || 1)) * 100)} %)`}
+                        v={`${topRef[0]} (${Math.round((topRef[1] / (valsRef.length || 1)) * 100)}%)`}
                         fort
                       />
                     )}
-                    <Ligne l="Complétude" v={`${completudeRef} %`} />
+                    <Ligne l="Rempli" v={`${completudeRef}%`} />
                   </div>
 
-                  <div className="space-y-2 text-xs">
+                  <div className="space-y-1.5 text-[10px] sm:text-xs">
                     {autresSources.map((src) => {
                       const lignesSrc = corpsParSource.get(src) || [];
                       const valsSrc = lignesSrc.map((l) => l[colIdx]).filter((v) => !estValeurVide(v));
-                      const setSrc = new Set(valsSrc.map((v) => String(v).trim()));
-
-                      let nouveaux = 0;
-                      setSrc.forEach((val) => {
-                        if (!setRef.has(val)) nouveaux++;
-                      });
-
                       const freqSrc: Record<string, number> = {};
                       valsSrc.forEach((v) => (freqSrc[String(v).trim()] = (freqSrc[String(v).trim()] || 0) + 1));
                       const topSrc = Object.entries(freqSrc).sort((a, b) => b[1] - a[1])[0];
-                      const completudeSrc = lignesSrc.length ? Math.round((valsSrc.length / lignesSrc.length) * 100) : 0;
 
                       return (
-                        <div key={src} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-1">
-                          <div className="flex justify-between items-center font-bold text-slate-800 dark:text-slate-200 pb-1 border-b border-slate-200/40">
-                            <span className="truncate max-w-[140px]">{src}</span>
-                            <span>{setSrc.size} cat.</span>
+                        <div key={src} className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-0.5">
+                          <div className="flex justify-between items-center font-bold text-slate-800 dark:text-slate-200 pb-0.5 border-b border-slate-200/40">
+                            <span className="truncate max-w-[80px] sm:max-w-[120px]">{nettoyerNomAffichage(src)}</span>
+                            <span>{new Set(valsSrc.map((v) => String(v).trim())).size} cat.</span>
                           </div>
                           {topSrc && (
                             <Ligne
                               l="Dominant"
-                              v={`${topSrc[0]} (${Math.round((topSrc[1] / (valsSrc.length || 1)) * 100)} %)`}
+                              v={`${topSrc[0]} (${Math.round((topSrc[1] / (valsSrc.length || 1)) * 100)}%)`}
                             />
                           )}
-                          <div className="flex justify-between text-[11px]">
-                            <span className="text-slate-500">Nouvelles modalités</span>
-                            <span className={`font-bold ${nouveaux > 0 ? "text-blue-600" : "text-slate-400"}`}>
-                              {nouveaux > 0 ? `+${nouveaux} apparue(s)` : "Identiques"}
-                            </span>
-                          </div>
-                          <Ligne l="Complétude" v={`${completudeSrc} %`} />
                         </div>
                       );
                     })}
@@ -1218,23 +1324,22 @@ Ne mets ni introduction ni conclusion.`;
             }
 
             return (
-              <div key={nom} className={`${carteStyle} p-4 space-y-2.5`}>
-                <div className="flex justify-between items-center gap-2 border-b pb-2 border-slate-100 dark:border-slate-800">
-                  <span className="font-bold text-sm truncate text-slate-900 dark:text-slate-100">{nom}</span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 px-2 py-0.5 rounded-md whitespace-nowrap">
-                    {info.type}
+              <div key={nom} className={`${carteStyle} p-2.5 sm:p-4 space-y-2`}>
+                <div className="flex justify-between items-center gap-1 border-b pb-1.5 border-slate-100 dark:border-slate-800">
+                  <span className="font-bold text-xs sm:text-sm truncate text-slate-900 dark:text-slate-100">{nettoyerNomAffichage(nom)}</span>
+                  <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 px-1.5 py-0.5 rounded shrink-0">
+                    {info.type.slice(0, 3)}
                   </span>
                 </div>
-                <div className="text-xs space-y-1.5 pt-1">
+                <div className="text-[10px] sm:text-xs space-y-1 pt-0.5">
                   {info.type === "numerique" && (() => {
                     const n = s as unknown as Num;
                     return (
                       <>
                         <Ligne l="Moyenne" v={fmt(n.moyenne)} />
                         <Ligne l="Médiane" v={fmt(n.mediane)} />
-                        <Ligne l="Min / Max" v={`${fmt(n.min)} / ${fmt(n.max)}`} />
-                        {n.atypiques > 0 && <Ligne l="Valeurs atypiques" v={fmt(n.atypiques)} fort />}
-                        {info.tendance && <Ligne l="Tendance" v={info.tendance.direction} />}
+                        <Ligne l="Min/Max" v={`${fmt(n.min)}/${fmt(n.max)}`} />
+                        {n.atypiques > 0 && <Ligne l="Atypiques" v={fmt(n.atypiques)} fort />}
                       </>
                     );
                   })()}
@@ -1242,35 +1347,17 @@ Ne mets ni introduction ni conclusion.`;
                     const c = s as unknown as Cat;
                     return (
                       <>
-                        <p className="text-[10px] text-slate-400 pb-1">
-                          {fmt(c.total)} valeurs — {fmt(c.nbCategoriesDistinctes)} catégories
+                        <p className="text-[9px] text-slate-400 pb-0.5">
+                          {fmt(c.total)} val. — {fmt(c.nbCategoriesDistinctes)} cat.
                         </p>
-                        {c.topValeurs.map((t, i) => (
+                        {c.topValeurs.slice(0, 2).map((t, i) => (
                           <Ligne
                             key={t.valeur}
                             l={t.valeur}
-                            v={`${fmt(t.effectif)} (${t.pourcentage} %)`}
+                            v={`${fmt(t.effectif)} (${t.pourcentage}%)`}
                             fort={i === 0}
                           />
                         ))}
-                      </>
-                    );
-                  })()}
-                  {info.type === "booleen" && (() => {
-                    const b = s as unknown as Boo;
-                    return (
-                      <>
-                        <Ligne l="Oui" v={fmt(b.vrai)} />
-                        <Ligne l="Non" v={fmt(b.faux)} />
-                      </>
-                    );
-                  })()}
-                  {info.type === "date" && (() => {
-                    const d = s as unknown as Dat;
-                    return (
-                      <>
-                        <Ligne l="Du" v={d.min ? d.min.slice(0, 10) : "—"} />
-                        <Ligne l="Au" v={d.max ? d.max.slice(0, 10) : "—"} />
                       </>
                     );
                   })()}
@@ -1278,12 +1365,12 @@ Ne mets ni introduction ni conclusion.`;
                     const d = s as unknown as Ident;
                     return (
                       <>
-                        <Ligne l="Valeurs distinctes" v={fmt(d.distincts)} />
-                        <Ligne l="Unicité" v={`${d.unicite} %`} />
+                        <Ligne l="Distincts" v={fmt(d.distincts)} />
+                        <Ligne l="Unicité" v={`${d.unicite}%`} />
                       </>
                     );
                   })()}
-                  <Ligne l="Remplissage" v={`${info.tauxRemplissage} %`} />
+                  <Ligne l="Rempli" v={`${info.tauxRemplissage}%`} />
                 </div>
               </div>
             );
@@ -1291,28 +1378,28 @@ Ne mets ni introduction ni conclusion.`;
         </div>
       </Depliant>
 
-      {/* DÉPLIANT 3 : CORRÉLATIONS */}
+      {/* DÉPLIANT 3 : CORRÉLATIONS (2 COLONNES SUR MOBILE) */}
       <Depliant
         id="sec-correlations"
-        titre={estBenchmarkActif ? `Évolution des corrélations (${sourcesFichiers.length} fichiers)` : "Corrélations significatives"}
-        detail={estBenchmarkActif ? `${correlationsBenchmark.length} relations analysées` : `${correlationsStandard.length} relations analysées`}
+        titre={estBenchmarkActif ? `Corrélations (${sourcesFichiers.length} fichiers)` : "Corrélations significatives"}
+        detail={estBenchmarkActif ? `${correlationsBenchmark.length} relations` : `${correlationsStandard.length} relations`}
       >
         <div className="space-y-4">
-          <p className="text-xs text-slate-500">
+          <p className="text-[11px] sm:text-xs text-slate-500">
             {estBenchmarkActif
-              ? `Analyse détaillée de la transformation des liens mathématiques par rapport au fichier pivot « ${refSource} ».`
-              : "Mesure de la force du lien linéaire entre deux variables avec traduction en impact opérationnel."}
+              ? `Transformation des liens mathématiques par rapport au pivot « ${nettoyerNomAffichage(refSource)} ».`
+              : "Mesure de la force du lien linéaire entre deux variables."}
           </p>
 
           <div className="space-y-3">
-            <div className="no-print print:hidden bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="no-print print:hidden bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-xl sm:rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
-                  <span>Synthèse analytique transversale</span>
+                  <span>Synthèse transversale</span>
                 </h5>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Dégage les leviers moteurs prioritaires et les points de vigilance opérationnels.
+                <p className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5">
+                  Leviers moteurs et vigilances opérationnelles.
                 </p>
               </div>
 
@@ -1325,29 +1412,29 @@ Ne mets ni introduction ni conclusion.`;
                 {chargementCorrIA ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                    <span>Analyse des liens...</span>
+                    <span>Analyse...</span>
                   </>
                 ) : syntheseCorrIA ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Actualiser la synthèse</span>
+                    <span>Actualiser</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Générer la synthèse</span>
+                    <span>Générer</span>
                   </>
                 )}
               </button>
             </div>
 
             {syntheseCorrIA && (
-              <div className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm space-y-2">
+              <div className="print-eviter-coupure bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-5 rounded-xl sm:rounded-2xl shadow-sm space-y-2">
                 <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100 text-xs border-b border-slate-100 dark:border-slate-800 pb-2">
                   <span className="w-2 h-2 rounded-full bg-blue-600"></span>
-                  <span className="uppercase tracking-wider">Synthèse Décisionnelle des Interactions</span>
+                  <span className="uppercase tracking-wider">Interactions Décisionnelles</span>
                 </div>
-                <div className="text-xs text-slate-700 dark:text-slate-300 pt-1">
+                <div className="text-[11px] sm:text-xs text-slate-700 dark:text-slate-300 pt-1">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_CORR}>
                     {syntheseCorrIA}
                   </ReactMarkdown>
@@ -1362,56 +1449,52 @@ Ne mets ni introduction ni conclusion.`;
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-2.5 sm:gap-4">
             {estBenchmarkActif
               ? correlationsBenchmark.map((c) => (
                   <div
                     key={`${c.colA}|${c.colB}`}
-                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-3"
+                    className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-2 flex flex-col justify-between"
                   >
-                    <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-                      <span className="font-bold text-slate-900 dark:text-slate-100 text-xs">
-                        {c.colA} <span className="text-blue-500 font-normal">↔</span> {c.colB}
-                      </span>
-                      <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-bold border border-blue-200/50">
-                        {refSource} (Réf) : {c.rRef ?? "—"}
-                      </span>
-                    </div>
+                    <div>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                        <span className="font-bold text-slate-900 dark:text-slate-100 text-[11px] sm:text-xs truncate">
+                          {nettoyerNomAffichage(c.colA)} <span className="text-blue-500 font-normal">↔</span> {nettoyerNomAffichage(c.colB)}
+                        </span>
+                        <span className="font-mono text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-bold border border-blue-200/50 self-start sm:self-auto">
+                          r = {c.rRef ?? "—"}
+                        </span>
+                      </div>
 
-                    <div className="space-y-3 pt-1">
-                      {c.comparaisons.map((comp) => (
-                        <div
-                          key={comp.source}
-                          className="p-3 rounded-xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-2"
-                        >
-                          <div className="flex items-center justify-between text-[11px] font-mono">
-                            <span className="text-slate-600 dark:text-slate-300 font-bold">
-                              {refSource} ({c.rRef ?? "—"}) → {comp.source} (<strong>{comp.r ?? "—"}</strong>)
-                            </span>
-                            <span
-                              className={`font-bold px-2 py-0.5 rounded text-[10px] ${
-                                comp.diff > 0
-                                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40"
-                                  : comp.diff < 0
-                                  ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40"
-                                  : "bg-slate-100 text-slate-500"
-                              }`}
-                            >
-                              {comp.diff > 0 ? `+${comp.diff}` : comp.diff}
-                            </span>
-                          </div>
-
-                          <div className="text-[11px] space-y-1">
-                            <div className="flex items-center gap-1.5 font-bold text-blue-700 dark:text-blue-300">
-                              <Lightbulb className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                              <span>{comp.expl.diagnostic}</span>
+                      <div className="space-y-1.5 pt-1.5">
+                        {c.comparaisons.map((comp) => (
+                          <div
+                            key={comp.source}
+                            className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-1"
+                          >
+                            <div className="flex items-center justify-between text-[10px] font-mono">
+                              <span className="text-slate-600 dark:text-slate-300 truncate max-w-[80px] sm:max-w-none">
+                                {nettoyerNomAffichage(comp.source)}
+                              </span>
+                              <span
+                                className={`font-bold px-1 py-0.2 rounded text-[9px] ${
+                                  comp.diff > 0
+                                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40"
+                                    : comp.diff < 0
+                                    ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {comp.diff > 0 ? `+${comp.diff}` : comp.diff}
+                              </span>
                             </div>
-                            <p className="text-slate-600 dark:text-slate-400 leading-relaxed pl-5">
-                              {comp.expl.detail}
+
+                            <p className="text-[10px] text-slate-600 dark:text-slate-400 leading-tight line-clamp-2">
+                              {comp.expl.diagnostic}
                             </p>
                           </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   </div>
                 ))
@@ -1420,25 +1503,24 @@ Ne mets ni introduction ni conclusion.`;
                   return (
                     <div
                       key={`${c.colonneA}|${c.colonneB}`}
-                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-2.5"
+                      className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs space-y-1.5 sm:space-y-2 flex flex-col justify-between"
                     >
-                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-                        <span className="font-bold text-slate-900 dark:text-slate-100 text-xs">
-                          {c.colonneA} <span className="text-blue-500 font-normal">↔</span> {c.colonneB}
-                        </span>
-                        <span className="font-mono font-bold bg-slate-50 dark:bg-slate-800 px-2.5 py-1 rounded-md text-xs border border-slate-200/60 dark:border-slate-700">
-                          r = {c.coefficient}{" "}
-                          <span className="text-[10px] font-normal text-slate-500">
-                            ({c.interpretation})
+                      <div>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                          <span className="font-bold text-slate-900 dark:text-slate-100 text-[11px] sm:text-xs truncate">
+                            {nettoyerNomAffichage(c.colonneA)} <span className="text-blue-500 font-normal">↔</span> {nettoyerNomAffichage(c.colonneB)}
                           </span>
-                        </span>
-                      </div>
+                          <span className="font-mono font-bold bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px] sm:text-xs border border-slate-200/60 dark:border-slate-700 self-start sm:self-auto shrink-0">
+                            r = {c.coefficient}
+                          </span>
+                        </div>
 
-                      <div className="text-[11px] flex items-start gap-1.5 pt-0.5">
-                        <Lightbulb className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
-                        <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                          {explTexte}
-                        </p>
+                        <div className="text-[10px] sm:text-[11px] flex items-start gap-1 pt-1">
+                          <Lightbulb className="w-3 h-3 text-blue-600 shrink-0 mt-0.5" />
+                          <p className="text-slate-600 dark:text-slate-400 leading-snug line-clamp-3 sm:line-clamp-none">
+                            {explTexte}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1447,7 +1529,7 @@ Ne mets ni introduction ni conclusion.`;
         </div>
       </Depliant>
 
-      {/* 5. MODULES D'EXPLORATION VISUELLE & TABLEAUX AVEC ANCRAGES */}
+      {/* 5. MODULES D'EXPLORATION VISUELLE & TABLEAUX */}
       <section className="space-y-8">
         <div id="sec-previsions" className="scroll-mt-24">
           <ModulePrevisions entetes={entetes} corps={corps} />
@@ -1467,48 +1549,55 @@ Ne mets ni introduction ni conclusion.`;
 }
 
 function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; index: number }) {
-  const parties = bloc.texte.split(/:(.+)/);
-  const titre = parties.length > 1 ? parties[0].trim() : "Point clé";
-  const contenu = parties.length > 1 ? parties[1].trim() : bloc.texte;
+  const textePropre = nettoyerNomAffichage(bloc.texte);
+  const parties = textePropre.split(/:(.+)/);
+  let titre = parties.length > 1 ? parties[0].trim() : "Point clé";
+  let contenu = parties.length > 1 ? parties[1].trim() : textePropre;
 
-  let icone = <TrendingUp className="w-4 h-4 text-blue-600" />;
+  if (titre.toLowerCase() === "point cle" || titre.toLowerCase() === "point clé") {
+    if (/lignes?|champ/i.test(contenu)) titre = "Périmètre audité";
+    else if (/manquant|cellule|doublon/i.test(contenu)) titre = "Intégrité des données";
+    else titre = "Constat analytique";
+  }
+
+  let icone = <TrendingUp className="w-3.5 h-3.5 text-blue-600" />;
   let badgeTexte = "Indicateur";
   let badgeCouleur = "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300";
 
   if (bloc.type === "categorie") {
-    icone = <PieChart className="w-4 h-4 text-slate-600" />;
-    badgeTexte = "Majorité / Catégorie";
+    icone = <PieChart className="w-3.5 h-3.5 text-slate-600" />;
+    badgeTexte = "Catégorie";
     badgeCouleur = "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
   } else if (bloc.type === "numerique") {
-    icone = <BarChart3 className="w-4 h-4 text-blue-600" />;
-    badgeTexte = "Distribution chiffrée";
+    icone = <BarChart3 className="w-3.5 h-3.5 text-blue-600" />;
+    badgeTexte = "Chiffres";
     badgeCouleur = "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300";
   } else if (bloc.type === "qualite" || bloc.type === "intro") {
-    icone = <AlertTriangle className="w-4 h-4 text-amber-600" />;
-    badgeTexte = "Qualité & Données";
+    icone = <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />;
+    badgeTexte = "Qualité";
     badgeCouleur = "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300";
   }
 
   const partiesTexte = contenu.split(/(\d+(?:[.,]\d+)?\s*%)/g);
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between shadow-xs hover:shadow transition-shadow">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl sm:rounded-2xl p-2.5 sm:p-4 flex flex-col justify-between shadow-xs hover:shadow transition-shadow">
       <div>
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800">{icone}</div>
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeCouleur}`}>
+        <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
+          <div className="p-1 rounded bg-slate-50 dark:bg-slate-800">{icone}</div>
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${badgeCouleur}`}>
             {badgeTexte}
           </span>
         </div>
-        <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 mb-1 leading-snug">
+        <h4 className="font-bold text-[11px] sm:text-xs text-slate-800 dark:text-slate-200 mb-1 leading-snug line-clamp-2">
           {titre}
         </h4>
-        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+        <p className="text-[10px] sm:text-xs text-slate-600 dark:text-slate-400 leading-snug line-clamp-3 sm:line-clamp-none">
           {partiesTexte.map((morceau, i) =>
             /(\d+(?:[.,]\d+)?\s*%)/.test(morceau) ? (
               <span
                 key={i}
-                className="inline-block px-1.5 py-0.2 mx-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 font-bold text-[11px]"
+                className="inline-block px-1 py-0.2 mx-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 font-bold text-[10px]"
               >
                 {morceau}
               </span>
@@ -1537,17 +1626,19 @@ function Depliant({
 }) {
   return (
     <details id={id} className={`group ${carteStyle} scroll-mt-24`} open={parDefautOuvert}>
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-6 py-4 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 [&::-webkit-details-marker]:hidden">
-        <span className="flex items-baseline gap-3">
-          <span className="text-base md:text-lg font-bold text-slate-900 dark:text-white">{titre}</span>
-          <span className="text-xs text-slate-400 font-medium">{detail}</span>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 sm:px-6 py-3 sm:py-4 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 [&::-webkit-details-marker]:hidden">
+        <span className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-3">
+          <span className="text-sm sm:text-base md:text-lg font-bold text-slate-900 dark:text-white leading-tight">
+            {titre}
+          </span>
+          <span className="text-[10px] sm:text-xs text-slate-400 font-medium">{detail}</span>
         </span>
         <ChevronDown
-          className="h-5 w-5 shrink-0 text-slate-400 transition-transform group-open:rotate-180 print:hidden"
+          className="h-4 w-4 sm:h-5 sm:w-5 shrink-0 text-slate-400 transition-transform group-open:rotate-180 print:hidden"
           aria-hidden
         />
       </summary>
-      <div className="border-t border-slate-100 px-6 py-5 dark:border-slate-800">{children}</div>
+      <div className="border-t border-slate-100 px-3 sm:px-6 py-3.5 sm:py-5 dark:border-slate-800">{children}</div>
     </details>
   );
 }
@@ -1555,12 +1646,12 @@ function Depliant({
 function Ligne({ l, v, fort }: { l: string; v: string; fort?: boolean }) {
   return (
     <div
-      className={`flex justify-between gap-3 ${
+      className={`flex justify-between items-center gap-1.5 text-[10px] sm:text-xs ${
         fort ? "font-bold text-blue-600 dark:text-blue-400" : "text-slate-600 dark:text-slate-400"
       }`}
     >
       <span className="truncate">{l}</span>
-      <span className="whitespace-nowrap font-semibold">{v}</span>
+      <span className="whitespace-nowrap font-semibold font-mono shrink-0">{v}</span>
     </div>
   );
 }

@@ -24,6 +24,8 @@ import {
   Square,
   Trash2,
   Scale,
+  Table,
+  LayoutGrid,
 } from "lucide-react";
 
 interface FichierImporte {
@@ -79,7 +81,6 @@ function selectionnerMeilleureFeuille(wb: XLSX.WorkBook): XLSX.WorkSheet {
     throw new Error("Le classeur Excel ne contient aucune feuille.");
   }
 
-  // 1. Priorité aux feuilles dont le nom contient "données", "donnees", "data"
   const nomDonnees = wb.SheetNames.find((n) =>
     /donn[eé]es?|data/i.test(n.trim())
   );
@@ -87,17 +88,15 @@ function selectionnerMeilleureFeuille(wb: XLSX.WorkBook): XLSX.WorkSheet {
     return wb.Sheets[nomDonnees];
   }
 
-  // 2. Écarter les feuilles administratives (Métadonnées, Schéma, Requêtes, Sommaire)
   const feuillesUtiles = wb.SheetNames.filter(
     (n) =>
-      !/^(m[eé]tadonn[eé]es?|metadata|sch[eé]ma|requ[eê]te|notice|sommaire|notes?|lisez[- ]?moi)$/i.test(
+      !/^(m[eé]tadonn[eé]es?|metadata|sch[eé]ma|requ[eê]te|notice|sommaire|notes?|lisez[_\-\s]?moi)$/i.test(
         n.trim()
       )
   );
 
   const candidates = feuillesUtiles.length > 0 ? feuillesUtiles : wb.SheetNames;
 
-  // 3. Sélectionner celle qui dispose de la plus grande plage utile
   let meilleure = wb.Sheets[candidates[0]];
   let maxCellules = 0;
 
@@ -132,6 +131,7 @@ export default function HomePage() {
   const [erreurImport, setErreurImport] = useState<string>("");
   const [enChargement, setEnChargement] = useState<boolean>(false);
   const [estSurvole, setEstSurvole] = useState<boolean>(false);
+  const [modeVue, setModeVue] = useState<"tableau" | "fiches">("tableau");
 
   const [fichiers, setFichiers] = useState<FichierImporte[]>([]);
   const [fichiersSelectionnesPourComparaison, setFichiersSelectionnesPourComparaison] = useState<string[]>([]);
@@ -145,7 +145,6 @@ export default function HomePage() {
 
     if (ext === "csv") {
       const texteBrut = await f.text();
-      // Purge du BOM UTF-8 dès l'entrée
       const texte = texteBrut.replace(/^\uFEFF/, "");
       const separateur = detecterSeparateur(texte);
 
@@ -180,7 +179,6 @@ export default function HomePage() {
       throw new Error(`Fichier ${f.name} vide : aucune colonne détectée.`);
     }
 
-    // Filtrage des lignes vides ET des lignes de calcul parasites (Totaux, Variations)
     const resteFiltre = reste.filter((ligne) => {
       if (!ligne || ligne.length === 0) return false;
       const aDesValeurs = ligne.some((c) => !estValeurVide(c));
@@ -323,19 +321,19 @@ export default function HomePage() {
   const totalPages = Math.max(1, Math.ceil(corps.length / lignesParPage));
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-16 font-sans">
+    <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-16 font-sans">
       {/* En-tête Titre & Statut */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold mb-2">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold mb-1 sm:mb-2">
             <span>DATENZA</span>
             <span>·</span>
             <span>Aide à la Décision</span>
           </div>
-          <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
             Ingestion & Analyse des Données
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 text-sm">
+          <p className="text-slate-500 dark:text-slate-400 text-xs sm:text-sm">
             Importez vos classeurs Excel ou fichiers CSV pour les auditer, les projeter ou les comparer.
           </p>
         </div>
@@ -362,7 +360,7 @@ export default function HomePage() {
             void traiterFichiers(e.dataTransfer.files);
           }
         }}
-        className={`bg-white dark:bg-slate-900 border-2 border-dashed rounded-3xl p-10 text-center transition-all relative shadow-sm ${
+        className={`bg-white dark:bg-slate-900 border-2 border-dashed rounded-2xl sm:rounded-3xl p-6 sm:p-10 text-center transition-all relative shadow-sm ${
           estSurvole
             ? "border-blue-600 bg-blue-50/40 dark:bg-blue-950/20 scale-[1.01]"
             : "border-slate-300 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-600"
@@ -383,26 +381,26 @@ export default function HomePage() {
         />
 
         <div className="space-y-3">
-          <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto transition-transform">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto transition-transform">
             {enChargement ? (
-              <Loader2 className="w-7 h-7 animate-spin" />
+              <Loader2 className="w-6 h-6 sm:w-7 sm:h-7 animate-spin" />
             ) : (
-              <UploadCloud className="w-7 h-7" />
+              <UploadCloud className="w-6 h-6 sm:w-7 sm:h-7" />
             )}
           </div>
 
           <div>
-            <p className="text-base font-bold text-slate-800 dark:text-slate-200">
+            <p className="text-sm sm:text-base font-bold text-slate-800 dark:text-slate-200">
               {enChargement
                 ? "Traitement et vérification des données..."
-                : "Glissez vos fichiers ici ou cliquez pour parcourir"}
+                : "Glissez vos fichiers ici ou touchez pour parcourir"}
             </p>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-[11px] sm:text-xs text-slate-400 mt-1">
               Prise en charge de plusieurs fichiers Excel (.xlsx, .xls) et CSV
             </p>
           </div>
 
-          <div className="flex items-center justify-center gap-4 text-xs text-slate-500 pt-2 font-medium">
+          <div className="flex items-center justify-center gap-3 sm:gap-4 text-xs text-slate-500 pt-1 font-medium">
             <span className="flex items-center gap-1.5">
               <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
               Excel
@@ -418,7 +416,7 @@ export default function HomePage() {
 
       {/* Message d'erreur */}
       {erreurImport && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-900/50 p-4 text-xs font-semibold text-rose-800 dark:text-rose-300 flex items-center gap-2.5">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-900/50 p-3.5 sm:p-4 text-xs font-semibold text-rose-800 dark:text-rose-300 flex items-center gap-2.5">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{erreurImport}</span>
         </div>
@@ -426,14 +424,14 @@ export default function HomePage() {
 
       {/* Liste des fichiers importés */}
       {fichiers.length > 0 && (
-        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-3 sm:space-y-4 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
                 Fichiers importés ({fichiers.length})
               </h3>
-              <p className="text-xs text-slate-400">
-                Cliquez pour activer un fichier ou cochez les cases pour comparer plusieurs versions
+              <p className="text-[11px] sm:text-xs text-slate-400">
+                Touchez un fichier pour l&apos;activer ou cochez les cases pour comparer
               </p>
             </div>
 
@@ -441,10 +439,10 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={lancerComparaison}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 transition cursor-pointer"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 transition cursor-pointer"
               >
                 <Scale className="w-4 h-4" />
-                <span>Comparer les {fichiersSelectionnesPourComparaison.length} fichiers cochés</span>
+                <span>Comparer ({fichiersSelectionnesPourComparaison.length} cochés)</span>
               </button>
             )}
           </div>
@@ -458,29 +456,31 @@ export default function HomePage() {
                 <div
                   key={f.id}
                   onClick={() => selectionnerFichierActif(f)}
-                  className={`flex items-center justify-between p-3.5 rounded-2xl border text-xs cursor-pointer transition select-none ${
+                  className={`flex items-center justify-between p-3 sm:p-3.5 rounded-xl sm:rounded-2xl border text-xs cursor-pointer transition select-none gap-2 ${
                     estActif
                       ? "border-blue-500 bg-blue-50/60 dark:bg-blue-950/30 text-blue-950 dark:text-blue-200 shadow-sm"
                       : "border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/40 hover:bg-slate-100/60 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-300"
                   }`}
                 >
-                  <div className="flex items-center gap-3 truncate">
+                  <div className="flex items-center gap-2.5 truncate">
                     <input
                       type="checkbox"
                       checked={estCochePourComparer}
                       onClick={(e) => e.stopPropagation()}
                       onChange={() => basculerSelectionComparaison(f.id)}
                       title="Cocher pour comparer ce fichier"
-                      className="accent-blue-600 h-4 w-4 rounded cursor-pointer"
+                      className="accent-blue-600 h-4 w-4 rounded cursor-pointer shrink-0"
                     />
 
-                    <span className="font-bold truncate">{f.nom}</span>
-                    <span className="text-slate-400 whitespace-nowrap">
-                      — {f.nbLignes.toLocaleString("fr-FR")} ligne(s) · {f.entetes.length} colonnes
-                    </span>
+                    <div className="truncate">
+                      <p className="font-bold truncate text-xs">{f.nom}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {f.nbLignes.toLocaleString("fr-FR")} lignes · {f.entetes.length} cols
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     {estActif && (
                       <span className="text-[10px] bg-blue-200/60 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 font-bold px-2 py-0.5 rounded-md">
                         Actif
@@ -507,33 +507,35 @@ export default function HomePage() {
 
       {/* Confirmation du fichier importé actif */}
       {nomFichier && (
-        <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/40 rounded-2xl p-4 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center font-bold">
+        <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/40 rounded-2xl p-3.5 sm:p-4 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-3 truncate">
+            <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center font-bold shrink-0">
               <Check className="w-4 h-4" />
             </div>
-            <div>
-              <span className="text-sm font-bold text-slate-900 dark:text-slate-100">{nomFichier}</span>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {corps.length.toLocaleString("fr-FR")} ligne(s) exploitable(s) · {entetes.length} colonnes
+            <div className="truncate">
+              <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 truncate block">
+                {nomFichier}
+              </span>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {corps.length.toLocaleString("fr-FR")} ligne(s) · {entetes.length} colonnes
               </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Section Périmètre de l'Analyse */}
+      {/* Section Périmètre de l'Analyse (2 colonnes sur mobile) */}
       {entetes.length > 0 && (
-        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 md:p-8 space-y-6 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 md:p-8 space-y-4 sm:space-y-6 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3 sm:pb-4">
             <div>
-              <span className="text-[11px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400">
+              <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-blue-600 dark:text-blue-400">
                 Étape 2 · Sélection des variables
               </span>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">
+              <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white mt-0.5">
                 Périmètre de l&apos;analyse
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-[11px] sm:text-xs text-slate-500">
                 {choisies.length} colonne(s) sélectionnée(s) sur {entetes.length}
               </p>
             </div>
@@ -558,14 +560,14 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="max-h-72 overflow-y-auto pr-1">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="max-h-72 overflow-y-auto pr-1 scrollbar-thin">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3">
               {entetes.map((nom) => {
                 const estCoche = choisies.includes(nom);
                 return (
                   <label
                     key={nom}
-                    className={`flex items-center gap-3 p-3.5 rounded-2xl border text-xs font-semibold cursor-pointer transition select-none ${
+                    className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border text-xs font-semibold cursor-pointer transition select-none ${
                       estCoche
                         ? "border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 text-blue-950 dark:text-blue-200 shadow-sm"
                         : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-600 dark:text-slate-400"
@@ -575,7 +577,7 @@ export default function HomePage() {
                       type="checkbox"
                       checked={estCoche}
                       onChange={() => basculer(nom)}
-                      className="accent-blue-600 h-4 w-4 rounded cursor-pointer"
+                      className="accent-blue-600 h-4 w-4 rounded cursor-pointer shrink-0"
                     />
                     <span className="truncate">{nom}</span>
                   </label>
@@ -588,7 +590,7 @@ export default function HomePage() {
             type="button"
             onClick={lancerAnalyse}
             disabled={choisies.length === 0}
-            className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-2xl shadow-lg shadow-blue-600/20 transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            className="w-full py-3.5 sm:py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm rounded-2xl shadow-lg shadow-blue-600/20 transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             <span>Lancer l&apos;analyse décisionnelle</span>
             <ArrowRight className="w-4 h-4" />
@@ -596,60 +598,148 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Aperçu des Données Paginées */}
+      {/* Aperçu des Données Paginées (Tableau Sticky Column + Mode Fiches) */}
       {corps.length > 0 && (
-        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white">
-              Aperçu des données brutes
-            </h3>
-            <span className="text-xs text-slate-400">
-              Affichage des {lignesParPage} premières lignes
-            </span>
+        <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div>
+              <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                Aperçu des données brutes
+              </h3>
+              <p className="text-[10px] sm:text-xs text-slate-400">
+                Affichage des {lignesParPage} premières lignes sur {corps.length.toLocaleString("fr-FR")}
+              </p>
+            </div>
+
+            {/* Bascule Mobile Tableau / Fiches */}
+            <div className="sm:hidden flex items-center self-start bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setModeVue("tableau")}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg transition ${
+                  modeVue === "tableau"
+                    ? "bg-white dark:bg-slate-900 text-blue-600 shadow-xs"
+                    : "text-slate-500"
+                }`}
+              >
+                <Table className="w-3 h-3" />
+                <span>Tableau</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setModeVue("fiches")}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg transition ${
+                  modeVue === "fiches"
+                    ? "bg-white dark:bg-slate-900 text-blue-600 shadow-xs"
+                    : "text-slate-500"
+                }`}
+              >
+                <LayoutGrid className="w-3 h-3" />
+                <span>Fiches</span>
+              </button>
+            </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-slate-800">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-                  {entetes.map((h) => (
-                    <th key={h} className="p-3 font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono text-[11px]">
-                {corpsPagine.map((ligne, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition">
-                    {ligne.map((c, i) => (
-                      <td key={i} className="p-3 whitespace-nowrap text-slate-600 dark:text-slate-400">
-                        {String(c ?? "")}
-                      </td>
+          {/* VUE MOBILE ALTERNATIVE : FICHES SANS SCROLL LATÉRAL */}
+          {modeVue === "fiches" ? (
+            <div className="sm:hidden space-y-2.5">
+              {corpsPagine.map((ligne, idx) => {
+                const val0 = ligne[0];
+                const autresCols = entetes.slice(1);
+
+                return (
+                  <div
+                    key={idx}
+                    className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850 space-y-2"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-200/50 dark:border-slate-800 pb-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                      <span className="truncate">{val0 !== undefined && val0 !== "" ? String(val0) : `Ligne ${pageIndex * lignesParPage + idx + 1}`}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        #{pageIndex * lignesParPage + idx + 1}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {autresCols.map((h, i) => {
+                        const val = ligne[i + 1];
+                        return (
+                          <div
+                            key={h}
+                            className="p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800"
+                          >
+                            <span className="text-[10px] text-slate-400 block truncate">
+                              {h.replace(/_/g, " ")}
+                            </span>
+                            <span className="font-mono text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate block">
+                              {val !== null && val !== undefined && val !== "" ? String(val) : "—"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            /* VUE TABLEAU : PREMIÈRE COLONNE STICKY & SCROLL HORIZONTAL */
+            <div className="overflow-x-auto rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 scrollbar-thin">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                    {entetes.map((h, idx) => (
+                      <th
+                        key={h}
+                        className={`p-3 font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap text-[10px] sm:text-xs uppercase tracking-wider ${
+                          idx === 0
+                            ? "sticky left-0 z-20 bg-slate-100 dark:bg-slate-800 shadow-[1px_0_0_0_rgba(226,232,240,1)] dark:shadow-[1px_0_0_0_rgba(51,65,85,1)]"
+                            : ""
+                        }`}
+                      >
+                        {h.replace(/_/g, " ")}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono text-[11px]">
+                  {corpsPagine.map((ligne, idx) => (
+                    <tr key={idx} className="group hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition">
+                      {ligne.map((c, i) => (
+                        <td
+                          key={i}
+                          className={`p-3 whitespace-nowrap text-slate-600 dark:text-slate-400 ${
+                            i === 0
+                              ? "font-sans font-bold sticky left-0 z-10 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800/80 shadow-[1px_0_0_0_rgba(226,232,240,1)] dark:shadow-[1px_0_0_0_rgba(51,65,85,1)] text-slate-900 dark:text-slate-100"
+                              : ""
+                          }`}
+                        >
+                          {String(c ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
+          {/* Pagination */}
           <div className="flex items-center justify-between pt-2 text-xs">
             <button
               type="button"
               disabled={pageIndex === 0}
               onClick={() => setPageIndex((p) => p - 1)}
-              className="px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 font-medium disabled:opacity-30 disabled:cursor-not-allowed transition"
+              className="px-3 sm:px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 font-medium disabled:opacity-30 disabled:cursor-not-allowed transition text-[11px] sm:text-xs"
             >
               ‹ Précédent
             </button>
-            <span className="text-slate-500 dark:text-slate-400 font-medium">
-              Page {pageIndex + 1} sur {totalPages} ({corps.length.toLocaleString("fr-FR")} lignes)
+            <span className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 font-medium text-center">
+              Page {pageIndex + 1} sur {totalPages} ({corps.length.toLocaleString("fr-FR")} lig.)
             </span>
             <button
               type="button"
               disabled={pageIndex >= totalPages - 1}
               onClick={() => setPageIndex((p) => p + 1)}
-              className="px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 font-medium disabled:opacity-30 disabled:cursor-not-allowed transition"
+              className="px-3 sm:px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 font-medium disabled:opacity-30 disabled:cursor-not-allowed transition text-[11px] sm:text-xs"
             >
               Suivant ›
             </button>

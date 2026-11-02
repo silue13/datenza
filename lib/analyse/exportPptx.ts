@@ -9,6 +9,7 @@ export interface ElementPptxExport {
   typeVisuel?: "graphique" | "tdc" | "carte" | "prevision";
   titre: string;
   sousTitre?: string;
+  image?: string; // Capture Base64 haute résolution (Carte, Recharts, TCD)
   chartType?: "bar" | "line" | "pie" | "doughnut";
   labels?: string[];
   datasets?: {
@@ -28,6 +29,7 @@ export interface GraphiqueExport {
   id: number | string;
   titre: string;
   type: string;
+  image?: string; // Capture Base64
   labels: string[];
   datasets: {
     label: string;
@@ -93,7 +95,7 @@ const COULEURS = {
 };
 
 const PALETTE_CHARTS = [
-  COULEURS.bleuAccent,
+  COULEURS.bleuCobalt,
   COULEURS.cyan,
   "4F46E5",
   COULEURS.ambre,
@@ -109,18 +111,70 @@ function parserNombreLocal(val: any): number | null {
   return parseNombre(val);
 }
 
-/** Nettoie tout résidu de syntaxe Markdown pour un document institutionnel */
+/** Nettoie en profondeur les noms de variables, fichiers et colonnes */
+export function nettoyerNomMetier(nom?: string): string {
+  if (!nom) return "";
+  let s = String(nom).trim();
+
+  // Supprimer les extensions de fichiers et préfixes techniques
+  s = s.replace(/\.(xlsx|xls|csv|json)/gi, "");
+  s = s.replace(/^(datenza\s*audit|datenza_audit)[\s_]*/gi, "");
+  s = s.replace(/RGPH\d{4}_region_/gi, "").replace(/rgph\d{4}_/gi, "");
+  
+  if (/^comparatif\s*\(/i.test(s)) {
+    s = s.replace(/^comparatif\s*\(/i, "").replace(/\)\s*$/, "");
+  }
+
+  s = s.replace(/_sous_prefectures/gi, " (Sous-préf.)");
+  s = s.replace(/_/g, " ");
+
+  // Décoller les mots attachés (CamelCase ou PascalCase)
+  s = s.replace(/([a-z])([A-Z])/g, "$1 $2");
+
+  // Dictionnaire de correspondances soignées
+  const mapping: Record<string, string> = {
+    "taillemoyennemenage": "Taille moyenne du ménage",
+    "taille moyenne menage": "Taille moyenne du ménage",
+    "rapportmasculinite": "Rapport de masculinité",
+    "rapport masculinite": "Rapport de masculinité",
+    "populationtotale": "Population totale",
+    "population totale": "Population totale",
+    "sousprefecture": "Sous-préfecture",
+    "sous prefecture": "Sous-préfecture",
+    "departement": "Département",
+    "fichier source": "Fichier source",
+    "fichiersource": "Fichier source",
+    "poro": "Région du Poro",
+    "gbeke": "Région de Gbêkê",
+    "gbeke (sous-préf.)": "Région de Gbêkê (Sous-préf.)",
+    "poro (sous-préf.)": "Région du Poro (Sous-préf.)",
+  };
+
+  const cle = s.toLowerCase().replace(/\s+/g, " ").trim();
+  if (mapping[cle]) return mapping[cle];
+
+  return s.charAt(0).toUpperCase() + s.slice(1).trim();
+}
+
+/** Nettoie tout résidu de syntaxe Markdown ou format brut pour document institutionnel */
 function nettoyerTexteProfessionnel(texte?: string): string {
   if (!texte) return "";
-  return texte
+  let t = texte
     .replace(/^#+\s+/gm, "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/\*(.*?)\*/g, "$1")
     .replace(/_{1,2}(.*?)_{1,2}/g, "$1")
     .replace(/^\s*[-*]\s+/gm, "• ")
     .replace(/✨|🤖|💡|🎯|🔥|⚠/g, "")
+    .replace(/\.xlsx|\.csv/gi, "")
+    .replace(/RGPH2021region([a-zA-Z]+)sousprefectures/gi, "$1")
+    .replace(/Taillemoyennemenage/gi, "Taille moyenne du ménage")
+    .replace(/Rapport_masculinite/gi, "Rapport de masculinité")
+    .replace(/Population_totale/gi, "Population totale")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
+  return t;
 }
 
 /** Ajoute un en-tête de diapositive normé et rigoureux */
@@ -168,24 +222,24 @@ function genererTdcAutoAjuste(entetes: string[], corps: any[][]) {
 
   const scorerMetrique = (c: typeof colonnesNum[0]) => {
     const n = c.nom.toLowerCase();
+    if (/population|habitant|total/i.test(n)) return 12;
+    if (/homme|femme/i.test(n)) return 11;
     if (/chiffre|ca|vente/i.test(n)) return 10;
     if (/quantit|volume/i.test(n)) return 9;
     if (/superficie|surface|montant/i.test(n)) return 8;
-    if (/prix/i.test(n)) return 6;
-    if (/pct|taux|%|remise/i.test(n)) return 1;
     return 5;
   };
   const metrique = [...colonnesNum].sort((a, b) => scorerMetrique(b) - scorerMetrique(a))[0] || null;
 
   const scorerLigne = (c: typeof colonnesCat[0]) => {
     const n = c.nom.toLowerCase();
+    if (/departement|sous_prefecture/i.test(n)) return 15;
+    if (/region|région/i.test(n)) return 12;
     if (/cat|activit/i.test(n)) return 10;
-    if (/region|région|ville|localite/i.test(n)) return 9;
-    if (/produit|service|culture/i.test(n)) return 8;
     return 5;
   };
   const catPourLigne = colonnesCat.filter((c) => c.nbDistincts >= 2 && c.nbDistincts <= 12);
-  const dimLigne = [...catPourLigne].sort((a, b) => scorerLigne(b) - scorerLigne(a))[0] || colonnesCat[0] || null;
+  const dimLigne = [...catPourLigne].sort((a, b) => scorerLigne(b) - scorerLigne(a))[0] || colonnesCat.find((c) => c.nbDistincts >= 2) || colonnesCat[0] || null;
 
   let dimCol = colonnesTemps.find((c) => c.nbDistincts >= 2 && c.nbDistincts <= 8) || null;
   if (!dimCol) {
@@ -219,7 +273,7 @@ function genererTdcAutoAjuste(entetes: string[], corps: any[][]) {
 
   entetesLignes.forEach((l) => {
     let sommeLigne = 0;
-    const rowValues: (string | number)[] = [l];
+    const rowValues: (string | number)[] = [nettoyerNomMetier(l)];
 
     entetesColonnes.forEach((c, idxC) => {
       const val = matrice[l][c];
@@ -240,18 +294,22 @@ function genererTdcAutoAjuste(entetes: string[], corps: any[][]) {
   ];
   tableauLignes.push(ligneTotaux);
 
-  const entetesFinales = [`${dimLigne.nom} \\ ${dimCol.nom}`, ...entetesColonnes, "Total Général"];
+  const entetesFinales = [
+    `${nettoyerNomMetier(dimLigne.nom)} \\ ${nettoyerNomMetier(dimCol.nom)}`,
+    ...entetesColonnes.map(nettoyerNomMetier),
+    "Total Général",
+  ];
 
   const totalColonnesNb = entetesFinales.length;
-  const col0Width = Math.min(Math.max(dimLigne.nom.length * 0.18, 2.4), 3.2);
+  const col0Width = Math.min(Math.max(dimLigne.nom.length * 0.18, 2.5), 3.4);
   const remainingWidth = 11.6 - col0Width;
   const dataColWidth = Math.min(remainingWidth / (totalColonnesNb - 1), 1.8);
   const tableWidthTotal = col0Width + dataColWidth * (totalColonnesNb - 1);
   const colWidths = [col0Width, ...new Array(totalColonnesNb - 1).fill(dataColWidth)];
 
   return {
-    titre: "TABLEAU CROISÉ DYNAMIQUE AJUSTÉ",
-    sousTitre: `Croisement décisionnel : ${dimLigne.nom} × ${dimCol.nom} (${metrique ? "Somme de " + metrique.nom : "Comptage"})`,
+    titre: "TABLEAU CROISÉ DYNAMIQUE DE SYNTHÈSE",
+    sousTitre: `Croisement décisionnel : ${nettoyerNomMetier(dimLigne.nom)} × ${nettoyerNomMetier(dimCol.nom)} (${metrique ? "Mesure : " + nettoyerNomMetier(metrique.nom) : "Comptage"})`,
     entetes: entetesFinales,
     lignes: tableauLignes,
     colWidths,
@@ -260,14 +318,14 @@ function genererTdcAutoAjuste(entetes: string[], corps: any[][]) {
   };
 }
 
-// Moteur de graphiques de repli
+// Moteur de graphiques de repli avec sélection intelligente de la diversité catégorielle
 function autoGenererGraphiques(donnees: DonneesExportPptx): GraphiqueExport[] {
   const { entetes, corps } = donnees;
   const graphiques: GraphiqueExport[] = [];
   if (!entetes.length || !corps.length) return graphiques;
 
   const colonnesNum: string[] = [];
-  const colonnesCat: string[] = [];
+  const colonnesCat: { nom: string; nbDistincts: number }[] = [];
   let colTemps: string | null = null;
 
   entetes.forEach((col, idx) => {
@@ -282,10 +340,24 @@ function autoGenererGraphiques(donnees: DonneesExportPptx): GraphiqueExport[] {
     } else if (valeurs.length > 0 && nums.length / valeurs.length >= 0.8) {
       colonnesNum.push(col);
     } else {
-      colonnesCat.push(col);
+      const distincts = new Set(valeurs.map((v) => String(v).trim()));
+      colonnesCat.push({ nom: col, nbDistincts: distincts.size });
     }
   });
 
+  // Prioriser les métriques d'envergure
+  colonnesNum.sort((a, b) => {
+    const score = (nom: string) => {
+      const n = nom.toLowerCase();
+      if (/population|habitant|total/i.test(n)) return 10;
+      if (/chiffre|ca|vente|montant|volume/i.test(n)) return 9;
+      if (/homme|femme/i.test(n)) return 8;
+      return 5;
+    };
+    return score(b) - score(a);
+  });
+
+  // 1. Évolution chronologique si dimension temporelle
   if (colTemps && colonnesNum.length > 0) {
     const idxTemps = entetes.indexOf(colTemps);
     const colMesure = colonnesNum[0];
@@ -310,16 +382,23 @@ function autoGenererGraphiques(donnees: DonneesExportPptx): GraphiqueExport[] {
     if (labelsTries.length >= 2) {
       graphiques.push({
         id: 1,
-        titre: `Évolution chronologique : ${colMesure} par ${colTemps}`,
+        titre: `Évolution : ${nettoyerNomMetier(colMesure)} par ${nettoyerNomMetier(colTemps)}`,
         type: "line",
         labels: labelsTries,
-        datasets: [{ label: `${colMesure} (Moyenne)`, data: valeurs }],
+        datasets: [{ label: `${nettoyerNomMetier(colMesure)} (Moyenne)`, data: valeurs }],
       });
     }
   }
 
+  // 2. Barres catégorielles avec exclusion formelle des colonnes à modalité unique
   if (colonnesCat.length > 0 && colonnesNum.length > 0) {
-    const colSeg = colonnesCat[0];
+    // Sélectionne en priorité une colonne ayant du relief (2 à 15 valeurs distinctes, ex: Département)
+    const meilleureCat =
+      colonnesCat.find((c) => c.nbDistincts >= 2 && c.nbDistincts <= 15) ||
+      colonnesCat.find((c) => c.nbDistincts >= 2) ||
+      colonnesCat[0];
+
+    const colSeg = meilleureCat.nom;
     const colMesure = colonnesNum[0];
     const idxSeg = entetes.indexOf(colSeg);
     const idxMesure = entetes.indexOf(colMesure);
@@ -336,12 +415,38 @@ function autoGenererGraphiques(donnees: DonneesExportPptx): GraphiqueExport[] {
     const classes = Object.entries(agregat).sort((a, b) => b[1] - a[1]).slice(0, 8);
     if (classes.length > 0) {
       graphiques.push({
-        id: 2,
-        titre: `Volumes consolidés : ${colMesure} par ${colSeg}`,
+        id: graphiques.length + 1,
+        titre: `Volumes consolidés : ${nettoyerNomMetier(colMesure)} par ${nettoyerNomMetier(colSeg)}`,
         type: "bar",
-        labels: classes.map((c) => c[0]),
-        datasets: [{ label: colMesure, data: classes.map((c) => Math.round(c[1])) }],
+        labels: classes.map((c) => nettoyerNomMetier(c[0])),
+        datasets: [{ label: nettoyerNomMetier(colMesure), data: classes.map((c) => Math.round(c[1])) }],
       });
+    }
+
+    // Deuxième graphique de comparaison si une autre métrique existe (ex: Femmes ou Hommes)
+    if (colonnesNum.length > 1) {
+      const colMesure2 = colonnesNum[1];
+      const idxMesure2 = entetes.indexOf(colMesure2);
+      const agregat2: Record<string, number> = {};
+
+      corps.forEach((ligne) => {
+        const cat = String(ligne[idxSeg] ?? "Autre").trim();
+        const val = parserNombreLocal(ligne[idxMesure2]);
+        if (cat && val !== null) {
+          agregat2[cat] = (agregat2[cat] || 0) + val;
+        }
+      });
+
+      const classes2 = Object.entries(agregat2).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      if (classes2.length > 0) {
+        graphiques.push({
+          id: graphiques.length + 1,
+          titre: `Volumes consolidés : ${nettoyerNomMetier(colMesure2)} par ${nettoyerNomMetier(colSeg)}`,
+          type: "bar",
+          labels: classes2.map((c) => nettoyerNomMetier(c[0])),
+          datasets: [{ label: nettoyerNomMetier(colMesure2), data: classes2.map((c) => Math.round(c[1])) }],
+        });
+      }
     }
   }
 
@@ -354,7 +459,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   pptx.layout = "LAYOUT_16x9";
   pptx.author = "DATENZA Executive";
   pptx.company = "DATENZA Business Intelligence";
-  pptx.title = `Rapport Stratégique - ${donnees.nomProjet || "Audit"}`;
+  pptx.title = `Rapport Stratégique - ${nettoyerNomMetier(donnees.nomProjet) || "Audit"}`;
 
   const dateAujourdhui = new Date().toLocaleDateString("fr-FR", {
     year: "numeric",
@@ -369,19 +474,20 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   slideGarde.background = { color: COULEURS.fondSombre };
 
   slideGarde.addShape(pptx.ShapeType.rect, {
-    x: 0, y: 0, w: 13.33, h: 0.12, fill: { color: COULEURS.bleuAccent }, line: { color: COULEURS.bleuAccent },
+    x: 0, y: 0, w: 13.33, h: 0.12, fill: { color: COULEURS.bleuCobalt }, line: { color: COULEURS.bleuCobalt },
   });
 
   slideGarde.addText("DATENZA · AUDIT & BUSINESS INTELLIGENCE", {
-    x: 1.0, y: 1.5, w: 8.0, h: 0.35, fontFace: "Calibri", fontSize: 10, bold: true, color: COULEURS.cyan, charSpacing: 2,
+    x: 1.0, y: 1.5, w: 8.0, h: 0.35, fontFace: "Calibri", fontSize: 10.5, bold: true, color: COULEURS.cyan, charSpacing: 2,
   });
 
   slideGarde.addText("Rapport Décisionnel &\nAnalyse Stratégique", {
     x: 1.0, y: 2.0, w: 10.0, h: 1.8, fontFace: "Calibri", fontSize: 38, bold: true, color: COULEURS.texteBlanc, lineSpacingMultiple: 1.1,
   });
 
-  slideGarde.addText(`Périmètre audité : ${donnees.nomProjet || "Jeu de données consolidé"}`, {
-    x: 1.0, y: 4.1, w: 9.5, h: 0.5, fontFace: "Calibri", fontSize: 15, color: COULEURS.texteDiscret,
+  const nomProjetPropre = nettoyerNomMetier(donnees.nomProjet || "Jeu de données consolidé");
+  slideGarde.addText(`Périmètre audité : ${nomProjetPropre}`, {
+    x: 1.0, y: 4.1, w: 9.5, h: 0.5, fontFace: "Calibri", fontSize: 15, color: "CBD5E1",
   });
 
   slideGarde.addShape(pptx.ShapeType.line, {
@@ -393,7 +499,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   });
 
   slideGarde.addText("EXECUTIVE DELIVERABLE", {
-    x: 9.33, y: 5.0, w: 3.0, h: 0.3, fontFace: "Calibri", fontSize: 10.5, bold: true, align: "right", color: COULEURS.cyan, charSpacing: 1,
+    x: 9.33, y: 5.0, w: 3.0, h: 0.3, fontFace: "Calibri", fontSize: 10.5, bold: true, align: "right", color: COULEURS.cyan, charSpacing: 1.5,
   });
 
   // ==========================================
@@ -401,18 +507,18 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   // ==========================================
   const slideKpis = pptx.addSlide();
   slideKpis.background = { color: COULEURS.fondClair };
-  ajouterEnteteSlide(slideKpis, "VOLUMÉTRIE & QUALITÉ DES DONNÉES", "Synthèse globale du classeur consolidé", pptx);
+  ajouterEnteteSlide(slideKpis, "VOLUMÉTRIE & QUALITÉ DES DONNÉES", "Cadrage du périmètre et intégrité du classeur", pptx);
 
   const totalLignes = donnees.corps.length;
   const totalColonnes = donnees.entetes.length;
   const doublons = donnees.analyse?.doublonsPures ?? 0;
-  const completude = donnees.analyse?.tauxRemplissage ? `${donnees.analyse.tauxRemplissage}%` : "100 %";
+  const completude = donnees.analyse?.tauxRemplissage ? `${donnees.analyse.tauxRemplissage} %` : "100 %";
 
   const cartesMetrics = [
     { titre: "LIGNES EXPLOITABLES", valeur: totalLignes.toLocaleString("fr-FR"), sub: "Enregistrements complets", color: COULEURS.bleuCobalt },
-    { titre: "VARIABLES & COLONNES", valeur: totalColonnes.toString(), sub: "Champs dimensionnels", color: COULEURS.cyan },
+    { titre: "VARIABLES AUDITÉES", valeur: totalColonnes.toString(), sub: "Champs dimensionnels", color: COULEURS.cyan },
     { titre: "TAUX DE COMPLÉTUDE", valeur: completude, sub: "Données intègres", color: COULEURS.vert },
-    { titre: "DOUBLONS PURGÉS", valeur: doublons.toString(), sub: "Lignes redondantes", color: doublons > 0 ? COULEURS.rose : COULEURS.texteDiscret },
+    { titre: "DOUBLONS PURGÉS", valeur: doublons.toString(), sub: doublons === 0 ? "Aucune redondance" : "Lignes doublons", color: doublons > 0 ? COULEURS.rose : COULEURS.texteDiscret },
   ];
 
   cartesMetrics.forEach((m, idx) => {
@@ -433,29 +539,34 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   slideKpis.addShape(pptx.ShapeType.rect, {
     x: 0.8, y: 3.35, w: 11.65, h: 0.45, fill: { color: COULEURS.fondSubtil }, line: { color: COULEURS.bordure, width: 1 },
   });
-  slideKpis.addText("RÉPERTOIRE STRUCTURÉ DES CHAMPS AUDITÉS", {
+  slideKpis.addText("RÉPERTOIRE QUALIFIÉ DES CHAMPS D'ANALYSE", {
     x: 1.1, y: 3.45, w: 11.0, h: 0.25, fontFace: "Calibri", fontSize: 9.5, bold: true, color: COULEURS.textePrincipal, charSpacing: 1,
   });
 
-  const colonnesAffichees = donnees.entetes.slice(0, 24).map((col, idx) => `${idx + 1}. ${col}`).join("   •   ");
-  slideKpis.addText(colonnesAffichees || "Aucune colonne renseignée.", {
-    x: 1.1, y: 4.05, w: 11.0, h: 2.5, fontFace: "Calibri", fontSize: 10.5, color: COULEURS.texteSecondaire, lineSpacingMultiple: 1.35,
+  const colonnesNettoyees = donnees.entetes
+    .filter((col) => col.toLowerCase() !== "fichier source")
+    .slice(0, 18)
+    .map((col) => `• ${nettoyerNomMetier(col)}`)
+    .join("        ");
+
+  slideKpis.addText(colonnesNettoyees || "Variables disponibles intégrées.", {
+    x: 1.1, y: 4.15, w: 11.0, h: 2.4, fontFace: "Calibri", fontSize: 11, color: COULEURS.textePrincipal, lineSpacingMultiple: 1.5,
   });
 
   // ==========================================
-  // SLIDE 3 : DIAGNOSTIC EXÉCUTIF (LABELS PROFESSIONNELS)
+  // SLIDE 3 : DIAGNOSTIC EXÉCUTIF
   // ==========================================
   if (donnees.rapport && donnees.rapport.length > 0) {
     const slideDiag = pptx.addSlide();
     slideDiag.background = { color: COULEURS.fondClair };
-    ajouterEnteteSlide(slideDiag, "POINTS DE VIGILANCE & DIAGNOSTIC", "Observations managériales extraites des données", pptx);
+    ajouterEnteteSlide(slideDiag, "POINTS DE VIGILANCE & DIAGNOSTIC", "Synthèse managériale extraite des données", pptx);
 
     const libellesTypes: Record<string, { titre: string; couleur: string }> = {
       intro: { titre: "CADRAGE DU PÉRIMÈTRE", couleur: COULEURS.bleuCobalt },
-      qualite: { titre: "INTÉGRITÉ & CONTRÔLE QUALITÉ", couleur: COULEURS.ambre },
+      qualite: { titre: "INTÉGRITÉ & CONTRÔLE QUALITÉ", couleur: COULEURS.vert },
       mesure: { titre: "INDICATEUR CLÉ DE PERFORMANCE", couleur: COULEURS.cyan },
       numerique: { titre: "DISTRIBUTION CHIFFRÉE", couleur: COULEURS.bleuCobalt },
-      categorie: { titre: "SEGMENTATION STRATÉGIQUE", couleur: COULEURS.vert },
+      categorie: { titre: "SEGMENTATION STRATÉGIQUE", couleur: COULEURS.ambre },
       anomalie: { titre: "POINT DE VIGILANCE CRITIQUE", couleur: COULEURS.rose },
     };
 
@@ -480,7 +591,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   }
 
   // ==========================================
-  // SLIDE 4 : CORRÉLATIONS & MATRICE STRATÉGIQUE (100% ÉQUILIBRÉE)
+  // SLIDE 4 : CORRÉLATIONS & MATRICE STRATÉGIQUE
   // ==========================================
   const correlations = (donnees.analyse?.correlations || [])
     .filter((c: any) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
@@ -489,24 +600,31 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   if (correlations.length > 0 || donnees.syntheseCorrelationsIA) {
     const slideCorr = pptx.addSlide();
     slideCorr.background = { color: COULEURS.fondClair };
-    ajouterEnteteSlide(slideCorr, "ANALYSE D'INTERACTIONS & CORRÉLATIONS", "Liens d'influence statistique et dépendances clés", pptx);
+    ajouterEnteteSlide(slideCorr, "ANALYSE D'INTERACTIONS & CORRÉLATIONS", "Liens de dépendance statistique et dynamique croisée", pptx);
 
-    // Tableau des corrélations (Gauche, 7.3 pouces)
     const lignesCorr = [
       [
         { text: "Variables Associées", options: { bold: true, fill: { color: COULEURS.fondSombre }, color: COULEURS.texteBlanc, fontSize: 10 } },
         { text: "Coefficient (r)", options: { bold: true, fill: { color: COULEURS.fondSombre }, color: COULEURS.texteBlanc, align: "center" as const, fontSize: 10 } },
-        { text: "Impact Opérationnel", options: { bold: true, fill: { color: COULEURS.fondSombre }, color: COULEURS.texteBlanc, fontSize: 10 } },
+        { text: "Interprétation Statistique", options: { bold: true, fill: { color: COULEURS.fondSombre }, color: COULEURS.texteBlanc, fontSize: 10 } },
       ],
       ...correlations.map((c: any, i: number) => {
         const estForte = Math.abs(c.coefficient) >= 0.7;
-        const estInverse = c.coefficient <= -0.4;
+        const estInverse = c.coefficient <= -0.5;
         const colorR = estForte ? COULEURS.vert : estInverse ? COULEURS.rose : COULEURS.bleuCobalt;
 
+        let interpretationText = c.interpretation;
+        if (!interpretationText) {
+          if (Math.abs(c.coefficient) < 0.2) interpretationText = "Indépendance quasi-totale";
+          else if (estForte) interpretationText = "Forte relation directe";
+          else if (estInverse) interpretationText = "Corrélation inverse marquée";
+          else interpretationText = "Liaison modérée";
+        }
+
         return [
-          { text: `${c.colonneA} ↔ ${c.colonneB}`, options: { bold: true, fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, fontSize: 9.5 } },
+          { text: `${nettoyerNomMetier(c.colonneA)} ↔ ${nettoyerNomMetier(c.colonneB)}`, options: { bold: true, fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, fontSize: 9.5 } },
           { text: `r = ${c.coefficient}`, options: { bold: true, align: "center" as const, fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, color: colorR, fontSize: 9.5 } },
-          { text: c.interpretation || (estForte ? "Forte relation directe" : estInverse ? "Tension / Antagonisme" : "Liaison modérée"), options: { fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, fontSize: 9 } },
+          { text: interpretationText, options: { fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, fontSize: 9 } },
         ];
       }),
     ];
@@ -516,7 +634,6 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       fontSize: 9.5, fontFace: "Calibri", border: { pt: 0.75, color: COULEURS.bordure },
     });
 
-    // Panneau Droit (4.15 pouces) : Fiche de Synthèse Stratégique
     slideCorr.addShape(pptx.ShapeType.roundRect, {
       x: 8.3, y: 1.45, w: 4.15, h: 5.2, rectRadius: 0.08, fill: { color: COULEURS.fondCarte }, line: { color: COULEURS.bordure, width: 1 },
     });
@@ -524,7 +641,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
     slideCorr.addShape(pptx.ShapeType.rect, {
       x: 8.3, y: 1.45, w: 4.15, h: 0.45, fill: { color: COULEURS.fondCartouche }, line: { color: COULEURS.fondCartouche },
     });
-    slideCorr.addText("GRILLE D'ARBITRAGE STRATÉGIQUE", {
+    slideCorr.addText("GRILLE D'ARBITRAGE STATISTIQUE", {
       x: 8.55, y: 1.55, w: 3.65, h: 0.25, fontFace: "Calibri", fontSize: 9, bold: true, color: COULEURS.texteBlanc, charSpacing: 1,
     });
 
@@ -533,20 +650,33 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         x: 8.55, y: 2.1, w: 3.65, h: 4.3, fontFace: "Calibri", fontSize: 10, color: COULEURS.textePrincipal, lineSpacingMultiple: 1.3,
       });
     } else {
-      const relationForte = correlations.find((c: any) => c.coefficient >= 0.6);
-      const relationInverse = correlations.find((c: any) => c.coefficient <= -0.4);
+      const relationForte = correlations.find((c: any) => c.coefficient >= 0.7);
+      const relationInverse = correlations.find((c: any) => c.coefficient <= -0.5);
+      const coefMax = Math.max(...correlations.map((c: any) => Math.abs(c.coefficient)), 0);
 
-      let texteSynthese = "• LECTURE DES SYNERGIES :\nLes coefficients élevés (r ≥ 0.70) traduisent des effets d'entraînement immédiats : actionner l'une des variables maximise directement le résultat de la seconde.\n\n";
+      let texteSynthese = "";
 
-      if (relationForte) {
-        texteSynthese += `• LEVIER MOTEUR PRIORITAIRE :\nLa relation « ${relationForte.colonneA} ↔ ${relationForte.colonneB} » (r = ${relationForte.coefficient}) constitue le principal axe de progression identifié.\n\n`;
+      if (coefMax < 0.40) {
+        texteSynthese = [
+          "• INDÉPENDANCE DES VARIABLES (r < 0.40) :",
+          "Les variables analysées n'affichent pas de dépendance statistique directe significative sur ce périmètre.",
+          "",
+          "• CONSTAT MÉTIER :",
+          "Les indicateurs étudiés évoluent selon des dynamiques territoriales ou structurelles distinctes sans effet de causalité immédiat.",
+          "",
+          "• RECOMMANDATION MANAGÉRIALE :",
+          "Piloter chaque indicateur de façon autonome sans anticiper d'impact automatique de l'un sur l'autre.",
+        ].join("\n");
+      } else {
+        texteSynthese = "• LECTURE DES SYNERGIES :\nLes coefficients élevés (r ≥ 0.70) traduisent des effets d'entraînement réels : agir sur l'une des variables influence directement la seconde.\n\n";
+        if (relationForte) {
+          texteSynthese += `• LEVIER MAJEUR :\nLa relation « ${nettoyerNomMetier(relationForte.colonneA)} ↔ ${nettoyerNomMetier(relationForte.colonneB)} » (r = ${relationForte.coefficient}) s'impose comme l'axe d'interaction le plus robuste.\n\n`;
+        }
+        if (relationInverse) {
+          texteSynthese += `• ARBITRAGE NÉCESSAIRE :\nLa relation « ${nettoyerNomMetier(relationInverse.colonneA)} ↔ ${nettoyerNomMetier(relationInverse.colonneB)} » (r = ${relationInverse.coefficient}) indique un antagonisme à surveiller.\n\n`;
+        }
+        texteSynthese += "• RECOMMANDATION :\nCalibrer les plans d'action sur les leviers à forte corrélation positive.";
       }
-
-      if (relationInverse) {
-        texteSynthese += `• POINT DE TENSION :\nLa relation « ${relationInverse.colonneA} ↔ ${relationInverse.colonneB} » (r = ${relationInverse.coefficient}) révèle un arbitrage nécessaire pour ne pas dégrader la performance globale.\n\n`;
-      }
-
-      texteSynthese += "• RECOMMANDATION DÉCISIONNELLE :\nCalibrer les objectifs opérationnels sur les leviers à forte corrélation positive tout en surveillant les seuils de rupture.";
 
       slideCorr.addText(texteSynthese, {
         x: 8.55, y: 2.1, w: 3.65, h: 4.3, fontFace: "Calibri", fontSize: 10, color: COULEURS.textePrincipal, lineSpacingMultiple: 1.25,
@@ -555,7 +685,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   }
 
   // ==========================================
-  // SLIDE 5 : TABLEAU CROISÉ DYNAMIQUE (TDC) AJUSTÉ
+  // SLIDE 5 : TABLEAU CROISÉ DYNAMIQUE (TDC)
   // ==========================================
   const tdcData = donnees.tdcManuel || genererTdcAutoAjuste(donnees.entetes, donnees.corps);
 
@@ -565,14 +695,14 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
 
     ajouterEnteteSlide(
       slideTdc,
-      tdcData.titre || "TABLEAU CROISÉ DYNAMIQUE AJUSTÉ",
+      tdcData.titre || "TABLEAU CROISÉ DYNAMIQUE",
       tdcData.sousTitre || "Croisement décisionnel",
       pptx
     );
 
     const rowsFormatted = [
       tdcData.entetes.map((h, cIdx) => ({
-        text: h,
+        text: nettoyerNomMetier(h),
         options: {
           fill: { color: COULEURS.fondSombre },
           color: COULEURS.texteBlanc,
@@ -614,7 +744,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
   }
 
   // ==========================================
-  // SLIDES 6+ : ANALYSES VISUELLES & FICHES STRATÉGIQUES DÉTAILLÉES
+  // SLIDES 6+ : ANALYSES VISUELLES & FICHES STRATÉGIQUES
   // ==========================================
   let listeGraphiques: any[] = [
     ...(donnees.elementsSelectionnes || []),
@@ -632,25 +762,34 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       ajouterEnteteSlide(
         slideGraph,
         `ANALYSE VISUELLE ${idx + 1} / ${listeGraphiques.length}`,
-        graphique.titre || "Visualisation analytique",
+        nettoyerNomMetier(graphique.titre || "Visualisation analytique"),
         pptx
       );
 
-      const chartLabels = (graphique.labels || []).slice(0, 12);
+      const chartLabels = (graphique.labels || []).slice(0, 12).map(nettoyerNomMetier);
       const chartData = (graphique.datasets || []).map((ds: any) => ({
-        name: ds.label || "Valeur",
+        name: nettoyerNomMetier(ds.label || "Valeur"),
         labels: chartLabels,
         values: (ds.data || []).slice(0, 12).map((v: any) => Number(v) || 0),
       }));
 
-      let typePptx = pptx.ChartType.bar;
-      const typeStr = String(graphique.chartType || graphique.type || "").toLowerCase();
-      if (typeStr.includes("courbe") || typeStr === "line") typePptx = pptx.ChartType.line;
-      if (typeStr.includes("camembert") || typeStr === "pie") typePptx = pptx.ChartType.pie;
-      if (typeStr.includes("anneau") || typeStr === "doughnut") typePptx = pptx.ChartType.doughnut;
+      // 1. Zone visuelle à gauche (7.7 pouces)
+      if (graphique.image) {
+        slideGraph.addImage({
+          data: graphique.image,
+          x: 0.8,
+          y: 1.45,
+          w: 7.7,
+          h: 5.3,
+          sizing: { type: "contain", w: 7.7, h: 5.3 },
+        });
+      } else if (chartData.length > 0 && chartLabels.length > 0) {
+        let typePptx = pptx.ChartType.bar;
+        const typeStr = String(graphique.chartType || graphique.type || "").toLowerCase();
+        if (typeStr.includes("courbe") || typeStr === "line") typePptx = pptx.ChartType.line;
+        if (typeStr.includes("camembert") || typeStr === "pie") typePptx = pptx.ChartType.pie;
+        if (typeStr.includes("anneau") || typeStr === "doughnut") typePptx = pptx.ChartType.doughnut;
 
-      // 1. Graphique à gauche (7.7 pouces de large)
-      if (chartData.length > 0 && chartLabels.length > 0) {
         slideGraph.addChart(typePptx, chartData, {
           x: 0.8,
           y: 1.45,
@@ -665,7 +804,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         });
       }
 
-      // 2. Fiche Décisionnelle à droite (3.78 pouces de large, remplit parfaitement l'espace)
+      // 2. Fiche Décisionnelle à droite (3.78 pouces de large)
       const cardX = 8.75;
       const cardW = 3.78;
       const cardY = 1.45;
@@ -675,7 +814,6 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         x: cardX, y: cardY, w: cardW, h: cardH, rectRadius: 0.08, fill: { color: COULEURS.fondCarte }, line: { color: COULEURS.bordure, width: 1 },
       });
 
-      // Bandeau supérieur sobre et institutionnel (Slate 900)
       slideGraph.addShape(pptx.ShapeType.rect, {
         x: cardX, y: cardY, w: cardW, h: 0.52, fill: { color: COULEURS.fondSombre }, line: { color: COULEURS.fondSombre },
       });
@@ -683,7 +821,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         x: cardX + 0.2, y: cardY + 0.14, w: cardW - 0.4, h: 0.25, fontFace: "Calibri", fontSize: 10, bold: true, color: COULEURS.texteBlanc, charSpacing: 1.2,
       });
 
-      // Calcul des indicateurs de synthèse du graphique
+      // Calcul des indicateurs
       const datasetPremier = chartData[0]?.values || [];
       const totalVolume = datasetPremier.reduce((a: number, b: number) => a + b, 0);
       const moyenneVolume = datasetPremier.length > 0 ? Math.round((totalVolume / datasetPremier.length) * 10) / 10 : 0;
@@ -695,12 +833,11 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       const nomMin = chartLabels[indexMin] || "Retrait";
       const partLeader = totalVolume > 0 ? Math.round((maxVolume / totalVolume) * 100) : 0;
 
-      // Deux micro-KPIs repères en haut de la carte
+      // Micro-KPIs
       const kpiW = (cardW - 0.4 - 0.15) / 2;
       const kpi1X = cardX + 0.2;
       const kpi2X = kpi1X + kpiW + 0.15;
 
-      // Boîte 1 : Pôle Leader
       slideGraph.addShape(pptx.ShapeType.roundRect, {
         x: kpi1X, y: cardY + 0.68, w: kpiW, h: 0.95, rectRadius: 0.06, fill: { color: COULEURS.fondSubtil }, line: { color: COULEURS.bordure, width: 1 },
       });
@@ -708,13 +845,12 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         x: kpi1X + 0.1, y: cardY + 0.76, w: kpiW - 0.2, h: 0.18, fontFace: "Calibri", fontSize: 7.5, bold: true, color: COULEURS.texteDiscret, charSpacing: 0.5,
       });
       slideGraph.addText(String(nomLeader), {
-        x: kpi1X + 0.1, y: cardY + 0.94, w: kpiW - 0.2, h: 0.32, fontFace: "Calibri", fontSize: 12, bold: true, color: COULEURS.bleuCobalt,
+        x: kpi1X + 0.1, y: cardY + 0.94, w: kpiW - 0.2, h: 0.32, fontFace: "Calibri", fontSize: 11.5, bold: true, color: COULEURS.bleuCobalt,
       });
       slideGraph.addText(`${maxVolume.toLocaleString("fr-FR")} (${partLeader} % du total)`, {
         x: kpi1X + 0.1, y: cardY + 1.28, w: kpiW - 0.2, h: 0.25, fontFace: "Calibri", fontSize: 8.5, color: COULEURS.texteSecondaire,
       });
 
-      // Boîte 2 : Cumul & Moyenne
       slideGraph.addShape(pptx.ShapeType.roundRect, {
         x: kpi2X, y: cardY + 0.68, w: kpiW, h: 0.95, rectRadius: 0.06, fill: { color: COULEURS.fondSubtil }, line: { color: COULEURS.bordure, width: 1 },
       });
@@ -722,29 +858,35 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         x: kpi2X + 0.1, y: cardY + 0.76, w: kpiW - 0.2, h: 0.18, fontFace: "Calibri", fontSize: 7.5, bold: true, color: COULEURS.texteDiscret, charSpacing: 0.5,
       });
       slideGraph.addText(totalVolume.toLocaleString("fr-FR"), {
-        x: kpi2X + 0.1, y: cardY + 0.94, w: kpiW - 0.2, h: 0.32, fontFace: "Calibri", fontSize: 12, bold: true, color: COULEURS.textePrincipal,
+        x: kpi2X + 0.1, y: cardY + 0.94, w: kpiW - 0.2, h: 0.32, fontFace: "Calibri", fontSize: 11.5, bold: true, color: COULEURS.textePrincipal,
       });
       slideGraph.addText(`Moyenne : ${moyenneVolume.toLocaleString("fr-FR")}`, {
         x: kpi2X + 0.1, y: cardY + 1.28, w: kpiW - 0.2, h: 0.25, fontFace: "Calibri", fontSize: 8.5, color: COULEURS.texteSecondaire,
       });
 
-      // Ligne de séparation
       slideGraph.addShape(pptx.ShapeType.line, {
         x: cardX + 0.2, y: cardY + 1.78, w: cardW - 0.4, h: 0, line: { color: COULEURS.bordure, width: 1 },
       });
 
-      // Texte d'analyse structuré et dense (évite tout vide)
+      // Synthèse textuelle managériale et adaptée
       let texteFinal = "";
       if (graphique.interpretation && graphique.interpretation.length > 50) {
         texteFinal = nettoyerTexteProfessionnel(graphique.interpretation);
+      } else if (chartLabels.length <= 1 || minVolume === maxVolume) {
+        // Garde-fou robuste contre les entités uniques ou sans variance
+        texteFinal = [
+          `• PÉRIMÈTRE CONSOLIDÉ :\nL'indicateur est regroupé sous le pôle unique « ${nomLeader} » avec un total de ${maxVolume.toLocaleString("fr-FR")} unités (100 % de l'ensemble audité).`,
+          `• ANALYSE DE DISPERSION :\nAucune dispersion observée à cette échelle dimensionnelle. Les sous-segments sont uniformément comptabilisés sous cette même dimension.`,
+          `• PERSPECTIVE DÉCISIONNELLE :\nDescendre à un niveau de maille plus granulaire (ex: par sous-préfecture ou département) pour révéler les contrastes et équilibrer le déploiement opérationnel.`,
+        ].join("\n\n");
       } else {
         const ecartMaxMin = Math.round((maxVolume - minVolume) * 10) / 10;
-        const ratio = minVolume > 0 ? (Math.round((maxVolume / minVolume) * 10) / 10) : null;
+        const ratio = minVolume > 0 ? Math.round((maxVolume / minVolume) * 10) / 10 : null;
 
         texteFinal = [
-          `• CONCENTRATION DE L'ACTIVITÉ :\nLe segment « ${nomLeader} » domine le périmètre avec ${maxVolume.toLocaleString("fr-FR")} unités (${partLeader} % du volume cumulé), s'imposant comme le principal centre de gravité opérationnel.`,
-          `• ÉCART & DISPERSION :\nUn contraste de ${ecartMaxMin.toLocaleString("fr-FR")}${ratio ? ` (facteur de ${ratio}×)` : ""} est observé avec le pôle en retrait (« ${nomMin} », ${minVolume.toLocaleString("fr-FR")}).`,
-          `• DÉCISIONNEL & ARBITRAGE :\nPrioriser l'allocation budgétaire et les capacités logistiques sur les 2 premiers segments tout en investiguant les leviers de relance sur les zones à plus faible dynamisme.`,
+          `• POIDS & HIÉRARCHIE TERRITORIALE :\nLe pôle « ${nomLeader} » concentre le volume principal avec ${maxVolume.toLocaleString("fr-FR")} unités (${partLeader} % de l'ensemble audité).`,
+          `• ÉCART & DISPERSION :\nUn différentiel de ${ecartMaxMin.toLocaleString("fr-FR")}${ratio ? ` (facteur de ${ratio}×)` : ""} est enregistré avec la zone la plus en retrait (« ${nomMin} », ${minVolume.toLocaleString("fr-FR")}).`,
+          `• PERSPECTIVE DÉCISIONNELLE :\nPrendre en compte cette concentration pour calibrer le déploiement opérationnel et équilibrer les ressources sur les zones secondaires.`,
         ].join("\n\n");
       }
 

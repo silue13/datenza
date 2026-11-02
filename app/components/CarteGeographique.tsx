@@ -1,20 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
 import "leaflet/dist/leaflet.css";
 import { MapPin, Presentation, Calendar } from "lucide-react";
 import { trouverLieuCI, cleGeo, PAYS_DU_MONDE } from "../../lib/geoci/data";
-// APRÈS
 import { parseNombre, type Cellule, estValeurVide, arrondir } from "../../lib/analyse/utils";
 import { useData } from "../context/DataContext";
-
-const MapContainer = dynamic(() => import("react-leaflet").then((m) => m.MapContainer), { ssr: false });
-const TileLayer = dynamic(() => import("react-leaflet").then((m) => m.TileLayer), { ssr: false });
-const CircleMarker = dynamic(() => import("react-leaflet").then((m) => m.CircleMarker), { ssr: false });
-const Popup = dynamic(() => import("react-leaflet").then((m) => m.Popup), { ssr: false });
-const Tooltip = dynamic(() => import("react-leaflet").then((m) => m.Tooltip), { ssr: false });
-const AjusterVue = dynamic(() => import("./AjusterVue"), { ssr: false });
 
 interface Props {
   entetes: string[];
@@ -47,15 +38,6 @@ const MAX_LIEUX = 80;
 const MOTS_CLES_GEO = /(ville|city|commune|region|pays|country|departement|department|district|adresse|lieu|location|zone|secteur|territoire|localite|village|prefecture|province|quartier)/i;
 const MOTS_CLES_EXCLUS = /(categorie|category|statut|status|mois|month|annee|year|commercial|vendeur|client|devise|type|produit|article|id|num|reference|ref|remise|taux)/i;
 
-const COULEURS_COMPARAISON = [
-  { fill: "#2563eb", border: "#1d4ed8" },
-  { fill: "#0891b2", border: "#0e7490" },
-  { fill: "#d97706", border: "#b45309" },
-  { fill: "#059669", border: "#047857" },
-  { fill: "#dc2626", border: "#b91c1c" },
-  { fill: "#7c3aed", border: "#6d28d9" },
-];
-
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function estDansFrontieresCI(lat: number, lng: number): boolean {
@@ -64,6 +46,55 @@ function estDansFrontieresCI(lat: number, lng: number): boolean {
 
 export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Props) {
   const { graphiquesEpingles, epinglerGraphique } = useData();
+  const mapRef = useRef<any>(null);
+
+  // État stockant les composants Leaflet une fois le navigateur prêt
+  const [leafletReady, setLeafletReady] = useState<{
+    MapContainer: any;
+    TileLayer: any;
+    CircleMarker: any;
+    Popup: any;
+    Tooltip: any;
+    AjusterVue: any;
+  } | null>(null);
+
+  // Chargement synchronisé unique de Leaflet côté client
+  useEffect(() => {
+    let actif = true;
+
+    Promise.all([
+      import("react-leaflet"),
+      import("./AjusterVue"),
+    ])
+      .then(([rl, av]) => {
+        if (actif) {
+          setLeafletReady({
+            MapContainer: rl.MapContainer,
+            TileLayer: rl.TileLayer,
+            CircleMarker: rl.CircleMarker,
+            Popup: rl.Popup,
+            Tooltip: rl.Tooltip,
+            AjusterVue: av.default || av,
+          });
+        }
+      })
+      .catch((err) => {
+        console.error("Erreur lors du chargement de Leaflet :", err);
+      });
+
+    return () => {
+      actif = false;
+      // Nettoyage du conteneur Leaflet pour empêcher l'erreur "reused by another instance"
+      if (mapRef.current) {
+        try {
+          mapRef.current.remove();
+        } catch {
+          // ignore
+        }
+        mapRef.current = null;
+      }
+    };
+  }, []);
 
   const estModeComparaison = entetes.includes("Fichier Source");
   const idxSource = entetes.indexOf("Fichier Source");
@@ -80,7 +111,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     ? sourceRefChoisie
     : sourcesFichiers[0] || "";
 
-  // 1. DÉTECTION DU FORMAT MATRICIEL (Les colonnes elles-mêmes sont des villes/stations CI)
+  // 1. DÉTECTION DU FORMAT MATRICIEL
   const colonnesEnTetesGeographiques = useMemo(() => {
     return entetes.filter((h) => {
       if (h === "Fichier Source") return false;
@@ -90,7 +121,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
   const estFormatMatriciel = colonnesEnTetesGeographiques.length >= 2;
 
-  // 2. DÉTECTION DU FORMAT STANDARD (Une colonne de lieux textuels en lignes)
+  // 2. DÉTECTION DU FORMAT STANDARD
   const colonnesGeographiquesEligibles = useMemo(() => {
     return entetes.filter((nom, idx) => {
       if (nom === "Fichier Source") return false;
@@ -98,7 +129,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       const echantillon = corps.map((ligne) => ligne[idx]).filter((v) => !estValeurVide(v));
       if (echantillon.length === 0) return false;
 
-      // FILTRAGE STRICT : Une colonne dont les valeurs sont des nombres ou des années n'est JAMAIS géographique
       const nbNombres = echantillon.filter((v) => parseNombre(v) !== null).length;
       if (nbNombres / echantillon.length >= 0.4) return false;
 
@@ -116,7 +146,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     });
   }, [entetes, corps]);
 
-  // Sélecteur pour le format standard
   const defautStandard = useMemo(() => {
     return colonnesGeographiquesEligibles[0] || "";
   }, [colonnesGeographiquesEligibles]);
@@ -124,14 +153,11 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
   const [choix, setChoix] = useState<string | null>(null);
   const colonneGeo = choix !== null && colonnesGeographiquesEligibles.includes(choix) ? choix : defautStandard;
 
-  // Sélecteur de période en format matriciel (ex: 2022, 2021...)
   const periodesDisponibles = useMemo(() => {
     if (!estFormatMatriciel || corps.length === 0) return [];
-    // La 1re colonne non géographique contient généralement l'année/la période
     const idxPeriode = entetes.findIndex((h) => !colonnesEnTetesGeographiques.includes(h) && h !== "Fichier Source");
     if (idxPeriode === -1) return [];
-    const vals = Array.from(new Set(corps.map((l) => String(l[idxPeriode] ?? "").trim()).filter(Boolean)));
-    return vals;
+    return Array.from(new Set(corps.map((l) => String(l[idxPeriode] ?? "").trim()).filter(Boolean)));
   }, [estFormatMatriciel, corps, entetes, colonnesEnTetesGeographiques]);
 
   const [periodeChoisie, setPeriodeChoisie] = useState<string>("Toutes");
@@ -156,7 +182,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
   const points = useMemo<PointComparatif[]>(() => {
     const pts: PointComparatif[] = [];
 
-    // CAS A : FORMAT MATRICIEL (Les colonnes représentent les villes/stations)
+    // CAS A : FORMAT MATRICIEL
     if (estFormatMatriciel) {
       const idxPeriodeCol = entetes.findIndex((h) => !colonnesEnTetesGeographiques.includes(h) && h !== "Fichier Source");
 
@@ -192,7 +218,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       return pts.sort((a, b) => b.totalGlobal - a.totalGlobal);
     }
 
-    // CAS B : FORMAT STANDARD (Une colonne de lieux en lignes)
+    // CAS B : FORMAT STANDARD
     const idxGeo = entetes.indexOf(colonneGeo);
     if (idxGeo === -1) return [];
 
@@ -201,7 +227,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
     for (const ligne of corps) {
       const lieu = String(ligne[idxGeo] ?? "").replace(/["'«»“”]/g, "").trim();
-      // GARDE-FOU : Écarte formellement les années et les nombres purs
       if (!lieu || /^\d+$/.test(lieu) || lieu === "—" || lieu === "-" || /^total/i.test(lieu)) continue;
 
       let gLieu = mapLieux.get(lieu);
@@ -258,7 +283,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     externes,
   ]);
 
-  // 4. GÉOCODAGE OPENSTREETMAP SÉCURISÉ (Ne géocode JAMAIS des chiffres ou années)
+  // 4. GÉOCODAGE NOMINATIM
   useEffect(() => {
     if (estFormatMatriciel) return;
     let annule = false;
@@ -271,7 +296,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
       for (const nom of candidats) {
         if (annule) return;
-        // Interdiction formelle de chercher des années ou des nombres purs
         if (!nom || /^\d+$/.test(nom) || nom === "—" || nom === "-" || /^total/i.test(nom)) continue;
         if (trouverLieuCI(nom) || PAYS_DU_MONDE[cleGeo(nom)]) continue;
         if (demandes.current.has(nom)) continue;
@@ -358,7 +382,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     setEstDejaInclus(true);
   };
 
-  // GARDE-FOU : Aucune donnée géographique
+  // CAS AUCUNE DONNÉE GÉOGRAPHIQUE
   if (!estFormatMatriciel && colonnesGeographiquesEligibles.length === 0) {
     return (
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
@@ -392,22 +416,22 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
   }
 
   return (
-    <div className="bloc-carte-print print-eviter-coupure bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
+    <div className="bloc-carte-print print-eviter-coupure bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4 shadow-sm">
       {/* En-tête */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+          <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold shrink-0">
             <MapPin className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+            <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
               {estFormatMatriciel
-                ? `Cartographie des Stations (${colonnesEnTetesGeographiques.length} pôles localisés)`
+                ? `Cartographie des Stations (${colonnesEnTetesGeographiques.length} pôles)`
                 : `Carte géographique — ${colonneGeo}`}
             </h3>
-            <p className="text-xs text-slate-400">
+            <p className="text-[11px] sm:text-xs text-slate-400">
               {estFormatMatriciel
-                ? "Données matricielles : chaque colonne correspond à une station géographique officielle"
+                ? "Données matricielles : chaque colonne correspond à une station géographique"
                 : "Répartition spatiale et concentration territoriale"}
             </p>
           </div>
@@ -415,11 +439,10 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
         {/* Contrôles interactifs */}
         <div className="no-print print:hidden flex flex-wrap items-center gap-2">
-          {/* FORMAT MATRICIEL : Sélecteur de période */}
           {estFormatMatriciel ? (
             <>
               {periodesDisponibles.length > 0 && (
-                <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-lg px-2.5 py-1.5">
+                <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-xl px-2.5 py-1.5">
                   <Calendar className="w-3.5 h-3.5 text-blue-600" />
                   <select
                     value={periodeChoisie}
@@ -439,19 +462,18 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
               <select
                 value={agregation}
                 onChange={(e) => setAgregation(e.target.value as AgregationCarte)}
-                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium"
+                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-xs font-medium"
               >
                 <option value="Somme">Somme</option>
                 <option value="Moyenne">Moyenne</option>
               </select>
             </>
           ) : (
-            /* FORMAT STANDARD : Sélecteurs habituels */
             <>
               <select
                 value={colonneGeo}
                 onChange={(e) => setChoix(e.target.value)}
-                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-700 dark:text-slate-300"
+                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-xs font-semibold text-slate-700 dark:text-slate-300"
               >
                 {colonnesGeographiquesEligibles.map((h) => (
                   <option key={h} value={h}>
@@ -463,7 +485,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
               <select
                 value={agregation}
                 onChange={(e) => setAgregation(e.target.value as AgregationCarte)}
-                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium"
+                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-xs font-medium"
               >
                 <option value="Somme" disabled={!colonnesNumeriques.length}>
                   Somme cumulée
@@ -478,7 +500,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
                 <select
                   value={colonneMesure}
                   onChange={(e) => setColonneMesure(e.target.value)}
-                  className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium"
+                  className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-xs font-medium"
                 >
                   {colonnesNumeriques.map((h) => (
                     <option key={h} value={h}>
@@ -492,74 +514,83 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
           <button
             onClick={preparerExportPptx}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
               estInclusPptx
                 ? "bg-blue-600 text-white shadow-xs"
                 : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
             }`}
           >
             <Presentation className="w-3.5 h-3.5" />
-            {estInclusPptx ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
+            <span>{estInclusPptx ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}</span>
           </button>
         </div>
       </div>
 
-      {/* Rendu Leaflet */}
+      {/* Rendu Leaflet Sécurisé (zéro conflit d'instance) */}
       <div className="h-72 sm:h-96 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0">
-        <MapContainer
-          center={centreCI}
-          zoom={zoomCI}
-          scrollWheelZoom={false}
-          dragging={typeof window !== "undefined" && window.innerWidth > 768}
-          touchZoom={false}
-          className="h-full w-full"
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+        {!leafletReady ? (
+          <div className="h-full w-full bg-slate-50 dark:bg-slate-900/50 flex flex-col items-center justify-center gap-2 text-xs text-slate-400 animate-pulse">
+            <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <span>Chargement de la carte interactive...</span>
+          </div>
+        ) : (
+          <leafletReady.MapContainer
+            key={`map-container-${colonneGeo}-${periodeChoisie}`}
+            ref={mapRef}
+            center={centreCI}
+            zoom={zoomCI}
+            scrollWheelZoom={false}
+            dragging={typeof window !== "undefined" && window.innerWidth > 768}
+            touchZoom={false}
+            className="h-full w-full"
+          >
+            <leafletReady.TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
 
-          <AjusterVue points={points} />
+            <leafletReady.AjusterVue points={points} />
 
-          {points.map((p) => {
-            const r = rayonPoint(p.totalGlobal);
+            {points.map((p) => {
+              const r = rayonPoint(p.totalGlobal);
 
-            return (
-              <CircleMarker
-                key={p.nom}
-                center={[p.lat, p.lng]}
-                radius={r}
-                pathOptions={{
-                  fillColor: "#2563eb",
-                  color: "#1d4ed8",
-                  weight: 2,
-                  fillOpacity: 0.65,
-                }}
-              >
-                <Tooltip direction="top" offset={[0, -r - 2]} opacity={0.95}>
-                  <div className="text-xs font-bold font-sans text-slate-900 leading-tight">
-                    <span>{p.nom}</span>
-                    <span className="block font-black text-blue-600 mt-0.5">
-                      {p.totalGlobal.toLocaleString("fr-FR")}
-                    </span>
-                  </div>
-                </Tooltip>
-
-                <Popup>
-                  <div className="text-xs font-sans space-y-1 p-1">
-                    <p className="font-bold text-slate-900 text-sm border-b pb-1">{p.nom}</p>
-                    <p className="text-slate-600 pt-1">
-                      Valeur :{" "}
-                      <strong className="text-blue-600">
+              return (
+                <leafletReady.CircleMarker
+                  key={p.nom}
+                  center={[p.lat, p.lng]}
+                  radius={r}
+                  pathOptions={{
+                    fillColor: "#2563eb",
+                    color: "#1d4ed8",
+                    weight: 2,
+                    fillOpacity: 0.65,
+                  }}
+                >
+                  <leafletReady.Tooltip direction="top" offset={[0, -r - 2]} opacity={0.95}>
+                    <div className="text-xs font-bold font-sans text-slate-900 leading-tight">
+                      <span>{p.nom}</span>
+                      <span className="block font-black text-blue-600 mt-0.5">
                         {p.totalGlobal.toLocaleString("fr-FR")}
-                      </strong>
-                    </p>
-                  </div>
-                </Popup>
-              </CircleMarker>
-            );
-          })}
-        </MapContainer>
+                      </span>
+                    </div>
+                  </leafletReady.Tooltip>
+
+                  <leafletReady.Popup>
+                    <div className="text-xs font-sans space-y-1 p-1">
+                      <p className="font-bold text-slate-900 text-sm border-b pb-1">{p.nom}</p>
+                      <p className="text-slate-600 pt-1">
+                        Valeur :{" "}
+                        <strong className="text-blue-600">
+                          {p.totalGlobal.toLocaleString("fr-FR")}
+                        </strong>
+                      </p>
+                    </div>
+                  </leafletReady.Popup>
+                </leafletReady.CircleMarker>
+              );
+            })}
+          </leafletReady.MapContainer>
+        )}
       </div>
 
       {/* Ruban des zones localisées */}
