@@ -8,6 +8,7 @@ import {
   BarChart2,
   Sparkles,
   Layers,
+  FolderOpen,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -23,6 +24,7 @@ const navigation = [
   { name: "Analyse", href: "/analyse", icon: BarChart2 },
   { name: "Assistant IA", href: "/assistant-ia", icon: Sparkles },
   { name: "Fusion", href: "/fusion", icon: Layers },
+  { name: "Projets", href: "/projets", icon: FolderOpen },
   { name: "Paramètres", href: "/parametres", icon: Settings },
 ];
 

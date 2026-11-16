@@ -739,7 +739,7 @@ Le fichier de référence étalon est : « ${refSource} ».
           <div className="flex items-center gap-1.5">
             <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>
-              <strong>Confidentialité garantie :</strong> Vos fichiers restent traités localement dans votre navigateur. Les champs sensibles sont automatiquement masqués et l&apos;extraction de données brutes est restreinte.
+              <strong>Confidentialité garantie :</strong> Vos fichiers sont traités dans votre navigateur et ne sont enregistrés en ligne que si vous sauvegardez un projet dans votre compte. Les champs sensibles sont automatiquement masqués et l&apos;extraction de données brutes est restreinte.
             </span>
           </div>
         </div>

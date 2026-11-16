@@ -21,6 +21,8 @@ export interface EtatPersiste {
   graphiquesEpingles: GraphiqueEpingle[];
   filtresActifs: ConditionFiltre[];
   definitionsCalculs: DefinitionColonneCalculee[];
+  /** Projet du compte auquel cette session est rattachée (absent : fichier non enregistré en ligne). */
+  projet?: { id: string; nom: string } | null;
 }
 
 function disponible(): boolean {
@@ -93,6 +95,7 @@ export async function chargerEtat(): Promise<EtatPersiste | null> {
       graphiquesEpingles: brut.graphiquesEpingles ?? [],
       filtresActifs: brut.filtresActifs ?? [],
       definitionsCalculs: brut.definitionsCalculs ?? [],
+      projet: brut.projet?.id ? { id: String(brut.projet.id), nom: String(brut.projet.nom ?? "") } : null,
     };
   } catch {
     return null;

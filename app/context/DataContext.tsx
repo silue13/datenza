@@ -15,7 +15,12 @@ import {
   type ConditionFiltre,
   type DefinitionColonneCalculee,
 } from "../../lib/analyse/filtres";
-import { chargerEtat, sauvegarderEtat, effacerEtat } from "../../lib/persistance";
+import { chargerEtat, sauvegarderEtat, effacerEtat, type EtatPersiste } from "../../lib/persistance";
+
+export interface ProjetCourant {
+  id: string;
+  nom: string;
+}
 
 export type ResultatAnalyse = ReturnType<typeof analyserColonnes>;
 export type TypeGraphique = "Barres" | "Courbe" | "Camembert" | "Anneau" | "Radar" | "Aires" | "Carte";
@@ -80,11 +85,30 @@ interface DataContextType {
   nettoyerDonnees: (corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) => void;
   supprimerDonnees: () => void;
   restaurationTerminee: boolean;
+  /** Vrai dès qu'un fichier est chargé, même si les filtres actifs ne laissent aucune ligne. */
+  aDesDonnees: boolean;
+  /** Projet du compte ouvert ou enregistré dans cette session ; null pour un fichier non enregistré en ligne. */
+  projetCourant: ProjetCourant | null;
+  definirProjetCourant: (projet: ProjetCourant | null) => void;
+  /** État complet de la session (données sources + réglages), tel qu'il est enregistré dans un projet. */
+  obtenirEtat: () => EtatPersiste;
+  /** Remplace la session par un projet enregistré. */
+  ouvrirEtat: (etat: EtatPersiste, projet?: ProjetCourant | null) => void;
+  /** Projet partagé affiché en lecture seule : rien n'est sauvegardé, la session du visiteur reste intacte. */
+  lectureSeule: boolean;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
-export function DataProvider({ children }: { children: ReactNode }) {
+interface DataProviderProps {
+  children: ReactNode;
+  /** Projet partagé à afficher : la session locale n'est alors ni lue ni modifiée. */
+  etatInitial?: EtatPersiste;
+  lectureSeule?: boolean;
+}
+
+export function DataProvider({ children, etatInitial, lectureSeule = false }: DataProviderProps) {
+  const [projetCourant, setProjetCourant] = useState<ProjetCourant | null>(null);
   const [nomFichier, setNomFichier] = useState<string>("");
   const [sources, setSources] = useState<{ entetes: string[]; corps: Cellule[][] }>({ entetes: [], corps: [] });
   const [entetes, setEntetes] = useState<string[]>([]);
@@ -189,6 +213,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       corpsNettoye = donneesPropres.map((obj) => entetesPropres.map((h) => obj[h]));
     }
 
+    setProjetCourant(null);
     setNomFichier(nom);
     setSources({ entetes: entetesPropres, corps: corpsNettoye });
     setEntetes(entetesPropres);
@@ -240,22 +265,38 @@ export function DataProvider({ children }: { children: ReactNode }) {
     regenererDonnees(sources.entetes, corpsPropre, definitionsCalculs, filtresActifs);
   }
 
-  // Restauration de l'état persisté
+  function appliquerEtat(etat: EtatPersiste) {
+    setNomFichier(etat.nomFichier);
+    setSources(etat.sources);
+    setDefinitionsCalculs(etat.definitionsCalculs);
+    setFiltresActifs(etat.filtresActifs);
+    regenererDonnees(etat.sources.entetes, etat.sources.corps, etat.definitionsCalculs, etat.filtresActifs);
+    setChoisies(etat.choisies);
+    setRapport(etat.rapport);
+    setResultat(etat.resultat);
+    setGraphiquesEpingles(etat.graphiquesEpingles || []);
+    setProjetCourant(etat.projet ?? null);
+  }
+
+  function ouvrirEtat(etat: EtatPersiste, projet: ProjetCourant | null = null) {
+    appliquerEtat({ ...etat, projet });
+  }
+
+  function obtenirEtat(): EtatPersiste {
+    return { nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projet: projetCourant };
+  }
+
+  // Restauration de l'état persisté (ou affichage direct d'un projet partagé)
   useEffect(() => {
+    if (etatInitial) {
+      appliquerEtat({ ...etatInitial, projet: null });
+      setRestaurationTerminee(true);
+      return;
+    }
     let annule = false;
     chargerEtat().then((etat) => {
       if (annule) return;
-      if (etat) {
-        setNomFichier(etat.nomFichier);
-        setSources(etat.sources);
-        setDefinitionsCalculs(etat.definitionsCalculs);
-        setFiltresActifs(etat.filtresActifs);
-        regenererDonnees(etat.sources.entetes, etat.sources.corps, etat.definitionsCalculs, etat.filtresActifs);
-        setChoisies(etat.choisies);
-        setRapport(etat.rapport);
-        setResultat(etat.resultat);
-        setGraphiquesEpingles(etat.graphiquesEpingles || []);
-      }
+      if (etat) appliquerEtat(etat);
       setRestaurationTerminee(true);
     });
     return () => {
@@ -266,7 +307,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // Sauvegarde automatique
   useEffect(() => {
-    if (!restaurationTerminee) return;
+    if (!restaurationTerminee || lectureSeule) return;
     if (!sources.corps.length) {
       void effacerEtat();
       return;
@@ -281,10 +322,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         graphiquesEpingles,
         filtresActifs,
         definitionsCalculs,
+        projet: projetCourant,
       });
     }, 600);
     return () => clearTimeout(minuteur);
-  }, [restaurationTerminee, nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs]);
+  }, [restaurationTerminee, lectureSeule, nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projetCourant]);
 
   function supprimerDonnees() {
     setNomFichier("");
@@ -297,7 +339,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setGraphiquesEpingles([]);
     setFiltresActifs([]);
     setDefinitionsCalculs([]);
-    void effacerEtat();
+    setProjetCourant(null);
+    if (!lectureSeule) void effacerEtat();
   }
 
   const [graphiquesAffiches, setGraphiquesAffiches] = useState<GraphiqueEpingle[]>([]);
@@ -350,6 +393,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         nettoyerDonnees,
         supprimerDonnees,
         restaurationTerminee,
+        aDesDonnees: sources.corps.length > 0,
+        projetCourant,
+        definirProjetCourant: setProjetCourant,
+        obtenirEtat,
+        ouvrirEtat,
+        lectureSeule,
       }}
     >
       {children}

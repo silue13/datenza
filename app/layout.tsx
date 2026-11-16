@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "./components/Sidebar";
 import { DataProvider } from "./context/DataContext";
+import { AuthProvider } from "./context/AuthContext";
 import ThemeInit from "./components/ThemeInit";
 import PwaUpdater from "./components/PwaUpdater";
 import VerificateurMiseAJour from "./components/VerificateurMiseAJour";
@@ -48,12 +49,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeInit />
         <PwaUpdater />
         <VerificateurMiseAJour />
+        <AuthProvider>
         <DataProvider>
           <Sidebar />
           <main className="flex-1 w-full min-w-0 overflow-y-auto p-3.5 sm:p-6 md:p-10 pb-24 md:pb-10">
             {children}
           </main>
         </DataProvider>
+        </AuthProvider>
       </body>
     </html>
   );
