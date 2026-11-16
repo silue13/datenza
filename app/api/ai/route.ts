@@ -14,14 +14,16 @@ interface CorpsRequete {
   langueApp?: string;
   historique?: unknown;
   mode?: unknown; // "monchamp" : le contexte est un projet agricole calculé, pas un fichier importé
+  calculs?: unknown; // true : le modèle peut demander des calculs au moteur (page Assistant)
+  resultatsCalculs?: unknown; // résultats de ces calculs, au second appel
 }
 
 const erreur = (message: string, status: number) => NextResponse.json({ error: message }, { status });
 
-// Limite provisoire : 30 questions / heure / adresse IP.
+// Limite provisoire : 60 appels / heure / adresse IP (une question qui demande des calculs compte pour deux appels).
 // En mémoire, donc propre à chaque instance serveur : c'est un garde-fou, pas une vraie protection.
 // À remplacer par l'authentification Supabase + un compteur persistant.
-const LIMITE = 30;
+const LIMITE = 60;
 const FENETRE_MS = 60 * 60 * 1000;
 const compteurs = new Map<string, { debut: number; n: number }>();
 
@@ -47,7 +49,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "inconnue";
-  if (depasseLimite(ip)) return erreur("Limite atteinte : 30 questions par heure.", 429);
+  if (depasseLimite(ip)) return erreur("Limite horaire atteinte. Réessayez dans une heure.", 429);
 
   let body: CorpsRequete;
   try {
@@ -65,19 +67,30 @@ export async function POST(req: Request) {
 
   // 1) Garde-fou AVANT tout appel fournisseur : aucun token consommé si hors sujet.
   const mode = body?.mode === "monchamp" ? "monchamp" : "fichier";
-  const garde = verifierQuestionLieeAuxFichier(question, contexte, body?.langueConversation, mode);
+  const conversationEnCours =
+    Array.isArray(body?.historique) &&
+    body.historique.some((m: { role?: unknown } | null) => m?.role === "user") &&
+    body.historique.some((m: { role?: unknown } | null) => m?.role === "assistant");
+  const garde = verifierQuestionLieeAuxFichier(question, contexte, body?.langueConversation, mode, conversationEnCours);
   if (!garde.ok) return erreur(garde.message, 422);
 
   const candidats = candidatsIA(String(body?.fournisseur ?? "auto"));
   if (!candidats.length) return erreur("Aucun service IA n’est configuré sur le serveur.", 503);
 
   const langue = determinerLangueConversation(question, body?.langueConversation, body?.langueApp);
-  const messages = construireMessagesIA(question, contexte, langue, body?.historique);
+  const resultatsCalculs = typeof body?.resultatsCalculs === "string" ? body.resultatsCalculs.slice(0, 60_000) : "";
+  const messages = construireMessagesIA(question, contexte, langue, body?.historique, {
+    avecCalculs: body?.calculs === true && mode === "fichier",
+    resultatsCalculs,
+  });
 
   const erreurs: string[] = [];
+  // On garde une marge sous maxDuration pour toujours renvoyer une erreur lisible plutôt qu'une coupure
+  const echeance = Date.now() + (maxDuration - 8) * 1000;
   for (const nom of candidats) {
+    if (echeance - Date.now() < 3000) break;
     try {
-      const reponse = await appelerFournisseur(nom, messages);
+      const reponse = await appelerFournisseur(nom, messages, echeance);
       return NextResponse.json({ fournisseur: nom, reponse });
     } catch (e) {
       erreurs.push(`${IA_CONFIG[nom].nom} : ${e instanceof Error ? e.message : "erreur"}`);

@@ -63,6 +63,14 @@ export function genererRapport(res: Resultat, langue: Langue = "fr"): BlocRappor
     const s = st[n].stats as Cat;
     const top = s.topValeurs[0];
     if (!top) return;
+    if (s.nbCategoriesDistinctes === 1) {
+      // Une colonne constante ne distingue aucune ligne : on le dit simplement au lieu d'annoncer « 100 % »
+      blocs.push({
+        type: "categorie",
+        texte: L(`${n} : une seule valeur, « ${top.valeur} », sur les ${s.total} lignes renseignées.`, `${n}: a single value, “${top.valeur}”, across the ${s.total} reported rows.`),
+      });
+      return;
+    }
     let t = L(
       `${n} : « ${top.valeur} » est la modalité la plus fréquente (${top.effectif} lignes, ${top.pourcentage} %) sur ${s.total} valeurs renseignées.`,
       `${n}: “${top.valeur}” is the most frequent value (${top.effectif} rows, ${top.pourcentage} %) out of ${s.total} reported values.`

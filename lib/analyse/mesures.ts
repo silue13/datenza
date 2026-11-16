@@ -35,12 +35,18 @@ const MAX_DIMENSIONS_PREMIERE = 3;
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 const RE_PAS_MESURE = /(annee|year|mois|month|jour|day|semaine|week|heure|hour|minute|trimestre|quarter|code|numero|\bid\b|rang|rank|latitude|longitude|\blat\b|\blon\b|\blng\b|gps|postal|zip)/;
-const RE_ADDITIVE = /(total|montant|somme|quantite|quantity|nombre|nb\b|effectif|count|volume|superficie|surface|area|population|poids|weight|capacite|stock|cout|cost|depense|budget|revenu|revenue|recette|production|passagers|passengers)/;
-const RE_MOYENNE = /(prix|price|unitaire|taux|rate|note|score|age|temperature|pourcentage|percent|ratio|moyenne|average|indice|index|densite|rendement|yield|vitesse|speed|duree|duration|delai|retard|delay|distance|niveau|level)/;
+const RE_ADDITIVE = /(total|montant|somme|quantite|quantity|\bqte\b|nombre|nb\b|nbre|effectif|count|volume|superficie|surface|area|population|poids|weight|capacite|stock|cout|cost|depense|budget|revenu|revenue|recette|production|passagers|passengers|vente|sales|chiffre|\bca\b|benefice|profit|marge|salaire|amount|tonnage|recolte|commande|orders|hommes?\b|femmes?\b|menages?\b|habitants|electeurs|inscrits|votants|eleves|etudiants|naissances|deces|enfants|filles|garcons|personnes|individus|logements)/;
+const RE_MOYENNE = /(prix|price|unitaire|taux|\brate\b|\bnote|score|\bage\b|temperature|pourcentage|percent|ratio|moyenne|average|indice|index|densite|rendement|yield|vitesse|speed|duree|duration|delai|retard|delay|distance|niveau|level)/;
 
-export const estPseudoMesure = (nom: string): boolean => RE_PAS_MESURE.test(norm(nom));
+const RE_VRAIE_MESURE = /(nombre|\bnb\b|nbre|duree|total|montant|quantite|volume|cumul|travaille|worked|count)/;
+/** Colonne numérique qui n'est pas une mesure (année, code, latitude…). « Nombre de jours » reste une mesure. */
+export const estPseudoMesure = (nom: string): boolean => {
+  const n = norm(nom);
+  return RE_PAS_MESURE.test(n) && !RE_VRAIE_MESURE.test(n);
+};
 
-function operationPour(nom: string): "somme" | "moyenne" {
+/** Somme pour les grandeurs qui s'additionnent (montants, quantités), moyenne pour les autres (prix, taux, notes). */
+export function operationPour(nom: string): "somme" | "moyenne" {
   const n = norm(nom);
   const aExpliciteSomme = /(total|somme|cumul)/.test(n);
   const aExpliciteMoyenne = /(moyen|moyenne|average|unitaire|ratio|taux|rate|pourcent|percent)/.test(n);
@@ -81,8 +87,11 @@ export function calculerMesures(
       const remplissage = total ? c.info.nbValides / total : 0;
       const n = norm(c.nom);
       let score = 10 * remplissage;
-      if (RE_ADDITIVE.test(n)) score += 6;
-      if (RE_MOYENNE.test(n)) score += 4;
+      // Une seule nature par colonne : « Taille moyenne ménage » est une moyenne, pas un volume
+      if (operationPour(c.nom) === "somme" && RE_ADDITIVE.test(n)) score += 6;
+      else if (RE_MOYENNE.test(n)) score += 4;
+      // Un total explicite (« Population totale ») passe avant ses composantes (« Hommes », « Femmes »)
+      if (/(total|global|ensemble)/.test(n) && operationPour(c.nom) === "somme") score += 2;
       return { ...c, score };
     })
     .sort((a, b) => b.score - a.score || a.ordre - b.ordre)

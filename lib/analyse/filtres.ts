@@ -18,6 +18,24 @@ export interface DefinitionColonneCalculee {
   tranches?: { min: number; max: number; label: string }[];
 }
 
+/** Valeur comparable : nombre, sinon date (en millisecondes). Permet de filtrer « après le 01/03/2024 ». */
+function comparable(v: any): number | null {
+  const n = parseNombre(v);
+  if (n !== null) return n;
+  const d = convertirDate(v);
+  return d ? d.getTime() : null;
+}
+
+const texte = (v: any) => String(v ?? '').trim().toLowerCase();
+
+/** Égalité tolérante : « 10 », « 10,0 » et 10 sont égaux ; le texte est comparé sans tenir compte de la casse. */
+function egal(a: any, b: any): boolean {
+  if (texte(a) === texte(b)) return true;
+  const na = parseNombre(a);
+  const nb = parseNombre(b);
+  return na !== null && nb !== null && na === nb;
+}
+
 export function appliquerFiltres(
   donnees: Record<string, any>[],
   filtres: ConditionFiltre[]
@@ -27,26 +45,26 @@ export function appliquerFiltres(
   return donnees.filter((ligne) => {
     return filtres.every((f) => {
       const valBrute = ligne[f.colonne];
-      const valNum = parseNombre(valBrute);
+      const valNum = comparable(valBrute);
 
       switch (f.operateur) {
         case 'egal':
-          return String(valBrute ?? '').toLowerCase() === String(f.valeur ?? '').toLowerCase();
+          return egal(valBrute, f.valeur);
         case 'different':
-          return String(valBrute ?? '').toLowerCase() !== String(f.valeur ?? '').toLowerCase();
+          return !egal(valBrute, f.valeur);
         case 'contient':
-          return String(valBrute ?? '').toLowerCase().includes(String(f.valeur ?? '').toLowerCase());
+          return texte(valBrute).includes(texte(f.valeur));
         case 'superieur': {
-          const seuil = parseNombre(f.valeur);
+          const seuil = comparable(f.valeur);
           return valNum !== null && seuil !== null && valNum >= seuil;
         }
         case 'inferieur': {
-          const seuil = parseNombre(f.valeur);
+          const seuil = comparable(f.valeur);
           return valNum !== null && seuil !== null && valNum <= seuil;
         }
         case 'entre': {
-          const seuilMin = parseNombre(f.valeur);
-          const seuilMax = parseNombre(f.valeurFin);
+          const seuilMin = comparable(f.valeur);
+          const seuilMax = comparable(f.valeurFin);
           return valNum !== null && seuilMin !== null && seuilMax !== null && valNum >= seuilMin && valNum <= seuilMax;
         }
         default:

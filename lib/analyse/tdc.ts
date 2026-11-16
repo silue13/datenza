@@ -1,4 +1,6 @@
-// lib/analyse/tdc.ts — autonome, aucune dépendance interne
+// lib/analyse/tdc.ts
+import { parseNombre, estValeurVide, estLigneTotal, arrondir } from './utils';
+import { trierChronologiquement } from './dates';
 
 export type Cell = string | number | boolean | null | undefined;
 export type Row = Cell[];
@@ -25,88 +27,18 @@ export const VALEUR_UNIQUE = '__valeur__';
 export const NB_MAX_LIGNES_TDC = 100;
 export const NB_MAX_COLONNES_TDC = 25;
 
-const arrondir = (v: number): number => Math.round(v * 100) / 100;
 
+/** Même lecture des nombres que le reste de l'application (un seul analyseur, plus de divergence). */
 export function parseNombreTdc(val: Cell): number | null {
-  if (val === null || val === undefined) return null;
-  if (typeof val === 'number') return isNaN(val) ? null : val;
-
-  let str = String(val).replace(/^\uFEFF/, '').trim();
-  if (str === '') return null;
-
-  // 1. Purge des guillemets doubles et simples (ex: "-402,6" -> -402,6)
-  str = str.replace(/["'«»“”]/g, '').trim();
-
-  // 2. Gestion de la notation comptable négative entre parenthèses : (1 250) -> -1250
-  if (str.startsWith('(') && str.endsWith(')')) {
-    str = '-' + str.slice(1, -1);
-  }
-
-  // 3. Normalisation des tirets négatifs (Unicode minus, en-dash, em-dash)
-  str = str.replace(/^[−–—]\s*/, '-');
-
-  // 4. Nettoyage des devises, unités monétaires et pourcentages
-  str = str.replace(/\b(FCFA|CFA|XOF|EUR|USD|GBP)\b/gi, '').trim();
-  str = str.replace(/[€$£%]/g, '').trim();
-
-  // 5. Suppression des espaces standards et insécables (\u00A0, \u202F)
-  str = str.replace(/[\s\u00A0\u202F]+/g, '');
-
-  if (str === '' || str === '-' || str === '+' || str === '—' || str === '.') return null;
-
-  // 6. Normalisation de la virgule et du point décimal
-  if (str.includes(',') && str.includes('.')) {
-    if (str.lastIndexOf(',') < str.lastIndexOf('.')) {
-      str = str.replace(/,/g, '');
-    } else {
-      str = str.replace(/\./g, '').replace(/,/g, '.');
-    }
-  } else if ((str.match(/,/g) || []).length > 1) {
-    str = str.replace(/,/g, '');
-  } else if ((str.match(/\./g) || []).length > 1) {
-    str = str.replace(/\./g, '');
-  } else if (str.includes(',')) {
-    str = str.replace(',', '.');
-  }
-
-  const num = Number(str);
-  return isNaN(num) ? null : num;
+  if (typeof val === 'boolean') return null;
+  return parseNombre(val);
 }
 
 export function valeurTdcInvalide(v: Cell): boolean {
-  if (v === null || v === undefined) return true;
-  const s = String(v)
-    .replace(/^\uFEFF/, '')
-    .replace(/["'«»“”]/g, '')
-    .trim()
-    .toLowerCase();
-  return (
-    s === '' ||
-    s === '-' ||
-    s === '—' ||
-    s === '–' ||
-    s === '.' ||
-    s === '..' ||
-    /^(n\/?a|na|n\.?a\.?|#n\/a|null|undefined|none|vide|missing|n\.?d\.?|nd|s\/?o|so)$/i.test(s)
-  );
+  return estValeurVide(v);
 }
 
-/**
- * Détecte et exclut les lignes de totalisation ou calculées
- * (ex: "Variation 2023/2022", "TOTAL", "Sous-total").
- */
-function estLigneTotalTdc(ligne: Row): boolean {
-  if (!ligne || ligne.length === 0) return true;
-  const premierNonVide = ligne.find((c) => !valeurTdcInvalide(c));
-  if (!premierNonVide) return true;
-  const s = String(premierNonVide)
-    .replace(/^\uFEFF/, '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-  return /^(total|sous[- ]?total|variation|moyenne|ensemble|general|bilan|somme|ecart)/i.test(s);
-}
+const estLigneTotalTdc = (ligne: Row): boolean => estLigneTotal(ligne);
 
 function cleComposite(ligne: Row, indices: number[]): string | null {
   const morceaux: string[] = [];
@@ -200,8 +132,13 @@ export function calculerTdc(
   }
 
   const tri = (a: string, b: string) => a.localeCompare(b, 'fr', { numeric: true });
-  const lignes = Array.from(lignesVues).sort(tri);
-  const colsBase = avecColonnes ? Array.from(colsVues).sort(tri) : [VALEUR_UNIQUE];
+  // Périodes (mois, trimestres, dates…) dans l'ordre du calendrier, le reste par ordre alphabétique
+  const ordonner = (vues: Set<string>) => {
+    const liste = Array.from(vues);
+    return trierChronologiquement(liste, (x) => x) ?? liste.sort(tri);
+  };
+  const lignes = ordonner(lignesVues);
+  const colsBase = avecColonnes ? ordonner(colsVues) : [VALEUR_UNIQUE];
   const colonnes: ColonneTdc[] = colsBase.flatMap((colonneBase) =>
     champsVal.map((champValeur) => ({ colonneBase, champValeur }))
   );

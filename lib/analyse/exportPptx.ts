@@ -1,4 +1,5 @@
 import pptxgen from "pptxgenjs";
+import { trierChronologiquement } from "./dates";
 import { parseNombre } from "./utils";
 
 // =========================================================================
@@ -456,7 +457,9 @@ function autoGenererGraphiques(donnees: DonneesExportPptx): GraphiqueExport[] {
 export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Promise<void> {
   const pptx = new pptxgen();
 
-  pptx.layout = "LAYOUT_16x9";
+  // Toute la mise en page est dessinée pour 13,33 × 7,5 pouces. Avec LAYOUT_16x9 (10 × 5,63 pouces),
+  // un tiers de chaque diapositive débordait à droite et en bas.
+  pptx.layout = "LAYOUT_WIDE";
   pptx.author = "DATENZA Executive";
   pptx.company = "DATENZA Business Intelligence";
   pptx.title = `Rapport Stratégique - ${nettoyerNomMetier(donnees.nomProjet) || "Audit"}`;
@@ -754,6 +757,11 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
     listeGraphiques = autoGenererGraphiques(donnees);
   }
 
+  // Une diapositive n'a de sens que s'il y a quelque chose à montrer (une carte épinglée sans image n'a pas de données)
+  listeGraphiques = listeGraphiques.filter(
+    (g) => g?.image || g?.donneesTableau?.entetes?.length || ((g?.labels || []).length > 0 && (g?.datasets || []).length > 0)
+  );
+
   if (listeGraphiques.length > 0) {
     listeGraphiques.forEach((graphique, idx) => {
       const slideGraph = pptx.addSlide();
@@ -766,12 +774,86 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         pptx
       );
 
-      const chartLabels = (graphique.labels || []).slice(0, 12).map(nettoyerNomMetier);
+      // Tableau croisé ajouté depuis l'écran TDC : rendu en vrai tableau (il n'était pas dessiné jusqu'ici)
+      if (!graphique.image && graphique.donneesTableau?.entetes?.length) {
+        const t = graphique.donneesTableau as { entetes: string[]; lignes: (string | number)[][] };
+        const MAX_COLS = 9;
+        const MAX_LIGNES = 14;
+        const nbCols = t.entetes.length;
+        // On garde toujours la première colonne (libellés) et la dernière (total)
+        const cols = nbCols > MAX_COLS ? [...Array.from({ length: MAX_COLS - 1 }, (_, i) => i), nbCols - 1] : t.entetes.map((_, i) => i);
+        const lignesT = t.lignes.length > MAX_LIGNES ? [...t.lignes.slice(0, MAX_LIGNES - 1), t.lignes[t.lignes.length - 1]] : t.lignes;
+        const texteCellule = (v: string | number | undefined) =>
+          typeof v === "number" ? v.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) : nettoyerNomMetier(String(v ?? ""));
+        const rows = [
+          cols.map((j) => ({
+            text: nettoyerNomMetier(String(t.entetes[j] ?? "")),
+            options: { bold: true, color: COULEURS.texteBlanc, fill: { color: COULEURS.fondSombre }, align: "center", fontSize: 9.5, fontFace: "Calibri" },
+          })),
+          ...lignesT.map((l, i) =>
+            cols.map((j, k) => ({
+              text: texteCellule(l[j]),
+              options: {
+                bold: k === 0 || i === lignesT.length - 1,
+                color: COULEURS.textePrincipal,
+                fill: { color: i % 2 ? COULEURS.fondSubtil : COULEURS.texteBlanc },
+                align: k === 0 ? "left" : "right",
+                fontSize: 9.5,
+                fontFace: "Calibri",
+              },
+            }))
+          ),
+        ];
+        slideGraph.addTable(rows as any, {
+          x: 0.8,
+          y: 1.55,
+          w: 11.73,
+          border: { type: "solid", color: COULEURS.bordure, pt: 0.75 },
+          autoPage: false,
+        });
+        const notes = [graphique.sousTitre ? nettoyerNomMetier(graphique.sousTitre) : ""];
+        if (nbCols > MAX_COLS || t.lignes.length > MAX_LIGNES) {
+          notes.push(`Extrait : ${Math.min(t.lignes.length, MAX_LIGNES)} lignes sur ${t.lignes.length}, ${cols.length} colonnes sur ${nbCols}.`);
+        }
+        slideGraph.addText(notes.filter(Boolean).join("  —  "), {
+          x: 0.8, y: 6.95, w: 11.73, h: 0.3, fontFace: "Calibri", fontSize: 9, color: COULEURS.texteDiscret,
+        });
+        return;
+      }
+
+      const typeStr = String(graphique.chartType || graphique.type || "").toLowerCase();
+      const estAire = typeStr.includes("aire") || typeStr === "area";
+      const estLigne = typeStr.includes("courbe") || typeStr === "line" || estAire;
+      const estCirculaire = typeStr.includes("camembert") || typeStr === "pie" || typeStr.includes("anneau") || typeStr === "doughnut";
+      const multiSeries = (graphique.datasets || []).length > 1;
+
+      const tousLabels: string[] = (graphique.labels || []).map((l: unknown) => nettoyerNomMetier(String(l ?? "")));
+      // Une série dans le temps garde ses périodes les plus récentes ; un classement garde ses premiers
+      const maxPoints = estLigne ? 36 : estCirculaire ? 8 : 15;
+      const debut = estLigne ? Math.max(0, tousLabels.length - maxPoints) : 0;
+      const chartLabels = tousLabels.slice(debut, debut + maxPoints);
       const chartData = (graphique.datasets || []).map((ds: any) => ({
         name: nettoyerNomMetier(ds.label || "Valeur"),
         labels: chartLabels,
-        values: (ds.data || []).slice(0, 12).map((v: any) => Number(v) || 0),
+        values: (ds.data || []).slice(debut, debut + maxPoints).map((v: any) => Number(v) || 0),
       }));
+
+      // Valeurs complètes (non tronquées) pour les indicateurs : total par libellé si plusieurs séries s'additionnent
+      const nonAdditif = /(moyenne|m[ée]diane|minimum|maximum|average|median)/i.test(
+        `${graphique.titre ?? ""} ${graphique.datasets?.[0]?.label ?? ""}`
+      );
+      const nombreOuNull = (v: unknown): number | null =>
+        v === null || v === undefined || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
+      const serieIndicateurs: { nom: string; v: number }[] = tousLabels
+        .map((nom, i) => {
+          const vals = (graphique.datasets || []).map((ds: any) => nombreOuNull(ds.data?.[i]));
+          const v = multiSeries && !nonAdditif
+            ? (vals.some((x: number | null) => x !== null) ? vals.reduce((a: number, x: number | null) => a + (x ?? 0), 0) : null)
+            : vals[0] ?? null;
+          return { nom, v };
+        })
+        .filter((x): x is { nom: string; v: number } => x.v !== null);
+      const estTemporel = estLigne || (tousLabels.length >= 2 && trierChronologiquement(tousLabels, (x) => x) !== null);
 
       // 1. Zone visuelle à gauche (7.7 pouces)
       if (graphique.image) {
@@ -785,23 +867,37 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         });
       } else if (chartData.length > 0 && chartLabels.length > 0) {
         let typePptx = pptx.ChartType.bar;
-        const typeStr = String(graphique.chartType || graphique.type || "").toLowerCase();
-        if (typeStr.includes("courbe") || typeStr === "line") typePptx = pptx.ChartType.line;
+        if (estLigne) typePptx = estAire ? pptx.ChartType.area : pptx.ChartType.line;
         if (typeStr.includes("camembert") || typeStr === "pie") typePptx = pptx.ChartType.pie;
         if (typeStr.includes("anneau") || typeStr === "doughnut") typePptx = pptx.ChartType.doughnut;
+
+        const toutesValeurs = chartData.flatMap((d: { values: number[] }) => d.values);
+        const maxAbs = toutesValeurs.reduce((m: number, v: number) => Math.max(m, Math.abs(v)), 0);
+        const aDecimales = toutesValeurs.some((v: number) => !Number.isInteger(v));
+        const nbEtiquettes = chartLabels.length * chartData.length;
 
         slideGraph.addChart(typePptx, chartData, {
           x: 0.8,
           y: 1.45,
           w: 7.7,
           h: 5.3,
-          showLegend: true,
+          showLegend: multiSeries || estCirculaire,
           legendPos: "b",
           showTitle: false,
           chartColors: PALETTE_CHARTS,
-          showValue: true,
-          dataLabelFormatCode: "#,##0",
-        });
+          // Étiquettes seulement si elles restent lisibles ; les décimales sont gardées pour les petites valeurs
+          showValue: !estCirculaire && nbEtiquettes <= 15,
+          showPercent: estCirculaire,
+          dataLabelFormatCode: estCirculaire ? "0.0%" : aDecimales && maxAbs < 1000 ? "#,##0.0#" : "#,##0",
+          valAxisLabelFormatCode: aDecimales && maxAbs < 10 ? "#,##0.0#" : "#,##0",
+          catAxisLabelFontSize: chartLabels.length > 15 ? 8 : 10,
+          ...(typePptx === pptx.ChartType.bar
+            ? {
+                barDir: graphique.horizontal ? "bar" : "col",
+                barGrouping: graphique.empile && multiSeries ? "stacked" : "clustered",
+              }
+            : {}),
+        } as any);
       }
 
       // 2. Fiche Décisionnelle à droite (3.78 pouces de large)
@@ -821,17 +917,18 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
         x: cardX + 0.2, y: cardY + 0.14, w: cardW - 0.4, h: 0.25, fontFace: "Calibri", fontSize: 10, bold: true, color: COULEURS.texteBlanc, charSpacing: 1.2,
       });
 
-      // Calcul des indicateurs
-      const datasetPremier = chartData[0]?.values || [];
+      // Calcul des indicateurs (sur toutes les valeurs, pas seulement celles affichées)
+      const datasetPremier = serieIndicateurs.map((x) => x.v);
       const totalVolume = datasetPremier.reduce((a: number, b: number) => a + b, 0);
       const moyenneVolume = datasetPremier.length > 0 ? Math.round((totalVolume / datasetPremier.length) * 10) / 10 : 0;
       const maxVolume = datasetPremier.length > 0 ? Math.max(...datasetPremier) : 0;
       const minVolume = datasetPremier.length > 0 ? Math.min(...datasetPremier) : 0;
-      const indexMax = datasetPremier.indexOf(maxVolume);
-      const nomLeader = chartLabels[indexMax] || "Leader";
-      const indexMin = datasetPremier.indexOf(minVolume);
-      const nomMin = chartLabels[indexMin] || "Retrait";
-      const partLeader = totalVolume > 0 ? Math.round((maxVolume / totalVolume) * 100) : 0;
+      const nomLeader = serieIndicateurs[datasetPremier.indexOf(maxVolume)]?.nom || "—";
+      const nomMin = serieIndicateurs[datasetPremier.indexOf(minVolume)]?.nom || "—";
+      // Une part du total n'a de sens que pour des valeurs positives qui s'additionnent
+      const partsValides = !nonAdditif && minVolume >= 0 && totalVolume > 0;
+      const partLeader = partsValides ? Math.round((maxVolume / totalVolume) * 100) : 0;
+      const fr = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: Math.abs(v) < 100 ? 2 : 0 });
 
       // Micro-KPIs
       const kpiW = (cardW - 0.4 - 0.15) / 2;
@@ -841,26 +938,26 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       slideGraph.addShape(pptx.ShapeType.roundRect, {
         x: kpi1X, y: cardY + 0.68, w: kpiW, h: 0.95, rectRadius: 0.06, fill: { color: COULEURS.fondSubtil }, line: { color: COULEURS.bordure, width: 1 },
       });
-      slideGraph.addText("PÔLE MAJEUR", {
+      slideGraph.addText(estTemporel ? "POINT HAUT" : "PREMIER RANG", {
         x: kpi1X + 0.1, y: cardY + 0.76, w: kpiW - 0.2, h: 0.18, fontFace: "Calibri", fontSize: 7.5, bold: true, color: COULEURS.texteDiscret, charSpacing: 0.5,
       });
       slideGraph.addText(String(nomLeader), {
         x: kpi1X + 0.1, y: cardY + 0.94, w: kpiW - 0.2, h: 0.32, fontFace: "Calibri", fontSize: 11.5, bold: true, color: COULEURS.bleuCobalt,
       });
-      slideGraph.addText(`${maxVolume.toLocaleString("fr-FR")} (${partLeader} % du total)`, {
+      slideGraph.addText(partsValides && !estTemporel ? `${fr(maxVolume)} (${partLeader} % du total)` : fr(maxVolume), {
         x: kpi1X + 0.1, y: cardY + 1.28, w: kpiW - 0.2, h: 0.25, fontFace: "Calibri", fontSize: 8.5, color: COULEURS.texteSecondaire,
       });
 
       slideGraph.addShape(pptx.ShapeType.roundRect, {
         x: kpi2X, y: cardY + 0.68, w: kpiW, h: 0.95, rectRadius: 0.06, fill: { color: COULEURS.fondSubtil }, line: { color: COULEURS.bordure, width: 1 },
       });
-      slideGraph.addText("VOLUME GLOBAL", {
+      slideGraph.addText(nonAdditif ? "NIVEAU MOYEN" : "TOTAL", {
         x: kpi2X + 0.1, y: cardY + 0.76, w: kpiW - 0.2, h: 0.18, fontFace: "Calibri", fontSize: 7.5, bold: true, color: COULEURS.texteDiscret, charSpacing: 0.5,
       });
-      slideGraph.addText(totalVolume.toLocaleString("fr-FR"), {
+      slideGraph.addText(fr(nonAdditif ? moyenneVolume : totalVolume), {
         x: kpi2X + 0.1, y: cardY + 0.94, w: kpiW - 0.2, h: 0.32, fontFace: "Calibri", fontSize: 11.5, bold: true, color: COULEURS.textePrincipal,
       });
-      slideGraph.addText(`Moyenne : ${moyenneVolume.toLocaleString("fr-FR")}`, {
+      slideGraph.addText(nonAdditif ? `${datasetPremier.length} valeurs comparées` : `Moyenne : ${fr(moyenneVolume)}`, {
         x: kpi2X + 0.1, y: cardY + 1.28, w: kpiW - 0.2, h: 0.25, fontFace: "Calibri", fontSize: 8.5, color: COULEURS.texteSecondaire,
       });
 
@@ -872,21 +969,35 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       let texteFinal = "";
       if (graphique.interpretation && graphique.interpretation.length > 50) {
         texteFinal = nettoyerTexteProfessionnel(graphique.interpretation);
-      } else if (chartLabels.length <= 1 || minVolume === maxVolume) {
-        // Garde-fou robuste contre les entités uniques ou sans variance
+      } else if (datasetPremier.length <= 1 || minVolume === maxVolume) {
         texteFinal = [
-          `• PÉRIMÈTRE CONSOLIDÉ :\nL'indicateur est regroupé sous le pôle unique « ${nomLeader} » avec un total de ${maxVolume.toLocaleString("fr-FR")} unités (100 % de l'ensemble audité).`,
-          `• ANALYSE DE DISPERSION :\nAucune dispersion observée à cette échelle dimensionnelle. Les sous-segments sont uniformément comptabilisés sous cette même dimension.`,
-          `• PERSPECTIVE DÉCISIONNELLE :\nDescendre à un niveau de maille plus granulaire (ex: par sous-préfecture ou département) pour révéler les contrastes et équilibrer le déploiement opérationnel.`,
+          `• PÉRIMÈTRE :\n${datasetPremier.length <= 1 ? `Une seule valeur est représentée (« ${nomLeader} », ${fr(maxVolume)}).` : `Toutes les valeurs sont identiques (${fr(maxVolume)}).`}`,
+          `• LECTURE :\nAucun écart n'apparaît à ce niveau de détail.`,
+          `• PISTE :\nVentiler selon une autre colonne ou un niveau plus fin pour faire apparaître des différences.`,
+        ].join("\n\n");
+      } else if (estTemporel) {
+        // Série dans le temps : on décrit une évolution, pas un classement
+        const premier = serieIndicateurs[0];
+        const dernier = serieIndicateurs[serieIndicateurs.length - 1];
+        const variation = premier.v !== 0 ? Math.round(((dernier.v - premier.v) / Math.abs(premier.v)) * 1000) / 10 : null;
+        const sens = dernier.v > premier.v ? "progresse" : dernier.v < premier.v ? "recule" : "reste stable";
+        texteFinal = [
+          `• ÉVOLUTION :\nDe « ${premier.nom} » à « ${dernier.nom} », l'indicateur ${sens} de ${fr(premier.v)} à ${fr(dernier.v)}${variation !== null ? ` (${variation > 0 ? "+" : ""}${fr(variation)} %)` : ""}.`,
+          `• POINTS HAUT ET BAS :\nMaximum en « ${nomLeader} » (${fr(maxVolume)}), minimum en « ${nomMin} » (${fr(minVolume)}).`,
+          `• REPÈRE :\nMoyenne par période : ${fr(moyenneVolume)}. La dernière période se situe ${dernier.v >= moyenneVolume ? "au-dessus" : "en dessous"} de cette moyenne.`,
         ].join("\n\n");
       } else {
         const ecartMaxMin = Math.round((maxVolume - minVolume) * 10) / 10;
         const ratio = minVolume > 0 ? Math.round((maxVolume / minVolume) * 10) / 10 : null;
+        const tries = [...datasetPremier].sort((a, b) => b - a);
+        const partTop3 = partsValides && tries.length > 3 ? Math.round((tries.slice(0, 3).reduce((a, b) => a + b, 0) / totalVolume) * 100) : null;
 
         texteFinal = [
-          `• POIDS & HIÉRARCHIE TERRITORIALE :\nLe pôle « ${nomLeader} » concentre le volume principal avec ${maxVolume.toLocaleString("fr-FR")} unités (${partLeader} % de l'ensemble audité).`,
-          `• ÉCART & DISPERSION :\nUn différentiel de ${ecartMaxMin.toLocaleString("fr-FR")}${ratio ? ` (facteur de ${ratio}×)` : ""} est enregistré avec la zone la plus en retrait (« ${nomMin} », ${minVolume.toLocaleString("fr-FR")}).`,
-          `• PERSPECTIVE DÉCISIONNELLE :\nPrendre en compte cette concentration pour calibrer le déploiement opérationnel et équilibrer les ressources sur les zones secondaires.`,
+          `• CLASSEMENT :\n« ${nomLeader} » arrive en tête avec ${fr(maxVolume)}${partsValides ? ` (${partLeader} % du total)` : ""}.`,
+          `• ÉCART :\nUn différentiel de ${fr(ecartMaxMin)}${ratio ? ` (facteur de ${fr(ratio)}×)` : ""} sépare le premier du dernier (« ${nomMin} », ${fr(minVolume)}).`,
+          partTop3 !== null
+            ? `• CONCENTRATION :\nLes trois premiers représentent ${partTop3} % du total sur ${datasetPremier.length} valeurs comparées.`
+            : `• REPÈRE :\nValeur moyenne des ${datasetPremier.length} éléments comparés : ${fr(moyenneVolume)}.`,
         ].join("\n\n");
       }
 

@@ -6,6 +6,7 @@ import {
   type Cellule,
 } from "./utils";
 import { convertirDate } from "./detection";
+import { clePeriode, detecterOrdreDate } from "./dates";
 
 export type TypeAgregationTemporelle = "somme" | "moyenne";
 
@@ -33,12 +34,16 @@ export interface ResultatPrevisionValide {
   possible: true;
   historique: PointHistorique[];
   projections: PointPrevision[];
+  /** Ce que le modèle (tendance + cycle éventuel) aurait donné sur chaque période passée : permet de juger s'il colle aux données. */
+  ajustement?: PointHistorique[];
   metriques: {
     r2: number;
     pente: number;
     sensTendance: "hausse" | "baisse" | "stable";
     fiabilite: "Élevée" | "Moyenne" | "Faible";
     variationEstimeePct: number;
+    /** Vrai si un cycle annuel (mois par mois) a été détecté et intégré aux projections. */
+    saisonnalite?: boolean;
   };
 }
 
@@ -109,6 +114,9 @@ export function agregerSerieGenerique(
 
   let nbAnnees = 0;
   let nbDatesMois = 0;
+  let nbPeriodes = 0;
+  // Jour/mois ou mois/jour : décidé une fois pour toute la colonne
+  const ordreDates = detecterOrdreDate(corps.map((l) => l[idxT]));
 
   for (let i = 0; i < corps.length; i++) {
     const ligne = corps[i];
@@ -138,7 +146,7 @@ export function agregerSerieGenerique(
       nbAnnees++;
     } else {
       // 2. DATES COMPLÈTES OU MENSUELLES (ex: 2025-03-08, 03/2024)
-      const dateObj = convertirDate(rawT);
+      const dateObj = convertirDate(rawT, ordreDates);
       if (dateObj && !isNaN(dateObj.getTime())) {
         cle = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}`;
         ordre = dateObj.getTime();
@@ -149,6 +157,13 @@ export function agregerSerieGenerique(
           cle = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
           ordre = d.getTime();
           nbDatesMois++;
+        }
+      } else {
+        // 3. PÉRIODES ÉCRITES EN TOUTES LETTRES (Janvier, T1 2024, 2023/2024…) : ordre du calendrier
+        const c = clePeriode(rawT, ordreDates);
+        if (c !== null) {
+          ordre = c;
+          nbPeriodes++;
         }
       }
     }
@@ -171,6 +186,10 @@ export function agregerSerieGenerique(
   const serie: PointHistorique[] = Array.from(accumulateurs.entries())
     .sort((a, b) => {
       if (format !== "sequentiel") {
+        return a[1].ordre - b[1].ordre;
+      }
+      // Mois en lettres, trimestres, campagnes : ordre du calendrier, pas ordre d'apparition dans le fichier
+      if (totalPoints > 0 && nbPeriodes >= totalPoints * 0.9) {
         return a[1].ordre - b[1].ordre;
       }
       // Si séquentiel numérique (ex: périodes 1, 2, 3...)
@@ -243,17 +262,53 @@ export function calculerPrevisionGenerale(
     sommeCarresResidus += (y[i] - yHat) ** 2;
   }
 
+  // Saisonnalité mensuelle : avec au moins deux ans de données mois par mois, on mesure l'écart moyen de chaque
+  // mois du calendrier à la tendance. S'il explique une part réelle des variations, il est ajouté aux projections
+  // (sinon décembre serait prévu comme un mois ordinaire).
+  const moisDe = (periode: string) => {
+    const m = periode.match(/^\d{4}-(\d{2})$/);
+    return m ? parseInt(m[1], 10) - 1 : -1;
+  };
+  let saison: number[] | null = null;
+  if (formatTemps === "date_mois" && n >= 24 && serie.every((p) => moisDe(p.periode) >= 0)) {
+    const cumul = Array.from({ length: 12 }, () => ({ s: 0, k: 0 }));
+    for (let i = 0; i < n; i++) {
+      const m = moisDe(serie[i].periode);
+      cumul[m].s += y[i] - (a * x[i] + b);
+      cumul[m].k += 1;
+    }
+    if (cumul.every((c) => c.k >= 2)) {
+      const brut = cumul.map((c) => c.s / c.k);
+      const centre = brut.reduce((s, v) => s + v, 0) / 12;
+      const indices = brut.map((v) => v - centre);
+      let residusAjustes = 0;
+      for (let i = 0; i < n; i++) residusAjustes += (y[i] - (a * x[i] + b) - indices[moisDe(serie[i].periode)]) ** 2;
+      // Estimer 12 moyennes mensuelles réduit toujours un peu l'erreur, même sur du bruit pur.
+      // On compare donc les variances corrigées des degrés de liberté : le cycle doit la diviser par deux.
+      if (sommeCarresResidus > 0 && residusAjustes / (n - 13) <= 0.5 * (sommeCarresResidus / (n - 2))) {
+        saison = indices;
+        sommeCarresResidus = residusAjustes;
+      }
+    }
+  }
+  const effetSaison = (periode: string) => (saison && moisDe(periode) >= 0 ? saison[moisDe(periode)] : 0);
+  // Degrés de liberté : 2 pour la droite, 11 de plus si le cycle mensuel est estimé
+  const ddl = Math.max(1, n - 2 - (saison ? 11 : 0));
+
   const r2 = sommeCarresTotale !== 0 ? Math.max(0, Math.min(1, 1 - sommeCarresResidus / sommeCarresTotale)) : 0;
-  const varianceResiduelle = n > 2 ? sommeCarresResidus / (n - 2) : 0;
+  const varianceResiduelle = n > 2 ? sommeCarresResidus / ddl : 0;
   const se = Math.sqrt(Math.max(0, varianceResiduelle));
 
   const projections: PointPrevision[] = [];
-  const z = quantileStudent95(n - 2);
+  const z = quantileStudent95(ddl);
+  // Une grandeur qui n'a jamais été négative (ventes, effectifs, quantités) n'est pas prévue négative
+  const jamaisNegatif = y.every((v) => v >= 0);
+  const plancher = (v: number) => (jamaisNegatif ? Math.max(0, v) : v);
   const dernierePeriode = serie[n - 1].periode;
 
   for (let step = 1; step <= horizon; step++) {
     const futureX = n - 1 + step;
-    const yEstime = a * futureX + b;
+    let yEstime = a * futureX + b;
 
     let futureLabel = `+${step}`;
     if (formatTemps === "date_mois" && dernierePeriode.includes("-")) {
@@ -266,15 +321,17 @@ export function calculerPrevisionGenerale(
       futureLabel = `Période +${step}`;
     }
 
+    yEstime += effetSaison(futureLabel);
+
     const ecartX = (futureX - moyX) ** 2;
     const sePrediction = se * Math.sqrt(1 + 1 / n + (den !== 0 ? ecartX / den : 0));
     const marge = z * sePrediction;
 
     projections.push({
       periode: futureLabel,
-      valeurPrevue: arrondir(yEstime),
-      borneBasse: arrondir(yEstime - marge),
-      borneHaute: arrondir(yEstime + marge),
+      valeurPrevue: arrondir(plancher(yEstime)),
+      borneBasse: arrondir(plancher(yEstime - marge)),
+      borneHaute: arrondir(plancher(yEstime + marge)),
     });
   }
 
@@ -290,18 +347,22 @@ export function calculerPrevisionGenerale(
   // Évaluation relative de la pente (adapte le seuil selon l'échelle des grandeurs)
   const penteRelative = moyY !== 0 ? Math.abs(a / moyY) : Math.abs(a);
   const sensTendance = penteRelative < 0.002 ? "stable" : a > 0 ? "hausse" : "baisse";
-  const fiabilite = r2 >= 0.7 ? "Élevée" : r2 >= 0.35 ? "Moyenne" : "Faible";
+  // Avec très peu de points, un bon R² tient du hasard : la fiabilité est plafonnée
+  const fiabiliteR2 = r2 >= 0.7 ? "Élevée" : r2 >= 0.35 ? "Moyenne" : "Faible";
+  const fiabilite = n < 5 ? "Faible" : n < 8 && fiabiliteR2 === "Élevée" ? "Moyenne" : fiabiliteR2;
 
   return {
     possible: true,
     historique: serie,
     projections,
+    ajustement: serie.map((p, i) => ({ periode: p.periode, valeur: arrondir(plancher(a * i + b + effetSaison(p.periode))) })),
     metriques: {
       r2: arrondir(r2),
       pente: arrondir(a),
       sensTendance,
       fiabilite,
       variationEstimeePct,
+      saisonnalite: saison !== null,
     },
   };
 }

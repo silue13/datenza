@@ -1,5 +1,6 @@
 // lib/analyse/fusion.ts
-import { parseNombre, estValeurVide, type Cellule } from "./utils";
+import { parseNombre, estValeurVide, estColonneIdentifiant, type Cellule } from "./utils";
+import { convertirDate, formaterDateISO } from "./dates";
 
 export interface FichierEntree {
   nom: string;
@@ -70,17 +71,27 @@ function normaliserCleColonne(nom: string): string {
     .trim();
 }
 
+const MOTS_PAS_DATE = new Set([
+  "prix", "price", "montant", "amount", "total", "cout", "cost", "quantite", "qty", "qte", "somme", "valeur", "solde",
+  "salaire", "remise", "taux", "rate", "id", "code", "num", "numero", "ref", "reference", "matricule",
+]);
+
+/** Mots entiers : « Période de validité » ou « Préfecture » ne sont plus écartées à cause de « id » ou « ref ». */
 function estColonneExclueDeDate(nomCol: string): boolean {
-  return /(prix|price|montant|amount|total|cout|cost|quantite|qty|qte|somme|valeur|solde|salaire|remise|taux|rate|id|code|num|ref|matricule)/i.test(
-    nomCol
-  );
+  return nomCol
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .some((m) => MOTS_PAS_DATE.has(m));
 }
 
 function normaliserFormatDate(v: Cellule): string | null {
   if (estValeurVide(v)) return null;
 
   if ((v as unknown) instanceof Date && !isNaN((v as unknown as Date).getTime())) {
-    return (v as unknown as Date).toISOString().slice(0, 10);
+    // Date locale écrite telle quelle (toISOString décalait le jour selon le fuseau)
+    return formaterDateISO(v as unknown as Date).slice(0, 10);
   }
 
   if (typeof v === "number") return null;
@@ -88,21 +99,11 @@ function normaliserFormatDate(v: Cellule): string | null {
   const str = String(v).trim();
   if (/^\d+([.,]\d+)?$/.test(str)) return null;
 
-  const matchFr = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (matchFr) {
-    const jour = matchFr[1].padStart(2, "0");
-    const mois = matchFr[2].padStart(2, "0");
-    const annee = matchFr[3];
-    return `${annee}-${mois}-${jour}`;
-  }
-
-  const matchIso = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-  if (matchIso) {
-    const annee = matchIso[1];
-    const mois = matchIso[2].padStart(2, "0");
-    const jour = matchIso[3].padStart(2, "0");
-    return `${annee}-${mois}-${jour}`;
-  }
+  // Dates complètes uniquement (jour, mois, année). La date est validée : « 31/02/2024 » est laissée telle quelle,
+  // et « 12/25/2024 » (format américain) donne bien le 25 décembre au lieu d'un « 2024-25-12 » impossible.
+  if (!/^\d{1,2}[\/\-.]\d{1,2}[\/\-.](\d{4}|\d{2})$/.test(str) && !/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}$/.test(str)) return null;
+  const d = convertirDate(str);
+  if (d) return formaterDateISO(d).slice(0, 10);
 
   return null;
 }
@@ -141,7 +142,7 @@ function assainirLigne(
     }
 
     if (options.harmoniserFormatsNumeriques && typeof val === "string") {
-      const estColId = /(id|code|num|ref|matricule|tel|phone|postal|zip)/i.test(nomCol);
+      const estColId = estColonneIdentifiant(nomCol, []);
       const aZeroInitial = /^0\d+/.test(val.trim());
       if (!estColId && !aZeroInitial) {
         const nb = parseNombre(val);

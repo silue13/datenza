@@ -38,6 +38,12 @@ export interface GraphiqueEpingle {
   }[];
   chartType?: string;
   interpretation?: string;
+  /** Barres horizontales (classements à libellés longs). */
+  horizontal?: boolean;
+  /** Séries empilées plutôt que côte à côte. */
+  empile?: boolean;
+  /** Filtre appliqué quand on clique sur le point n° i (filtrage croisé) ; null si le point n'est pas filtrable. */
+  filtresClic?: (ConditionFiltre | null)[];
 }
 
 interface DataContextType {

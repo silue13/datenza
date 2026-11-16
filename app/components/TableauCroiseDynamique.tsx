@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Table,
   Sparkles,
@@ -21,7 +21,17 @@ import {
   estLigneTotal,
   type Cellule,
 } from "../../lib/analyse/utils";
+import { trierChronologiquement } from "../../lib/analyse/dates";
 import type { ElementPptxExport } from "../../lib/analyse/exportPptx";
+
+/** Cumul d'une case du tableau croisé. n = lignes, nNum = lignes dont la mesure est un nombre. */
+interface CelluleTdc {
+  somme: number;
+  n: number;
+  nNum: number;
+  min: number;
+  max: number;
+}
 
 interface Props {
   entetes: string[];
@@ -68,14 +78,35 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
     return { colonnesDimensions: dimensions, colonnesMesurables: mesurables };
   }, [colonnesSansSource, entetes, corps]);
 
+  // Nombre de valeurs différentes par dimension : une colonne à valeur unique ne croise rien
+  const cardinalites = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of colonnesDimensions) {
+      const idx = entetes.indexOf(d);
+      const vues = new Set<string>();
+      for (const l of corps) {
+        if (!estValeurVide(l[idx])) vues.add(String(l[idx]).trim());
+        if (vues.size > 200) break;
+      }
+      m.set(d, vues.size);
+    }
+    return m;
+  }, [colonnesDimensions, entetes, corps]);
+
+  // Par défaut : la dimension la plus détaillée en lignes, la plus synthétique (2 à 12 valeurs) en colonnes
   const defautLigne = useMemo(() => {
-    return colonnesDimensions[0] || colonnesSansSource[0] || "";
-  }, [colonnesDimensions, colonnesSansSource]);
+    const utiles = colonnesDimensions.filter((d) => (cardinalites.get(d) ?? 0) >= 2 && (cardinalites.get(d) ?? 0) <= 100);
+    const detaillee = [...utiles].sort((a, b) => (cardinalites.get(b) ?? 0) - (cardinalites.get(a) ?? 0))[0];
+    return detaillee || colonnesDimensions[0] || colonnesSansSource[0] || "";
+  }, [colonnesDimensions, colonnesSansSource, cardinalites]);
 
   const defautColonne = useMemo(() => {
     if (estModeComparaison) return "Fichier Source";
-    return colonnesDimensions.find((d) => d !== defautLigne) || "";
-  }, [estModeComparaison, colonnesDimensions, defautLigne]);
+    const candidates = colonnesDimensions.filter(
+      (d) => d !== defautLigne && (cardinalites.get(d) ?? 0) >= 2 && (cardinalites.get(d) ?? 0) <= 12
+    );
+    return [...candidates].sort((a, b) => (cardinalites.get(a) ?? 0) - (cardinalites.get(b) ?? 0))[0] || "";
+  }, [estModeComparaison, colonnesDimensions, defautLigne, cardinalites]);
 
   const defautMesure = useMemo(() => {
     const mesurePrio = colonnesMesurables.find((m) => m !== defautLigne && m !== defautColonne);
@@ -117,27 +148,28 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
         return {
           modalitesLignes: [],
           modalitesColonnes: [],
-          grille: new Map<string, Map<string, { somme: number; n: number; min: number; max: number }>>(),
+          grille: new Map<string, Map<string, CelluleTdc>>(),
           totauxLignes: new Map<string, number>(),
           totauxColonnes: new Map<string, number>(),
           totalGeneral: 0,
         };
       }
 
-      const ligSet = new Set<string>();
-      const colSet = new Set<string>();
-      const map = new Map<string, Map<string, { somme: number; n: number; min: number; max: number }>>();
+      // Modalité -> nombre de lignes (sert à garder les plus représentées si le tableau est trop grand)
+      const ligSet = new Map<string, number>();
+      const colSet = new Map<string, number>();
+      const map = new Map<string, Map<string, CelluleTdc>>();
 
       for (const ligne of corps) {
         if (estLigneTotal(ligne)) continue;
 
-        const valLig = String(ligne[idxLigne] ?? "").trim();
-        if (!valLig) continue;
-        ligSet.add(valLig);
-
-        const valCol = idxColonne >= 0 ? String(ligne[idxColonne] ?? "").trim() : "Total";
-        if (idxColonne >= 0 && !valCol) continue;
-        if (idxColonne >= 0) colSet.add(valCol);
+        // « - », « N/A », « ND »… ne sont pas des modalités
+        if (estValeurVide(ligne[idxLigne])) continue;
+        const valLig = String(ligne[idxLigne]).trim();
+        if (idxColonne >= 0 && estValeurVide(ligne[idxColonne])) continue;
+        const valCol = idxColonne >= 0 ? String(ligne[idxColonne]).trim() : "Total";
+        ligSet.set(valLig, (ligSet.get(valLig) ?? 0) + 1);
+        if (idxColonne >= 0) colSet.set(valCol, (colSet.get(valCol) ?? 0) + 1);
 
         let sousMap = map.get(valLig);
         if (!sousMap) {
@@ -145,13 +177,14 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
           map.set(valLig, sousMap);
         }
 
-        const cell = sousMap.get(valCol) ?? { somme: 0, n: 0, min: Infinity, max: -Infinity };
+        const cell = sousMap.get(valCol) ?? { somme: 0, n: 0, nNum: 0, min: Infinity, max: -Infinity };
         cell.n += 1;
 
         if (idxMesure >= 0 && agregation !== "Nombre") {
           const num = versNombre(ligne[idxMesure]);
           if (num !== null) {
             cell.somme += num;
+            cell.nNum += 1;
             if (num < cell.min) cell.min = num;
             if (num > cell.max) cell.max = num;
           }
@@ -159,21 +192,27 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
         sousMap.set(valCol, cell);
       }
 
-      let listeLig = Array.from(ligSet).slice(0, 100);
-      const listeCol = idxColonne >= 0 ? Array.from(colSet).slice(0, 20) : ["Total"];
+      // Trop de modalités : on garde les plus représentées (et non les premières rencontrées dans le fichier),
+      // puis on range les périodes dans l'ordre du calendrier et le reste par ordre alphabétique.
+      const ordonner = (vues: Map<string, number>, max: number) => {
+        const gardees = [...vues.entries()].sort((a, b) => b[1] - a[1]).slice(0, max).map(([k]) => k);
+        return (
+          trierChronologiquement(gardees, (x) => x) ??
+          gardees.sort((a, b) => a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" }))
+        );
+      };
+      const listeLig = ordonner(ligSet, 100);
+      const listeCol = idxColonne >= 0 ? ordonner(colSet, 20) : ["Total"];
 
-      const sontDesAnnees = listeLig.length > 3 && listeLig.every((v) => /^(19|20)\d{2}$/.test(v));
-      if (sontDesAnnees) {
-        listeLig.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-      }
-
-      const agregerCellules = (cells: ({ somme: number; n: number; min: number; max: number } | undefined)[]) => {
-        const valides = cells.filter((c): c is { somme: number; n: number; min: number; max: number } => !!c && c.n > 0);
+      const agregerCellules = (cells: (CelluleTdc | undefined)[]) => {
+        const valides = cells.filter((c): c is CelluleTdc => !!c && c.n > 0);
         const totalN = valides.reduce((acc, c) => acc + c.n, 0);
         if (totalN === 0) return 0;
         if (agregation === "Nombre") return totalN;
         const totalSomme = valides.reduce((acc, c) => acc + c.somme, 0);
-        if (agregation === "Moyenne") return totalN > 0 ? totalSomme / totalN : 0;
+        // Moyenne sur les seules valeurs numériques : une cellule vide ne tire plus la moyenne vers zéro
+        const totalNum = valides.reduce((acc, c) => acc + c.nNum, 0);
+        if (agregation === "Moyenne") return totalNum > 0 ? totalSomme / totalNum : 0;
         if (agregation === "Minimum") {
           const mins = valides.map((c) => c.min).filter((m) => m !== Infinity);
           return mins.length ? Math.min(...mins) : 0;
@@ -197,15 +236,13 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
         totCol.set(col, arrondir(agregerCellules(colCells)));
       }
 
-      const toutesCellules: ({ somme: number; n: number; min: number; max: number } | undefined)[] = [];
+      const toutesCellules: (CelluleTdc | undefined)[] = [];
       for (const lig of listeLig) {
         for (const col of listeCol) {
           toutesCellules.push(map.get(lig)?.get(col));
         }
       }
       const totGen = arrondir(agregerCellules(toutesCellules));
-
-      setEstDejaInclus(false);
 
       return {
         modalitesLignes: listeLig,
@@ -217,10 +254,18 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       };
     }, [idxLigne, idxColonne, idxMesure, corps, agregation]);
 
-  const calculerValeur = (cell?: { somme: number; n: number; min: number; max: number }) => {
+  // Tout changement de réglage ou de données produit un nouveau tableau, pas encore ajouté au PPTX
+  useEffect(() => {
+    setEstDejaInclus(false);
+  }, [idxLigne, idxColonne, idxMesure, corps, agregation]);
+
+  /** Vrai si la case n'a rien à afficher : aucune ligne, ou aucune valeur numérique pour un calcul sur la mesure. */
+  const caseVide = (cell?: CelluleTdc) => !cell || cell.n === 0 || (agregation !== "Nombre" && cell.nNum === 0);
+
+  const calculerValeur = (cell?: CelluleTdc) => {
     if (!cell || cell.n === 0) return 0;
     if (agregation === "Nombre") return cell.n;
-    if (agregation === "Moyenne") return cell.n ? cell.somme / cell.n : 0;
+    if (agregation === "Moyenne") return cell.nNum ? cell.somme / cell.nNum : 0;
     if (agregation === "Minimum") return cell.min === Infinity ? 0 : cell.min;
     if (agregation === "Maximum") return cell.max === -Infinity ? 0 : cell.max;
     return cell.somme;
@@ -247,7 +292,8 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
     const lignesTdc: (string | number)[][] = modalitesLignes.map((lig) => {
       const cellules: (string | number)[] = [lig];
       modalitesColonnes.forEach((col) => {
-        cellules.push(arrondir(calculerValeur(grille.get(lig)?.get(col))));
+        const c = grille.get(lig)?.get(col);
+        cellules.push(caseVide(c) ? "—" : arrondir(calculerValeur(c)));
       });
       cellules.push(arrondir(totauxLignes.get(lig) || 0));
       return cellules;
@@ -646,7 +692,7 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
                       const cellVal = arrondir(calculerValeur(grille.get(lig)?.get(col)));
                       return (
                         <td key={col} className="px-3 py-2.5 sm:px-3.5 sm:py-3 text-right whitespace-nowrap text-slate-600 dark:text-slate-400">
-                          {cellVal.toLocaleString("fr-FR")}
+                          {caseVide(grille.get(lig)?.get(col)) ? <span className="text-slate-300 dark:text-slate-600">—</span> : cellVal.toLocaleString("fr-FR")}
                         </td>
                       );
                     })}

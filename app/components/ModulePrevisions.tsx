@@ -34,6 +34,7 @@ import {
   estColonneTemporelle,
 } from "@/lib/analyse/utils";
 import { useData } from "../context/DataContext";
+import { formaterCompact, libellePeriode } from "../../lib/analyse/graphique";
 
 interface ModulePrevisionsProps {
   entetes: string[];
@@ -69,6 +70,38 @@ function hashChaineEnNombre(str: string): number {
   }
   return Math.abs(hash);
 }
+
+/**
+ * Trait vertical entre la dernière donnée observée et la première projection, avec les mentions « observé » et « prévu ».
+ * La position est lue sur le premier jeu de données (indexDerniereDonnee) pour suivre les changements de série.
+ */
+const MARQUEUR_PREVISION = {
+  id: "marqueurPrevision",
+  afterDatasetsDraw(chart: any) {
+    const index = chart.data?.datasets?.find((d: any) => typeof d.indexDerniereDonnee === "number")?.indexDerniereDonnee;
+    if (typeof index !== "number" || index < 0 || !chart.scales?.x || !chart.chartArea) return;
+    const x = chart.scales.x.getPixelForValue(index);
+    const { top, bottom } = chart.chartArea;
+    const ctx = chart.ctx as CanvasRenderingContext2D;
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = "rgba(100, 116, 139, 0.7)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(100, 116, 139, 0.95)";
+    ctx.font = "600 10px sans-serif";
+    ctx.textBaseline = "top";
+    ctx.textAlign = "right";
+    ctx.fillText("observé", x - 6, top + 2);
+    ctx.textAlign = "left";
+    ctx.fillText("prévu", x + 6, top + 2);
+    ctx.restore();
+  },
+};
 
 export default function ModulePrevisions({ entetes, corps, onEpingler }: ModulePrevisionsProps) {
   const {
@@ -426,45 +459,79 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     chartData = { labels: tousLabels, datasets };
   } else if (diagnosticOuResultat && diagnosticOuResultat.possible) {
     const res = diagnosticOuResultat;
-    const labels = [...res.historique.map((p) => p.periode), ...res.projections.map((p) => p.periode)];
+    const labels = [...res.historique.map((p) => p.periode), ...res.projections.map((p) => p.periode)].map((l) => libellePeriode(l));
     const dernierReel = res.historique[res.historique.length - 1].valeur;
+    const nbH = res.historique.length;
+    const vide = (n: number) => Array(Math.max(0, n)).fill(null);
 
     chartData = {
       labels,
       datasets: [
         {
           label: "Données observées",
-          data: [...res.historique.map((p) => p.valeur), ...Array(res.projections.length).fill(null)],
-          borderColor: "#8b5cf6",
-          backgroundColor: "#8b5cf6",
+          data: [...res.historique.map((p) => p.valeur), ...vide(res.projections.length)],
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37, 99, 235, 0.10)",
+          pointBackgroundColor: "#2563eb",
           borderWidth: 2.5,
-          tension: 0.2,
-          pointRadius: 3,
+          // Courbe « monotone » : elle passe par les points sans dessiner de creux ni de bosses qui n'existent pas
+          cubicInterpolationMode: "monotone",
+          fill: "origin",
+          pointRadius: nbH > 48 ? 0 : 3,
+          pointHoverRadius: 5,
+          order: 2,
+          // Repère lu par le marqueur vertical « observé | prévu »
+          indexDerniereDonnee: nbH - 1,
         },
+        ...(res.ajustement
+          ? [
+              {
+                label: res.metriques.saisonnalite ? "Modèle (tendance + cycle annuel)" : "Modèle (tendance)",
+                data: [...res.ajustement.map((p) => p.valeur), ...vide(res.projections.length)],
+                borderColor: "rgba(100, 116, 139, 0.75)",
+                backgroundColor: "transparent",
+                borderWidth: 1.5,
+                borderDash: [3, 3],
+                cubicInterpolationMode: "monotone",
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                order: 3,
+              },
+            ]
+          : []),
         {
-          label: "Projection estimée",
-          data: [...Array(res.historique.length - 1).fill(null), dernierReel, ...res.projections.map((p) => p.valeurPrevue)],
-          borderColor: "#0284c7",
-          borderDash: [5, 5],
+          label: "Projection",
+          data: [...vide(nbH - 1), dernierReel, ...res.projections.map((p) => p.valeurPrevue)],
+          borderColor: "#ea580c",
+          backgroundColor: "#ea580c",
+          borderDash: [6, 4],
           borderWidth: 2.5,
-          tension: 0.2,
-          pointRadius: 3.5,
-          pointBackgroundColor: "#0284c7",
+          cubicInterpolationMode: "monotone",
+          pointRadius: [...vide(nbH - 1), 0, ...res.projections.map(() => 4)],
+          pointHoverRadius: 6,
+          pointBackgroundColor: "#ea580c",
+          order: 1,
         },
         {
           label: "Intervalle de confiance (95%)",
-          data: [...Array(res.historique.length - 1).fill(null), dernierReel, ...res.projections.map((p) => p.borneHaute)],
+          data: [...vide(nbH - 1), dernierReel, ...res.projections.map((p) => p.borneHaute)],
           borderColor: "transparent",
-          backgroundColor: "rgba(2, 132, 199, 0.12)",
+          backgroundColor: "rgba(234, 88, 12, 0.14)",
+          cubicInterpolationMode: "monotone",
           fill: "+1",
           pointRadius: 0,
+          pointHoverRadius: 0,
+          order: 4,
         },
         {
           label: "Borne basse",
-          data: [...Array(res.historique.length - 1).fill(null), dernierReel, ...res.projections.map((p) => p.borneBasse)],
+          data: [...vide(nbH - 1), dernierReel, ...res.projections.map((p) => p.borneBasse)],
           borderColor: "transparent",
           backgroundColor: "transparent",
+          cubicInterpolationMode: "monotone",
           pointRadius: 0,
+          pointHoverRadius: 0,
+          order: 5,
         },
       ],
     };
@@ -476,7 +543,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
 
     const labels = chartData.labels;
     const datasets = chartData.datasets
-      .filter((d) => !d.label.includes("Borne basse") && !d.label.includes("Intervalle"))
+      .filter((d) => !d.label.includes("Borne basse") && !d.label.includes("Intervalle") && !d.label.startsWith("Modèle"))
       .map((d) => ({
         label: d.label,
         data: d.data.map((v: any) => (v === null || v === undefined ? 0 : Number(v) || 0)),
@@ -510,42 +577,61 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     setEstDejaInclus(true);
   };
 
-  // Options Chart.js avec désactivation FORMELLE des chiffres à l'intérieur du tracé
+  // Options du graphique de prévision
+  const toutesValeurs = chartData.datasets.flatMap((d) => (d.data as (number | null)[]).filter((v): v is number => typeof v === "number"));
+  const jamaisNegatif = toutesValeurs.length > 0 && toutesValeurs.every((v) => v >= 0);
   const options = {
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: "index" as const, intersect: false },
     plugins: {
-      // DÉSACTIVATION DES CHIFFRES SUR LA COURBE (Supprime la surcharge visuelle)
       datalabels: {
         display: false,
       },
       legend: {
-        position: "bottom" as const,
+        position: "top" as const,
+        align: "end" as const,
         labels: {
           filter: (item: any) => !item.text.includes("Borne basse"),
           usePointStyle: true,
-          boxWidth: 8,
+          boxWidth: 7,
+          boxHeight: 7,
+          color: "#64748b",
           font: { size: 11 },
         },
       },
       tooltip: {
+        // Les deux bornes ne sont pas listées une par une : elles sont résumées sous la projection
+        filter: (item: any) => !/Borne basse|Intervalle/.test(item.dataset.label ?? "") && item.parsed.y !== null,
         callbacks: {
           label: (context: any) => {
             const v = context.parsed.y;
             return v !== null ? `${context.dataset.label} : ${v.toLocaleString("fr-FR")}` : "";
+          },
+          afterBody: (items: any[]) => {
+            const i = items[0]?.dataIndex;
+            const jeux = items[0]?.chart?.data?.datasets ?? [];
+            const haut = jeux.find((d: any) => String(d.label).includes("Intervalle"))?.data?.[i];
+            const bas = jeux.find((d: any) => String(d.label).includes("Borne basse"))?.data?.[i];
+            const projection = jeux.find((d: any) => d.label === "Projection")?.data?.[i];
+            const observe = jeux[0]?.data?.[i];
+            if (typeof haut !== "number" || typeof bas !== "number" || typeof projection !== "number" || typeof observe === "number") return "";
+            return `Fourchette probable (95 %) : ${bas.toLocaleString("fr-FR")} à ${haut.toLocaleString("fr-FR")}`;
           },
         },
       },
     },
     scales: {
       y: {
+        // Une grandeur toujours positive part de zéro : la hauteur de la courbe reste proportionnelle aux valeurs
+        beginAtZero: jamaisNegatif,
         grid: { color: "rgba(148, 163, 184, 0.15)" },
-        ticks: { font: { size: 10 } },
+        border: { display: false },
+        ticks: { color: "#64748b", font: { size: 10 }, callback: (v: number | string) => formaterCompact(Number(v)) },
       },
       x: {
         grid: { display: false },
-        ticks: { font: { size: 10 } },
+        ticks: { color: "#64748b", font: { size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
       },
     },
   };
@@ -553,6 +639,27 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   const estPrevisionPossible = estBenchmarkActif
     ? Boolean(calculsComparatifs?.possible)
     : Boolean(diagnosticOuResultat?.possible);
+
+  // Fichier sans aucun axe de temps : une simple ligne d'information, pas un module vide plein écran
+  if (
+    !estBenchmarkActif &&
+    diagnosticOuResultat &&
+    !diagnosticOuResultat.possible &&
+    diagnosticOuResultat.code === "PAS_DE_TEMPS" &&
+    !(filtresActifs && filtresActifs.length > 0)
+  ) {
+    return (
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-4 py-3 sm:px-5 sm:py-4 shadow-sm flex items-start gap-3 text-xs">
+        <Info className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
+        <div>
+          <p className="font-bold text-slate-800 dark:text-slate-200">Prévisions : non disponibles pour ce fichier</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-0.5">
+            Une projection demande une colonne de dates, d&apos;années ou de périodes (mois, trimestres). Ce fichier n&apos;en contient pas.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-6 shadow-sm">
@@ -597,6 +704,14 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                 Fiabilité {sourceActive.metriques.fiabilite} (R² = {sourceActive.metriques.r2})
               </span>
             )
+          )}
+          {!estBenchmarkActif && diagnosticOuResultat && diagnosticOuResultat.possible && diagnosticOuResultat.metriques.saisonnalite && (
+            <span
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300 border border-orange-200 dark:border-orange-800"
+              title="Le même mois se comporte de la même façon d'une année sur l'autre : les projections en tiennent compte."
+            >
+              Cycle annuel détecté{horizon < 12 ? " — choisissez 12 périodes pour le voir en entier" : ""}
+            </span>
           )}
 
           {/* Bouton d'export vers PowerPoint */}
@@ -732,7 +847,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       {estPrevisionPossible && (
         <>
           <div className="h-60 sm:h-80 w-full p-2 bg-gradient-to-b from-slate-50/50 to-white dark:from-slate-800/30 dark:to-slate-900 rounded-xl">
-            <Line data={chartData} options={options} />
+            <Line data={chartData} options={options} plugins={[MARQUEUR_PREVISION]} />
           </div>
 
           {/* Section benchmark comparatif */}

@@ -37,7 +37,11 @@ interface ReponseFournisseur {
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function appelerFournisseur(nom: Fournisseur, m: MessagesIA): Promise<string> {
+/**
+ * @param echeance Instant (Date.now()) au-delà duquel il ne faut plus rien tenter : évite que la fonction
+ * serveur soit coupée en pleine attente quand plusieurs fournisseurs échouent à la suite.
+ */
+export async function appelerFournisseur(nom: Fournisseur, m: MessagesIA, echeance?: number): Promise<string> {
   const apiKey = cle(nom);
   if (!apiKey) throw new Error("clé API absente");
   const cfg = IA_CONFIG[nom];
@@ -73,11 +77,16 @@ export async function appelerFournisseur(nom: Fournisseur, m: MessagesIA): Promi
 
   let rep: Response | null = null;
   for (let tentative = 0; tentative < 2; tentative++) {
+    const restant = echeance ? echeance - Date.now() : 20000;
+    if (restant < 3000) {
+      if (rep) break;
+      throw new Error("délai global dépassé");
+    }
     rep = await fetch(cfg.url, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(Math.min(20000, restant)),
     });
     if (rep.ok) break;
     if (!(rep.status === 429 || rep.status >= 500)) break; // erreurs temporaires seulement

@@ -18,6 +18,7 @@ import {
   estColonneIdentifiant,
   estColonneTemporelle,
   type Cellule,
+  percentile,
 } from "../../lib/analyse/utils";
 import { analyserColonnes } from "../../lib/analyse/analyse";
 import { lireFournisseur } from "../../lib/prefs";
@@ -127,7 +128,8 @@ const MD_CORR: Components = {
 
 function calculerPearson(x: number[], y: number[]): number | null {
   const n = Math.min(x.length, y.length);
-  if (n < 2) return null;
+  // Moins de 5 paires : un coefficient n'a aucune valeur (2 points donnent toujours r = ±1)
+  if (n < 5) return null;
   const moyX = x.reduce((a, b) => a + b, 0) / n;
   const moyY = y.reduce((a, b) => a + b, 0) / n;
 
@@ -144,7 +146,8 @@ function calculerPearson(x: number[], y: number[]): number | null {
   }
 
   const denom = Math.sqrt(denX * denY);
-  if (denom === 0) return 0;
+  // Colonne constante : la corrélation n'est pas définie (ce n'est pas « aucune liaison »)
+  if (denom === 0) return null;
   const r = num / denom;
   return Math.round(Math.max(-1, Math.min(1, r)) * 100) / 100;
 }
@@ -161,8 +164,9 @@ function calculerStatsComplet(nums: number[]) {
   const min = tri[0];
   const max = tri[n - 1];
 
-  const q1 = tri[Math.floor(n * 0.25)];
-  const q3 = tri[Math.floor(n * 0.75)];
+  // Mêmes quartiles (interpolés) que le reste de l'application
+  const q1 = percentile(tri, 0.25);
+  const q3 = percentile(tri, 0.75);
   const iqr = q3 - q1;
   const atypiques = iqr > 0 ? tri.filter((x) => x < q1 - 1.5 * iqr || x > q3 + 1.5 * iqr).length : 0;
 
@@ -178,7 +182,14 @@ function calculerStatsComplet(nums: number[]) {
 }
 
 function expliquerCorrelationSimple(colA: string, colB: string, r: number): string {
-  const estTemps = (nom: string) => /annee|année|date|mois|trimestre|semaine|exercice|an|indicateur/i.test(nom);
+  // Mots entiers : « Montant » ou « Quantité » contiennent « an » sans être des axes de temps
+  const MOTS_TEMPS = ["annee", "annees", "date", "mois", "trimestre", "semaine", "exercice", "an", "periode", "indicateur"];
+  const estTemps = (nom: string) =>
+    nom.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).some((m) => MOTS_TEMPS.includes(m));
+
+  if (Math.abs(r) >= 0.98 && !estTemps(colA) && !estTemps(colB)) {
+    return `Liaison quasi parfaite : « ${colA} » et « ${colB} » varient ensemble. L'une est probablement une composante ou un calcul de l'autre ; ce n'est pas une découverte en soi.`;
+  }
 
   if (estTemps(colA) || estTemps(colB)) {
     const colTemps = estTemps(colA) ? colA : colB;
@@ -787,6 +798,13 @@ export default function AnalysePage() {
       .sort((a, b) => Math.abs(b.coefficient) - Math.abs(a.coefficient));
   }, [resultatActif, colonnesIdentifiants, colonnesTemporelles]);
 
+  // À l'écran : seulement les liaisons qui disent quelque chose (|r| ≥ 0,3), les plus fortes d'abord.
+  // S'il n'y en a aucune, on montre les trois moins faibles pour ne pas laisser la section vide.
+  const correlationsAffichees = useMemo(() => {
+    const notables = correlationsStandard.filter((c) => Math.abs(c.coefficient) >= 0.3);
+    return (notables.length ? notables : correlationsStandard.slice(0, 3)).slice(0, 9);
+  }, [correlationsStandard]);
+
   async function genererSyntheseCorrelationsIA() {
     setChargementCorrIA(true);
     setErreurCorrIA(null);
@@ -1013,7 +1031,7 @@ Ne mets ni introduction ni conclusion.`;
               {noms.length}
             </h3>
             <p className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium truncate">
-              {colonnesMesurables.length} métriques
+              {colonnesMesurables.length} mesure{colonnesMesurables.length > 1 ? "s" : ""} · {Math.max(0, noms.length - colonnesMesurables.length)} autre{noms.length - colonnesMesurables.length > 1 ? "s" : ""}
             </p>
           </div>
           <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold shrink-0">
@@ -1024,13 +1042,13 @@ Ne mets ni introduction ni conclusion.`;
         <div className={`${carteStyle} p-3.5 sm:p-5 flex items-center justify-between`}>
           <div>
             <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">
-              {estBenchmarkActif ? "Sources" : "Graphiques"}
+              {estBenchmarkActif ? "Sources" : "Rapport PPTX"}
             </p>
             <h3 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white mt-0.5">
               {estBenchmarkActif ? `${sourcesFichiers.length}` : graphiquesEpingles.length}
             </h3>
             <p className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium truncate">
-              {estBenchmarkActif ? "Séries sync" : "Inclus"}
+              {estBenchmarkActif ? "Séries sync" : `graphique${graphiquesEpingles.length > 1 ? "s" : ""} ajouté${graphiquesEpingles.length > 1 ? "s" : ""}`}
             </p>
           </div>
           <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold shrink-0">
@@ -1049,9 +1067,17 @@ Ne mets ni introduction ni conclusion.`;
                   )} %`
                 : `${completudeGlobale} %`}
             </h3>
-            <p className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium truncate">
-              Données intègres
-            </p>
+            {(() => {
+              // Le libellé dit ce qu'il en est vraiment : « Données intègres » s'affichait même avec des cellules vides
+              const taux = estBenchmarkActif && statsGlobalesMulti
+                ? Math.round(statsGlobalesMulti.resumeSources.reduce((a, b) => a + b.completude, 0) / (sourcesFichiers.length || 1))
+                : completudeGlobale;
+              return (
+                <p className={`text-[10px] sm:text-[11px] mt-0.5 font-medium truncate ${taux >= 100 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  {taux >= 100 ? "Aucune cellule vide" : `${100 - taux} % de cellules vides`}
+                </p>
+              );
+            })()}
           </div>
           <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold shrink-0">
             <CheckCircle2 className="w-4 h-4 sm:w-6 sm:h-6" />
@@ -1067,7 +1093,7 @@ Ne mets ni introduction ni conclusion.`;
       {/* BARRE D'ACCÈS RAPIDE */}
       <nav
         aria-label="Navigation rapide de l'analyse"
-        className="print:hidden sticky top-3 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl p-2 shadow-xs flex items-center gap-2 overflow-x-auto scrollbar-none"
+        className="print:hidden sticky top-0 z-30 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 shadow-md flex items-center gap-2 overflow-x-auto scrollbar-none"
       >
         <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase px-2 shrink-0">
           Aller à :
@@ -1141,7 +1167,7 @@ Ne mets ni introduction ni conclusion.`;
       <Depliant
         id="sec-synthese"
         titre={estBenchmarkActif ? `Synthèse exécutive (${sourcesFichiers.length} fichiers)` : "Synthèse exécutive & Faits marquants"}
-        detail={estBenchmarkActif ? `${syntheseComparativeCards.length} constats` : `${rapportActif.length} points clés`}
+        detail={estBenchmarkActif ? `${syntheseComparativeCards.length} constats` : `${rapportActif.filter((b) => !(b.type === "mesure" && (resultatActif?.mesures?.length ?? 0) > 0)).length} points clés`}
         parDefautOuvert={true}
       >
         <div className="space-y-4">
@@ -1162,6 +1188,10 @@ Ne mets ni introduction ni conclusion.`;
                 </span>
               </div>
             </div>
+          )}
+
+          {!estBenchmarkActif && resultatActif && resultatActif.mesures.length > 0 && (
+            <RepartitionsVisuelles mesures={resultatActif.mesures} />
           )}
 
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
@@ -1188,6 +1218,8 @@ Ne mets ni introduction ni conclusion.`;
                 ))
               : rapportActif
                   .filter((bloc) => !bloc.texte.includes("Fichier Source"))
+                  // Les répartitions sont dessinées en barres juste au-dessus : inutile de les répéter en phrases
+                  .filter((bloc) => !(bloc.type === "mesure" && (resultatActif?.mesures?.length ?? 0) > 0))
                   .map((bloc, index) => (
                     <CarteSyntheseItem key={index} bloc={bloc} index={index} />
                   ))}
@@ -1323,57 +1355,7 @@ Ne mets ni introduction ni conclusion.`;
               );
             }
 
-            return (
-              <div key={nom} className={`${carteStyle} p-2.5 sm:p-4 space-y-2`}>
-                <div className="flex justify-between items-center gap-1 border-b pb-1.5 border-slate-100 dark:border-slate-800">
-                  <span className="font-bold text-xs sm:text-sm truncate text-slate-900 dark:text-slate-100">{nettoyerNomAffichage(nom)}</span>
-                  <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 px-1.5 py-0.5 rounded shrink-0">
-                    {info.type.slice(0, 3)}
-                  </span>
-                </div>
-                <div className="text-[10px] sm:text-xs space-y-1 pt-0.5">
-                  {info.type === "numerique" && (() => {
-                    const n = s as unknown as Num;
-                    return (
-                      <>
-                        <Ligne l="Moyenne" v={fmt(n.moyenne)} />
-                        <Ligne l="Médiane" v={fmt(n.mediane)} />
-                        <Ligne l="Min/Max" v={`${fmt(n.min)}/${fmt(n.max)}`} />
-                        {n.atypiques > 0 && <Ligne l="Atypiques" v={fmt(n.atypiques)} fort />}
-                      </>
-                    );
-                  })()}
-                  {info.type === "categorielle" && (() => {
-                    const c = s as unknown as Cat;
-                    return (
-                      <>
-                        <p className="text-[9px] text-slate-400 pb-0.5">
-                          {fmt(c.total)} val. — {fmt(c.nbCategoriesDistinctes)} cat.
-                        </p>
-                        {c.topValeurs.slice(0, 2).map((t, i) => (
-                          <Ligne
-                            key={t.valeur}
-                            l={t.valeur}
-                            v={`${fmt(t.effectif)} (${t.pourcentage}%)`}
-                            fort={i === 0}
-                          />
-                        ))}
-                      </>
-                    );
-                  })()}
-                  {info.type === "identifiant" && (() => {
-                    const d = s as unknown as Ident;
-                    return (
-                      <>
-                        <Ligne l="Distincts" v={fmt(d.distincts)} />
-                        <Ligne l="Unicité" v={`${d.unicite}%`} />
-                      </>
-                    );
-                  })()}
-                  <Ligne l="Rempli" v={`${info.tauxRemplissage}%`} />
-                </div>
-              </div>
-            );
+            return <CarteStatistique key={nom} nom={nom} info={info} />;
           })}
         </div>
       </Depliant>
@@ -1498,8 +1480,8 @@ Ne mets ni introduction ni conclusion.`;
                     </div>
                   </div>
                 ))
-              : correlationsStandard.slice(0, 10).map((c) => {
-                  const explTexte = expliquerCorrelationSimple(c.colonneA, c.colonneB, c.coefficient);
+              : correlationsAffichees.map((c) => {
+                  const explTexte = expliquerCorrelationSimple(nettoyerNomAffichage(c.colonneA), nettoyerNomAffichage(c.colonneB), c.coefficient);
                   return (
                     <div
                       key={`${c.colonneA}|${c.colonneB}`}
@@ -1515,6 +1497,8 @@ Ne mets ni introduction ni conclusion.`;
                           </span>
                         </div>
 
+                        <JaugeCorrelation r={c.coefficient} />
+
                         <div className="text-[10px] sm:text-[11px] flex items-start gap-1 pt-1">
                           <Lightbulb className="w-3 h-3 text-blue-600 shrink-0 mt-0.5" />
                           <p className="text-slate-600 dark:text-slate-400 leading-snug line-clamp-3 sm:line-clamp-none">
@@ -1526,6 +1510,11 @@ Ne mets ni introduction ni conclusion.`;
                   );
                 })}
           </div>
+          {!estBenchmarkActif && correlationsStandard.length > correlationsAffichees.length && (
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {correlationsStandard.length - correlationsAffichees.length} autre(s) paire(s) sans liaison notable (|r| &lt; 0,3) ne sont pas affichées.
+            </p>
+          )}
         </div>
       </Depliant>
 
@@ -1544,6 +1533,94 @@ Ne mets ni introduction ni conclusion.`;
           <TableauCroiseDynamique key={`t-${nomFichier}`} entetes={entetes} corps={corps} />
         </div>
       </section>
+    </div>
+  );
+}
+
+/**
+ * Répartitions des principales mesures, dessinées : un chiffre clé par mesure, puis un classement en barres
+ * par dimension (valeur et part du total). Remplace les longues phrases « A (12, 30 %), B (8, 20 %)… ».
+ */
+function RepartitionsVisuelles({
+  mesures,
+}: {
+  mesures: {
+    colonne: string;
+    operation: "somme" | "moyenne";
+    totalGlobal: number | null;
+    repartitions: { dimension: string; nbCategories: number; lignes: { valeur: string; total: number; part: number | null }[] }[];
+  }[];
+}) {
+  const nombre = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2 });
+  const avecTotal = mesures.filter((m) => m.totalGlobal !== null);
+  const cartes = mesures.flatMap((m) => m.repartitions.filter((r) => r.lignes.length > 0).map((r) => ({ m, r })));
+
+  return (
+    <div className="space-y-3 sm:space-y-4">
+      {avecTotal.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
+          {avecTotal.map((m) => (
+            <div
+              key={m.colonne}
+              className="rounded-xl sm:rounded-2xl p-3 sm:p-4 bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-sm"
+            >
+              <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-blue-100 truncate">
+                {nettoyerNomAffichage(m.colonne)}
+              </p>
+              <p className="text-xl sm:text-2xl font-black tabular-nums leading-tight mt-0.5">{nombre(m.totalGlobal as number)}</p>
+              <p className="text-[10px] text-blue-100">au total</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {cartes.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5 sm:gap-4">
+          {cartes.map(({ m, r }) => {
+            const max = Math.max(...r.lignes.map((l) => Math.abs(l.total)), 0) || 1;
+            return (
+              <div
+                key={`${m.colonne}-${r.dimension}`}
+                className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl sm:rounded-2xl p-3 sm:p-4 shadow-xs"
+              >
+                <div className="flex items-baseline justify-between gap-2 mb-2.5">
+                  <h4 className="font-bold text-xs sm:text-[13px] text-slate-800 dark:text-slate-100 leading-snug">
+                    {nettoyerNomAffichage(m.colonne)}
+                    <span className="font-medium text-slate-500 dark:text-slate-400"> par {nettoyerNomAffichage(r.dimension)}</span>
+                  </h4>
+                  <span className="text-[10px] text-slate-400 shrink-0">{m.operation === "somme" ? "total" : "moyenne"}</span>
+                </div>
+                <ul className="space-y-2">
+                  {r.lignes.map((l) => (
+                    <li key={l.valeur}>
+                      <div className="flex items-baseline justify-between gap-2 text-[11px] sm:text-xs">
+                        <span className="truncate text-slate-700 dark:text-slate-300" title={l.valeur}>{l.valeur}</span>
+                        <span className="shrink-0 tabular-nums font-semibold text-slate-900 dark:text-white">
+                          {nombre(l.total)}
+                          {l.part !== null && (
+                            <span className="ml-1.5 font-medium text-slate-400">{nombre(l.part)} %</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-blue-600"
+                          style={{ width: `${Math.max(2, (Math.abs(l.total) / max) * 100)}%` }}
+                        />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                {r.nbCategories > r.lignes.length && (
+                  <p className="mt-2.5 text-[10px] text-slate-400">
+                    {r.lignes.length} premiers sur {r.nbCategories}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1572,10 +1649,21 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
     icone = <BarChart3 className="w-3.5 h-3.5 text-blue-600" />;
     badgeTexte = "Chiffres";
     badgeCouleur = "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300";
-  } else if (bloc.type === "qualite" || bloc.type === "intro") {
-    icone = <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />;
+  } else if (bloc.type === "intro") {
+    icone = <Database className="w-3.5 h-3.5 text-slate-600" />;
+    badgeTexte = "Périmètre";
+    badgeCouleur = "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+  } else if (bloc.type === "qualite") {
+    // L'alerte n'apparaît que s'il manque réellement des valeurs
+    const complet = /^(aucune|no) /i.test(contenu);
+    icone = complet ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />;
     badgeTexte = "Qualité";
-    badgeCouleur = "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300";
+    badgeCouleur = complet
+      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+      : "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300";
+  } else if (bloc.type === "correlation") {
+    icone = <Link2 className="w-3.5 h-3.5 text-blue-600" />;
+    badgeTexte = "Relation";
   }
 
   const partiesTexte = contenu.split(/(\d+(?:[.,]\d+)?\s*%)/g);
@@ -1640,6 +1728,189 @@ function Depliant({
       </summary>
       <div className="border-t border-slate-100 px-3 sm:px-6 py-3.5 sm:py-5 dark:border-slate-800">{children}</div>
     </details>
+  );
+}
+
+const LIBELLES_TYPE: Record<string, { texte: string; classe: string }> = {
+  numerique: { texte: "Nombre", classe: "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300" },
+  categorielle: { texte: "Catégorie", classe: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
+  date: { texte: "Temps", classe: "bg-cyan-50 text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300" },
+  booleen: { texte: "Oui / Non", classe: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" },
+  identifiant: { texte: "Identifiant", classe: "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300" },
+};
+
+/**
+ * Fiche d'une colonne : ce qu'elle contient, dessiné.
+ *  - nombre : moyenne et médiane en avant, puis l'étendue min → max avec la zone où se trouve la moitié des valeurs ;
+ *  - catégorie : les valeurs les plus fréquentes en barres ;
+ *  - temps : la période couverte ; oui/non : la proportion ; identifiant : l'unicité.
+ * Le taux de remplissage est une fine barre en bas de fiche.
+ */
+function CarteStatistique({
+  nom,
+  info,
+}: {
+  nom: string;
+  info: { type: string; tauxRemplissage: number; nbVides: number; stats: Record<string, unknown> };
+}) {
+  const type = LIBELLES_TYPE[info.type] ?? LIBELLES_TYPE.categorielle;
+  const s = info.stats;
+  const nombre = (v: number | null | undefined) =>
+    v === null || v === undefined || Number.isNaN(v)
+      ? "—"
+      : v.toLocaleString("fr-FR", { maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2 });
+
+  let corpsFiche: ReactNode = null;
+
+  if (info.type === "numerique") {
+    const n = s as unknown as Num & { q1?: number | null; q3?: number | null; somme?: number | null };
+    const min = n.min ?? 0;
+    const max = n.max ?? 0;
+    const etendue = max - min;
+    const pos = (v: number | null | undefined) => (etendue > 0 && v !== null && v !== undefined ? Math.min(100, Math.max(0, ((v - min) / etendue) * 100)) : 0);
+    corpsFiche = (
+      <>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <p className="text-[9px] sm:text-[10px] uppercase tracking-wide text-slate-400">Moyenne</p>
+            <p className="text-sm sm:text-base font-black tabular-nums text-slate-900 dark:text-white leading-tight">{nombre(n.moyenne)}</p>
+          </div>
+          <div>
+            <p className="text-[9px] sm:text-[10px] uppercase tracking-wide text-slate-400">Médiane</p>
+            <p className="text-sm sm:text-base font-black tabular-nums text-slate-900 dark:text-white leading-tight">{nombre(n.mediane)}</p>
+          </div>
+        </div>
+        {etendue > 0 && (
+          <div title="Trait : médiane. Zone foncée : la moitié centrale des valeurs.">
+            <div className="relative h-2 rounded-full bg-slate-100 dark:bg-slate-800">
+              {n.q1 !== null && n.q1 !== undefined && n.q3 !== null && n.q3 !== undefined && (
+                <div
+                  className="absolute top-0 h-full rounded-full bg-blue-500/70"
+                  style={{ left: `${pos(n.q1)}%`, width: `${Math.max(1.5, pos(n.q3) - pos(n.q1))}%` }}
+                />
+              )}
+              <div className="absolute -top-0.5 h-3 w-0.5 bg-slate-900 dark:bg-white" style={{ left: `${pos(n.mediane)}%` }} />
+            </div>
+            <div className="flex justify-between text-[9px] sm:text-[10px] text-slate-500 dark:text-slate-400 tabular-nums mt-1">
+              <span>min {nombre(n.min)}</span>
+              <span>max {nombre(n.max)}</span>
+            </div>
+          </div>
+        )}
+        {n.atypiques > 0 && (
+          <p className="text-[10px] sm:text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+            {n.atypiques} valeur{n.atypiques > 1 ? "s" : ""} très éloignée{n.atypiques > 1 ? "s" : ""} des autres
+          </p>
+        )}
+      </>
+    );
+  } else if (info.type === "categorielle") {
+    const c = s as unknown as Cat;
+    corpsFiche =
+      c.nbCategoriesDistinctes === 1 ? (
+        <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-400">
+          Valeur unique : <strong className="text-slate-900 dark:text-white">{c.topValeurs[0]?.valeur}</strong>
+        </p>
+      ) : (
+        <>
+          <p className="text-[10px] text-slate-400">
+            {nombre(c.nbCategoriesDistinctes)} valeurs différentes
+          </p>
+          <ul className="space-y-1.5">
+            {c.topValeurs.slice(0, 3).map((t) => (
+              <li key={t.valeur}>
+                <div className="flex justify-between gap-2 text-[10px] sm:text-xs">
+                  <span className="truncate text-slate-700 dark:text-slate-300" title={t.valeur}>{t.valeur}</span>
+                  <span className="shrink-0 tabular-nums font-semibold text-slate-900 dark:text-white">
+                    {nombre(t.effectif)} <span className="font-medium text-slate-400">{nombre(t.pourcentage)} %</span>
+                  </span>
+                </div>
+                <div className="mt-0.5 h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-600" style={{ width: `${Math.max(2, t.pourcentage)}%` }} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      );
+  } else if (info.type === "date") {
+    const d = s as unknown as Dat;
+    const jour = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "—");
+    corpsFiche = d.n ? (
+      <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-400">
+        Du <strong className="text-slate-900 dark:text-white tabular-nums">{jour(d.min)}</strong> au{" "}
+        <strong className="text-slate-900 dark:text-white tabular-nums">{jour(d.max)}</strong>
+      </p>
+    ) : (
+      <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-400">Périodes (mois, trimestres, rangs…)</p>
+    );
+  } else if (info.type === "booleen") {
+    const b = s as unknown as Boo;
+    const total = b.vrai + b.faux || 1;
+    corpsFiche = (
+      <>
+        <div className="flex h-2 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800">
+          <div className="h-full bg-emerald-500" style={{ width: `${(b.vrai / total) * 100}%` }} />
+        </div>
+        <div className="flex justify-between text-[10px] sm:text-xs tabular-nums">
+          <span className="text-emerald-700 dark:text-emerald-400 font-semibold">Oui {nombre(b.vrai)}</span>
+          <span className="text-slate-500">Non {nombre(b.faux)}</span>
+        </div>
+      </>
+    );
+  } else {
+    const d = s as unknown as Ident;
+    corpsFiche = (
+      <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-400">
+        <strong className="text-slate-900 dark:text-white tabular-nums">{nombre(d.distincts)}</strong> valeurs différentes
+        {d.unicite >= 100 ? " — aucune répétition" : ` — ${nombre(d.unicite)} % d'unicité`}
+      </p>
+    );
+  }
+
+  const rempli = info.tauxRemplissage;
+  return (
+    <div className={`${carteStyle} p-3 sm:p-4 flex flex-col gap-2.5`}>
+      <div className="flex justify-between items-center gap-2">
+        <span className="font-bold text-xs sm:text-sm truncate text-slate-900 dark:text-slate-100" title={nom}>
+          {nettoyerNomAffichage(nom)}
+        </span>
+        <span className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${type.classe}`}>{type.texte}</span>
+      </div>
+      <div className="space-y-2 flex-1">{corpsFiche}</div>
+      <div title={`${rempli} % de cellules remplies`}>
+        <div className="h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+          <div className={`h-full rounded-full ${rempli >= 100 ? "bg-emerald-500" : rempli >= 80 ? "bg-amber-400" : "bg-rose-500"}`} style={{ width: `${rempli}%` }} />
+        </div>
+        <p className="text-[9px] sm:text-[10px] text-slate-400 mt-1">
+          {rempli >= 100 ? "Entièrement remplie" : `${nombre(info.nbVides)} cellule${info.nbVides > 1 ? "s" : ""} vide${info.nbVides > 1 ? "s" : ""} (${nombre(100 - rempli)} %)`}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Jauge de -1 à +1 : la barre part du centre, vers la droite (bleu) si positif, vers la gauche (rose) si négatif. */
+function JaugeCorrelation({ r }: { r: number }) {
+  const a = Math.min(1, Math.abs(r));
+  const force = a >= 0.8 ? "très forte" : a >= 0.6 ? "forte" : a >= 0.4 ? "modérée" : a >= 0.2 ? "faible" : "quasi nulle";
+  return (
+    <div className="pt-2">
+      <div className="relative h-1.5 rounded-full bg-slate-100 dark:bg-slate-800">
+        <div
+          className={`absolute top-0 h-full rounded-full ${r >= 0 ? "bg-blue-600" : "bg-rose-500"}`}
+          style={r >= 0 ? { left: "50%", width: `${a * 50}%` } : { right: "50%", width: `${a * 50}%` }}
+        />
+        <div className="absolute -top-0.5 left-1/2 h-2.5 w-px bg-slate-400" />
+      </div>
+      <div className="flex justify-between text-[9px] text-slate-400 mt-1">
+        <span>−1 inverse</span>
+        <span className={`font-semibold ${r >= 0 ? "text-blue-700 dark:text-blue-400" : "text-rose-600 dark:text-rose-400"}`}>
+          {force}, {r >= 0 ? "dans le même sens" : "en sens inverse"}
+        </span>
+        <span>+1 directe</span>
+      </div>
+    </div>
   );
 }
 

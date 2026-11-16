@@ -146,9 +146,27 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     });
   }, [entetes, corps]);
 
+  // Colonne proposée par défaut : celle qui place le plus de lieux différents sur la carte
+  // (une colonne « Région » à valeur unique donnait un seul point alors que les sous-préfectures en donnent vingt)
   const defautStandard = useMemo(() => {
-    return colonnesGeographiquesEligibles[0] || "";
-  }, [colonnesGeographiquesEligibles]);
+    let meilleure = colonnesGeographiquesEligibles[0] || "";
+    let meilleurScore = -1;
+    for (const col of colonnesGeographiquesEligibles) {
+      const idx = entetes.indexOf(col);
+      const reconnus = new Set<string>();
+      for (const ligne of corps.slice(0, 2000)) {
+        const v = String(ligne[idx] ?? "").trim();
+        if (!v) continue;
+        const cle = cleGeo(v);
+        if (!reconnus.has(cle) && (trouverLieuCI(v) || PAYS_DU_MONDE[cle])) reconnus.add(cle);
+      }
+      if (reconnus.size > meilleurScore) {
+        meilleurScore = reconnus.size;
+        meilleure = col;
+      }
+    }
+    return meilleure;
+  }, [colonnesGeographiquesEligibles, entetes, corps]);
 
   const [choix, setChoix] = useState<string | null>(null);
   const colonneGeo = choix !== null && colonnesGeographiquesEligibles.includes(choix) ? choix : defautStandard;
@@ -223,16 +241,19 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     if (idxGeo === -1) return [];
 
     const idxMesure = entetes.indexOf(colonneMesure);
-    const mapLieux = new Map<string, { totalSomme: number; totalN: number; totalCompte: number }>();
+    // Clé sans casse ni accents : « Abidjan », « ABIDJAN » et « abidjan » forment un seul point sur la carte
+    const mapLieux = new Map<string, { nom: string; totalSomme: number; totalN: number; totalCompte: number }>();
 
     for (const ligne of corps) {
+      if (estValeurVide(ligne[idxGeo])) continue;
       const lieu = String(ligne[idxGeo] ?? "").replace(/["'«»“”]/g, "").trim();
-      if (!lieu || /^\d+$/.test(lieu) || lieu === "—" || lieu === "-" || /^total/i.test(lieu)) continue;
+      if (!lieu || /^\d+$/.test(lieu) || /^(sous[- ]?)?tota(l|ux)\b/i.test(lieu)) continue;
 
-      let gLieu = mapLieux.get(lieu);
+      const cle = cleGeo(lieu) || lieu;
+      let gLieu = mapLieux.get(cle);
       if (!gLieu) {
-        gLieu = { totalSomme: 0, totalN: 0, totalCompte: 0 };
-        mapLieux.set(lieu, gLieu);
+        gLieu = { nom: lieu, totalSomme: 0, totalN: 0, totalCompte: 0 };
+        mapLieux.set(cle, gLieu);
       }
 
       gLieu.totalCompte++;
@@ -245,7 +266,8 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       }
     }
 
-    Array.from(mapLieux.entries()).forEach(([nom, g]) => {
+    Array.from(mapLieux.values()).forEach((g) => {
+      const nom = g.nom;
       let coord = trouverLieuCI(nom) || (PAYS_DU_MONDE[cleGeo(nom)] ?? null);
       if (!coord && externes[nom]) coord = [externes[nom]!.lat, externes[nom]!.lng];
       if (!coord) return;
@@ -597,7 +619,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       {points.length > 0 && (
         <div className="space-y-1.5 pt-1 text-xs">
           <span className="font-bold text-slate-600 dark:text-slate-300">
-            {points.length} station(s) localisée(s) en Côte d&apos;Ivoire :
+            {points.length} lieu(x) localisé(s) sur la carte :
           </span>
           <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1 scrollbar-thin">
             {points.map((p) => (

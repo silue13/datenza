@@ -12,12 +12,14 @@ import {
 } from "./utils";
 import { calculerFrequences, calculerTendance, correlationPearson, interpreterCorrelation } from "./stats";
 import { calculerMesures } from "./mesures";
-import { convertirDate, detecterTypeColonne, normaliser, type TypeColonne } from "./detection";
+import { detecterOrdreDate, detecterTypeColonne, lireDateOuAnnee, normaliser, type TypeColonne } from "./detection";
+import { clePeriode } from "./dates";
 import { analyserNettoyage, appliquerCorrections } from "./nettoyage";
 
 const MAX_COLS_CORR = 12;
 const MAX_LIGNES_CORR = 50000;
-const RE_VRAI = /^(true|vrai|yes|oui|1)$/;
+const RE_VRAI = /^(true|vrai|yes|oui|o|y|1)$/;
+const MIN_PAIRES_CORR = 5;
 
 export interface InfoColonne {
   type: TypeColonne;
@@ -94,17 +96,7 @@ export function analyserColonnes(entetesBrutes: string[], corpsBrut: Cellule[][]
   for (const nom of choisies) {
     const brut = valeursDe(nom);
     const nonVides = brut.filter((v) => !estValeurVide(v));
-    let { type, role, geo } = detecterTypeColonne(nom, brut);
-
-    // Verrouillage : Sécurisation sémantique contre les fausses classifications
-    if (estColonneIdentifiant(nom, brut)) {
-      type = "identifiant";
-      role = "identifiant";
-      geo = false;
-    } else if (estColonneTemporelle(nom, brut)) {
-      type = "date";
-      role = "temps";
-    }
+    const { type, role, geo } = detecterTypeColonne(nom, brut);
 
     const info: InfoColonne = {
       type,
@@ -119,25 +111,21 @@ export function analyserColonnes(entetesBrutes: string[], corpsBrut: Cellule[][]
     if (type === "numerique") {
       const nums = versNumeriques(brut);
       info.stats = { ...statistiquesNumeriques(nums) };
-      info.tendance = calculerTendance(nums);
       numeriques.push(nom);
     } else if (type === "date") {
+      const ordre = detecterOrdreDate(nonVides);
+      const p = (x: number) => String(x).padStart(2, "0");
       const ds = nonVides
-        .map((v) => {
-          const str = String(v).replace(/["'«»“”]/g, "").trim();
-          // Support direct des années entières à 4 chiffres (ex: 2023, 1960)
-          if (/^(19|20)\d{2}$/.test(str)) {
-            return new Date(`${str}-01-01T00:00:00Z`);
-          }
-          return convertirDate(v);
-        })
+        .map((v) => lireDateOuAnnee(v, ordre))
         .filter((d): d is Date => d !== null && !isNaN(d.getTime()))
         .sort((a, b) => +a - +b);
+      // Date locale écrite telle quelle (pas de décalage de fuseau : le 1er janvier reste le 1er janvier)
+      const iso = (d?: Date) => (d ? `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T00:00:00.000Z` : null);
 
       info.stats = {
         n: ds.length,
-        min: ds[0]?.toISOString() ?? null,
-        max: ds[ds.length - 1]?.toISOString() ?? null,
+        min: iso(ds[0]),
+        max: iso(ds[ds.length - 1]),
       };
     } else if (type === "booleen") {
       const vrai = nonVides.filter((v) => RE_VRAI.test(normaliser(v))).length;
@@ -153,6 +141,29 @@ export function analyserColonnes(entetesBrutes: string[], corpsBrut: Cellule[][]
     }
 
     statistiques[nom] = info;
+  }
+
+  // 4 bis. Tendance : uniquement le long d'un axe de temps réel (l'ordre des lignes du fichier ne veut rien dire)
+  const colTemps = choisies.find((c) => statistiques[c]?.type === "date");
+  if (colTemps) {
+    const temps = valeursDe(colTemps);
+    const ordre = detecterOrdreDate(temps);
+    const cles = temps.map((t) => clePeriode(t, ordre));
+    for (const nom of numeriques) {
+      const vals = valeursDe(nom);
+      const parPeriode = new Map<number, { somme: number; n: number }>();
+      for (let k = 0; k < vals.length; k++) {
+        const c = cles[k];
+        const x = versNombre(vals[k]);
+        if (c === null || x === null) continue;
+        const g = parPeriode.get(c) ?? { somme: 0, n: 0 };
+        g.somme += x;
+        g.n += 1;
+        parPeriode.set(c, g);
+      }
+      const serie = [...parPeriode.entries()].sort((a, b) => a[0] - b[0]).map(([, g]) => g.somme / g.n);
+      statistiques[nom].tendance = calculerTendance(serie);
+    }
   }
 
   // 5. Calcul des corrélations (Exclut strictement les identifiants et le fichier source)
@@ -178,11 +189,15 @@ export function analyserColonnes(entetesBrutes: string[], corpsBrut: Cellule[][]
         }
       }
 
+      // Trop peu de paires communes : un coefficient n'aurait aucune valeur (2 points donnent toujours r = ±1)
+      if (x.length < MIN_PAIRES_CORR) continue;
       const r = correlationPearson(x, y);
+      if (r === null) continue;
       correlations.push({
         colonneA: cols[i],
         colonneB: cols[j],
         coefficient: r,
+        nbPaires: x.length,
         interpretation: interpreterCorrelation(r),
       });
     }

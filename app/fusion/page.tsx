@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
+import { lireFichier, EXTENSIONS_ACCEPTEES } from "../../lib/import/lecture";
 import type { BlocRapport } from "../../lib/analyse/rapport";
 import {
   Files,
@@ -100,29 +101,12 @@ export default function FusionNettoyagePage() {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: "array", codepage: 65001, cellDates: true });
-        const premiereFeuille = workbook.Sheets[workbook.SheetNames[0]];
-        let donnees = XLSX.utils.sheet_to_json<Cellule[]>(premiereFeuille, { header: 1 });
-
-        if (donnees.length > 0 && donnees[0].length === 1 && String(donnees[0][0]).includes(";")) {
-          donnees = donnees.map((ligne) =>
-            String(ligne[0] ?? "").split(";").map((c) => c.trim())
-          );
-        }
-
-        if (donnees.length >= 2) {
-          const entetes = donnees[0].map((h) => String(h ?? "").trim());
-          const corps = donnees
-            .slice(1)
-            .filter((row) => row.some((c) => c !== null && c !== undefined && c !== ""));
-
-          nouveaux.push({
-            nom: file.name,
-            entetes,
-            corps,
-          });
-        }
+        const tableau = await lireFichier(file);
+        nouveaux.push({
+          nom: file.name,
+          entetes: tableau.entetes,
+          corps: tableau.corps,
+        });
       } catch (err) {
         console.error(`Erreur lors de la lecture de ${file.name}`, err);
       }
@@ -300,7 +284,7 @@ export default function FusionNettoyagePage() {
             <input
               type="file"
               multiple
-              accept=".xlsx,.xls,.csv"
+              accept={EXTENSIONS_ACCEPTEES}
               onChange={(e) => void traiterFichiersDeposes(e.target.files)}
               className="hidden"
               id="fichiers-fusion-input"

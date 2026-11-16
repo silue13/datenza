@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "./components/Sidebar";
@@ -28,6 +28,17 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "DATENZA",
   },
+};
+
+// Affichage téléphone : largeur de l'appareil, zoom autorisé (accessibilité), prise en compte de l'encoche
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
+    { media: "(prefers-color-scheme: dark)", color: "#020617" },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

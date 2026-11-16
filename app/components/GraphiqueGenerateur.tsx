@@ -19,25 +19,42 @@ import {
 import CarteGeographique from "./CarteGeographique";
 import "./chartSetup";
 import {
-  arrondir,
   estValeurVide,
   parseNombre,
   estColonneIdentifiant,
   estColonneTemporelle,
   type Cellule,
 } from "../../lib/analyse/utils";
+import {
+  calculerSerie,
+  calculerSeriesVentilees,
+  recommanderGraphiques,
+  nomLisible,
+  filtrePourPoint,
+  alignerSeries,
+  formaterCompact,
+  formaterComplet,
+  libellePeriode,
+  type AgregationGraphique,
+  type SerieGraphique,
+} from "../../lib/analyse/graphique";
+import { operationPour, estPseudoMesure } from "../../lib/analyse/mesures";
+import type { ConditionFiltre } from "../../lib/analyse/filtres";
 import { useData, type GraphiqueEpingle, type TypeGraphique } from "../context/DataContext";
 import { lireFournisseur } from "../../lib/prefs";
 
-type Agregation =
-  | "Nombre"
-  | "Somme"
-  | "Moyenne"
-  | "Mediane"
-  | "Minimum"
-  | "Maximum"
-  | "Valeurs distinctes"
-  | "Pourcentage";
+type Agregation = AgregationGraphique;
+
+const LIBELLES_AGREGATION: Record<Agregation, string> = {
+  Nombre: "Nombre",
+  Somme: "Somme",
+  Moyenne: "Moyenne",
+  Mediane: "Médiane",
+  Minimum: "Minimum",
+  Maximum: "Maximum",
+  "Valeurs distinctes": "Valeurs distinctes",
+  Pourcentage: "Part des lignes (%)",
+};
 
 interface GraphiqueGenerateurProps {
   entetes: string[];
@@ -54,7 +71,39 @@ const PALETTE = [
   "#dc2626",
   "#475569",
   "#0d9488",
+  "#9333ea",
+  "#ca8a04",
 ];
+
+const MAX_PARTS_CIRCULAIRE = 8;
+
+const estCirculaire = (type: TypeGraphique) => type === "Camembert" || type === "Anneau";
+
+/** Libellés d'axe lisibles : « 2024-03 » devient « mars 2024 ». */
+const libellesSerie = (s: SerieGraphique) => s.points.map((p) => (s.granularite ? libellePeriode(p.label) : p.label));
+
+const NOMS_GRANULARITE: Record<string, string> = { jour: "par jour", mois: "par mois", trimestre: "par trimestre", annee: "par année" };
+
+/** Habillage d'une série unique selon le type de graphique. */
+function habillerSerie(type: TypeGraphique, label: string, data: (number | null)[]): GraphiqueEpingle["datasets"] {
+  if (estCirculaire(type)) {
+    return [{ label, data, backgroundColor: data.map((_, i) => PALETTE[i % PALETTE.length]), borderColor: "#ffffff", borderWidth: 2 }];
+  }
+  if (type === "Courbe" || type === "Aires") {
+    return [
+      {
+        label,
+        data,
+        backgroundColor: "rgba(37, 99, 235, 0.14)",
+        borderColor: "#2563eb",
+        borderWidth: 2.5,
+        fill: type === "Aires",
+        pointRadius: data.length > 40 ? 0 : data.length > 20 ? 2 : 3.5,
+      },
+    ];
+  }
+  return [{ label, data, backgroundColor: "#2563eb", borderColor: "#1d4ed8", borderRadius: 4, borderWidth: 0 }];
+}
 
 const PALETTE_COMPARAISON = [
   { fill: "#1d4ed8", border: "#1e40af", bgLeger: "rgba(29, 78, 216, 0.12)" },
@@ -64,8 +113,6 @@ const PALETTE_COMPARAISON = [
   { fill: "#dc2626", border: "#b91c1c", bgLeger: "rgba(220, 38, 38, 0.12)" },
   { fill: "#4f46e5", border: "#4338ca", bgLeger: "rgba(79, 70, 229, 0.12)" },
 ];
-
-const MAX_CATEGORIES = 100;
 
 function versNombre(v: Cellule): number | null {
   if (estValeurVide(v)) return null;
@@ -101,49 +148,133 @@ function calculerLargeurConteneur(nbPoints: number): string {
   return "100%";
 }
 
-// Générateur d'options Chart.js dynamique et sans surcharge de chiffres
-// APRÈS (compatible avec Line, Bar, Pie et Doughnut)
-function creerOptionsChart(nbPoints: number): any {
-  return {
+// Options Chart.js adaptées à chaque type de graphique :
+// - barres et aires : l'axe des valeurs part de zéro (une barre tronquée fausse la comparaison) ;
+// - camembert / anneau : aucun axe, part en % sur chaque secteur, légende à droite ;
+// - axes en notation compacte (1,2 M), infobulles avec la valeur complète ;
+// - étiquettes de valeurs affichées quand le graphique reste lisible (12 points au plus).
+function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: (index: number) => void): any {
+  const circulaire = estCirculaire(g.type);
+  const horizontal = !!g.horizontal && g.type === "Barres";
+  const empile = !!g.empile && !circulaire;
+  const cliquable = !!onSelection && (g.filtresClic ?? []).some(Boolean);
+  // Sur téléphone, une légende à droite écrase le camembert : on la place dessous
+  const ecranEtroit = typeof window !== "undefined" && window.innerWidth < 640;
+  const multi = (g.datasets || []).length > 1;
+  const valeurs = (g.datasets?.[0]?.data ?? []) as (number | null)[];
+  const total = valeurs.reduce<number>((s, v) => s + Math.abs(v ?? 0), 0);
+  const pourcent = (v: number) => `${formaterComplet(Math.round((1000 * Math.abs(v)) / total) / 10)} %`;
+
+  const commun = {
     responsive: true,
     maintainAspectRatio: false,
+    indexAxis: horizontal ? ("y" as const) : ("x" as const),
+    interaction: { mode: circulaire ? ("nearest" as const) : ("index" as const), intersect: circulaire, axis: horizontal ? ("y" as const) : ("x" as const) },
+    // Filtrage croisé : un clic sur une barre, un point ou un secteur filtre tous les graphiques
+    onClick: (_evt: unknown, elements: { index: number }[]) => {
+      if (cliquable && elements.length && g.filtresClic?.[elements[0].index]) onSelection!(elements[0].index);
+    },
+    onHover: (evt: any, elements: { index: number }[]) => {
+      const cible = evt?.native?.target as HTMLElement | undefined;
+      if (cible) cible.style.cursor = cliquable && elements.length && g.filtresClic?.[elements[0].index] ? "pointer" : "default";
+    },
+    elements: { line: { tension: 0.25 }, point: { hoverRadius: 5 } },
+    // Quelques barres ne s'étalent plus sur toute la largeur de l'écran
+    datasets: { bar: { maxBarThickness: 56, categoryPercentage: 0.72, barPercentage: 0.9 } },
     plugins: {
       legend: {
-        position: "top" as const,
+        display: circulaire || multi,
+        position: circulaire ? (ecranEtroit ? ("bottom" as const) : ("right" as const)) : ("top" as const),
         labels: {
-          boxWidth: 12,
+          boxWidth: 10,
+          usePointStyle: true,
+          color: "#64748b",
           font: { size: 11, weight: "bold" as const },
         },
       },
-      datalabels: {
-        display: false,
-      },
+      datalabels: circulaire
+        ? {
+            display: (ctx: any) => total > 0 && Math.abs(ctx.dataset.data[ctx.dataIndex] ?? 0) / total >= 0.04,
+            color: "#ffffff",
+            font: { size: 10, weight: "bold" as const },
+            formatter: (v: number | null) => (v === null || !total ? "" : pourcent(v)),
+          }
+        : {
+            display: !multi && nbPoints <= 12 ? ("auto" as const) : false,
+            anchor: "end" as const,
+            align: horizontal ? ("right" as const) : ("end" as const),
+            offset: 2,
+            clamp: true,
+            color: "#64748b",
+            font: { size: 10, weight: "bold" as const },
+            formatter: (v: number | null) => (v === null ? "" : formaterCompact(v)),
+          },
       tooltip: {
         enabled: true,
-      },
-    },
-    scales: {
-      y: {
-        beginAtZero: false,
-        grid: { color: "rgba(148,163,184,0.15)" },
-        ticks: { font: { size: 10 } },
-        grace: "10%",
-      },
-      x: {
-        grid: { display: false },
-        ticks: {
-          font: { size: 10 },
-          maxRotation: 45,
-          minRotation: 0,
-          autoSkip: nbPoints <= 15,
+        callbacks: {
+          label: (ctx: any) => {
+            const v: number | null | undefined = circulaire ? ctx.parsed : horizontal ? ctx.parsed?.x : ctx.parsed?.y;
+            if (v === null || v === undefined || Number.isNaN(v)) return `${ctx.dataset.label ?? ""} : aucune donnée`;
+            const nom = circulaire ? ctx.label : ctx.dataset.label;
+            return `${nom} : ${formaterComplet(v)}${circulaire && total ? ` (${pourcent(v)})` : ""}`;
+          },
         },
       },
     },
   };
+
+  if (circulaire) return commun;
+
+  const axeValeurs = {
+    beginAtZero: g.type !== "Courbe" || empile,
+    stacked: empile,
+    grid: { color: "rgba(148,163,184,0.18)" },
+    border: { display: false },
+    ticks: { color: "#64748b", font: { size: 10 }, callback: (v: number | string) => formaterCompact(Number(v)) },
+    grace: "8%",
+  };
+  const axeCategories = {
+    stacked: empile,
+    grid: { display: false },
+    ticks: {
+      color: "#64748b",
+      font: { size: 10 },
+      maxRotation: 45,
+      minRotation: 0,
+      autoSkip: horizontal ? false : nbPoints <= 15,
+    },
+  };
+
+  return {
+    ...commun,
+    scales: horizontal ? { x: axeValeurs, y: axeCategories } : { y: axeValeurs, x: axeCategories },
+  };
 }
 
+/** Réglages d'un graphique créé par l'utilisateur : le graphique est recalculé à chaque changement de données ou de filtre. */
+interface SpecGraphique {
+  id: number;
+  type: TypeGraphique;
+  x: string;
+  y: string;
+  agregation: Agregation;
+  limite: number;
+  legende: string;
+  horizontal: boolean;
+  empile: boolean;
+  parFichier: boolean;
+}
+
+const libelleFiltre = (f: ConditionFiltre) =>
+  f.operateur === "entre"
+    ? `${f.colonne} : ${String(f.valeur)} → ${String(f.valeurFin ?? "").slice(0, 10)}`
+    : `${f.colonne} ${f.operateur === "egal" ? "=" : f.operateur} ${String(f.valeur)}`;
+
+const memeFiltre = (a: ConditionFiltre, b: ConditionFiltre) =>
+  a.colonne === b.colonne && a.operateur === b.operateur && String(a.valeur) === String(b.valeur) && String(a.valeurFin ?? "") === String(b.valeurFin ?? "");
+
 export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: GraphiqueGenerateurProps) {
-  const { graphiquesEpingles, epinglerGraphique, nomFichier } = useData();
+  const { graphiquesEpingles, epinglerGraphique, nomFichier, filtresActifs, ajouterFiltre, supprimerFiltre, reinitialiserFiltres } = useData();
   const actionEpingler = onEpingler || epinglerGraphique;
 
   const estModeComparaison = entetes.includes("Fichier Source");
@@ -200,9 +331,16 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
   const [typeGraphique, setTypeGraphique] = useState<TypeGraphique>("Barres");
   const [colonneAxeX, setColonneAxeX] = useState<string>(defautX);
   const [colonneAxeY, setColonneAxeY] = useState<string>(defautY);
-  const [agregation, setAgregation] = useState<Agregation>("Moyenne");
+  const [agregation, setAgregation] = useState<Agregation>(() =>
+    colonnesMesurables.includes(defautY) ? (operationPour(defautY) === "somme" ? "Somme" : "Moyenne") : "Nombre"
+  );
+  const [limite, setLimite] = useState<number>(20);
+  const [messageInfo, setMessageInfo] = useState<string>("");
   const [ventilerParFichier, setVentilerParFichier] = useState<boolean>(estModeComparaison);
-  const [graphiquesGeneres, setGraphiquesGeneres] = useState<GraphiqueEpingle[]>([]);
+  const [specs, setSpecs] = useState<SpecGraphique[]>([]);
+  const [colonneLegende, setColonneLegende] = useState<string>("");
+  const [horizontal, setHorizontal] = useState<boolean>(false);
+  const [empile, setEmpile] = useState<boolean>(true);
   const [messageErreur, setMessageErreur] = useState<string>("");
   const compteur = useRef(0);
 
@@ -215,320 +353,365 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     if (!entetes.length || !corps.length) return [];
     const resultats: GraphiqueEpingle[] = [];
     const mesuresDejaUtilisees = new Set<string>();
+    // Somme pour ce qui s'additionne (montants, quantités), moyenne pour le reste (prix, taux, notes)
+    const operation = (col: string): Agregation => (operationPour(col) === "somme" ? "Somme" : "Moyenne");
 
-    // CAS BENCHMARK COMPARATIF (N Fichiers)
+    // CAS BENCHMARK COMPARATIF (N fichiers) : une série par fichier, alignée sur le même axe
     if (estModeComparaison && sourcesFichiers.length >= 2) {
       const colX = colonnesTemporelles[0] || colonnesCategorielles[0] || colonnesSansSource[0];
-      const colY = colonnesMesurables[0] || colonnesSansSource.find((c) => c !== colX) || "";
+      const colY = colonnesMesurables[0] || "";
 
-      if (colX && colY) {
-        mesuresDejaUtilisees.add(colY);
-        const idxX = entetes.indexOf(colX);
-        const idxY = entetes.indexOf(colY);
-
-        const modalitesUniques = Array.from(
-          new Set(corps.map((l) => String(l[idxX] ?? "").replace(/["'«»“”]/g, "").trim()).filter(Boolean))
+      if (colX) {
+        if (colY) mesuresDejaUtilisees.add(colY);
+        const agg: Agregation = colY ? operation(colY) : "Nombre";
+        const series = sourcesFichiers.map((sourceNom) =>
+          calculerSerie(entetes, corps, colX, colY || null, { agregation: agg, regrouperAutres: false }, (l) => String(l[idxSource] ?? "").trim() === sourceNom)
         );
+        const temporel = series.some((x) => x.temporel);
+        const aligne = alignerSeries(series);
+        const garder = (liste: any[]) => (temporel ? liste.slice(-60) : liste.slice(0, 30));
+        const labels = garder(aligne.labels).map((l: string) => (series.some((x) => x.granularite) ? libellePeriode(l) : l));
 
-        if (colonnesTemporelles.includes(colX)) {
-          const sontAnnees = modalitesUniques.every((m) => /^(19|20)\d{2}$/.test(m));
-          if (sontAnnees) {
-            modalitesUniques.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-          }
-        }
-
-        const datasets = sourcesFichiers.map((sourceNom, sIdx) => {
-          const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
-          const data = modalitesUniques.map((mod) => {
-            const lignes = corps.filter(
-              (l) =>
-                String(l[idxSource] ?? "").trim() === sourceNom &&
-                String(l[idxX] ?? "").replace(/["'«»“”]/g, "").trim() === mod
-            );
-            if (!lignes.length) return 0;
-            const nums = lignes.map((l) => versNombre(l[idxY])).filter((n): n is number => n !== null);
-            if (!nums.length) return 0;
-            return arrondir(nums.reduce((a, b) => a + b, 0) / nums.length);
+        if (labels.length >= 1) {
+          resultats.push({
+            id: 930001,
+            titre: `Benchmark (${sourcesFichiers.length} fichiers) : ${colY ? `${LIBELLES_AGREGATION[agg]} de ${colY}` : "Effectif"} selon ${colX}`,
+            type: temporel ? "Courbe" : "Barres",
+            labels,
+            datasets: sourcesFichiers.map((sourceNom, sIdx) => {
+              const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
+              return {
+                label: sourceNom,
+                data: garder(aligne.donnees[sIdx]),
+                backgroundColor: couleur.fill,
+                borderColor: couleur.border,
+                borderWidth: 2,
+                borderRadius: 4,
+              };
+            }),
           });
-
-          return {
-            label: sourceNom,
-            data,
-            backgroundColor: couleur.fill,
-            borderColor: couleur.border,
-            borderWidth: 2,
-            borderRadius: 4,
-          };
-        });
-
-        resultats.push({
-          id: 930001,
-          titre: `Benchmark (${sourcesFichiers.length} fichiers) : Moyenne de ${colY} selon ${colX}`,
-          type: colonnesTemporelles.includes(colX) ? "Courbe" : "Barres",
-          labels: modalitesUniques,
-          datasets,
-        });
+        }
       }
     }
 
-    // CAS SÉRIES TEMPORELLES : Exactement 1 courbe par mesure (aucun clone en barres)
-    if (colonnesTemporelles.length > 0 && colonnesMesurables.length > 0) {
-      const colT = colonnesTemporelles[0];
-      const idxT = entetes.indexOf(colT);
-
-      // On explore jusqu'à 2 mesures DIFFÉRENTES (ex: Abidjan puis Adiaké)
-      colonnesMesurables.forEach((colM, idxMIndex) => {
-        if (mesuresDejaUtilisees.has(colM) || resultats.length >= 2) return;
-        mesuresDejaUtilisees.add(colM);
-
-        const idxM = entetes.indexOf(colM);
-        const mapT = new Map<string, { somme: number; n: number; ordre: number }>();
-
-        corps.forEach((ligne, i) => {
-          if (estValeurVide(ligne[idxT])) return;
-          const cle = String(ligne[idxT]).replace(/["'«»“”]/g, "").trim();
-          const val = versNombre(ligne[idxM]);
-          if (val === null) return;
-
-          let ordre = i;
-          if (/^(19|20)\d{2}$/.test(cle)) ordre = parseInt(cle, 10);
-
-          const g = mapT.get(cle) ?? { somme: 0, n: 0, ordre };
-          g.somme += val;
-          g.n += 1;
-          mapT.set(cle, g);
-        });
-
-        const pairesT = Array.from(mapT.entries())
-          .sort((a, b) => a[1].ordre - b[1].ordre)
-          .map(([label, g]) => ({ label, valeur: arrondir(g.somme / g.n) }));
-
-        if (pairesT.length >= 2) {
+    // Hors mode comparatif : un petit tableau de bord de 4 graphiques complémentaires au plus
+    if (!(estModeComparaison && sourcesFichiers.length >= 2)) {
+      const recos = recommanderGraphiques(
+        entetes,
+        corps,
+        { temporelles: colonnesTemporelles, mesurables: colonnesMesurables, categorielles: colonnesCategorielles },
+        operationPour,
+        estPseudoMesure
+      );
+      for (const r of recos) {
+        const lignes = r.type === "Courbe" || r.type === "Aires";
+        if (r.mesures.length <= 1) {
+          const m = r.mesures[0] ?? null;
+          const serie = calculerSerie(entetes, corps, r.x, m, { agregation: r.agregation, limite: r.limite });
+          const points = r.type === "Anneau" ? serie.points.filter((p) => p.valeur !== null && p.valeur > 0) : serie.points;
+          if (points.filter((p) => p.valeur !== null).length < 2) continue;
           resultats.push({
-            id: 910001 + idxMIndex,
-            titre: `Évolution temporelle : ${colM} selon ${colT}`,
-            type: "Courbe",
-            labels: pairesT.map((p) => p.label),
-            datasets: [
-              {
-                label: `Moyenne — ${colM}`,
-                data: pairesT.map((p) => p.valeur),
-                backgroundColor: "rgba(37, 99, 235, 0.12)",
-                borderColor: "#2563eb",
-                borderWidth: 2.5,
-                fill: true,
-                pointRadius: pairesT.length > 30 ? 2.5 : 3.5,
-              },
-            ],
+            id: `reco-${r.cle}`,
+            titre: r.titre,
+            type: r.type,
+            horizontal: r.horizontal,
+            labels: points.map((p) => (serie.granularite ? libellePeriode(p.label) : p.label)),
+            filtresClic: points.map((p) => filtrePourPoint(r.x, p.cle, serie.granularite)),
+            datasets: habillerSerie(r.type, m ? `${LIBELLES_AGREGATION[r.agregation]} — ${nomLisible(m)}` : "Effectif", points.map((p) => p.valeur)),
           });
+          continue;
         }
-      });
-    }
-
-    // CAS DIMENSIONS CATÉGORIELLES (Régions, Statuts, Cultures, etc.)
-    if (colonnesCategorielles.length > 0 && colonnesMesurables.length > 0 && resultats.length < 2) {
-      const catNom = colonnesCategorielles[0];
-      // Privilégie une mesure qui n'a pas encore été analysée
-      const mesNom =
-        colonnesMesurables.find((m) => !mesuresDejaUtilisees.has(m)) ||
-        colonnesMesurables[0];
-
-      if (!mesuresDejaUtilisees.has(mesNom) || resultats.length === 0) {
-        mesuresDejaUtilisees.add(mesNom);
-        const idxC = entetes.indexOf(catNom);
-        const idxM = entetes.indexOf(mesNom);
-
-        const mapC = new Map<string, { somme: number; n: number }>();
-        corps.forEach((ligne) => {
-          if (estValeurVide(ligne[idxC])) return;
-          const cle = String(ligne[idxC]).trim();
-          const val = versNombre(ligne[idxM]);
-          if (val === null) return;
-
-          const g = mapC.get(cle) ?? { somme: 0, n: 0 };
-          g.somme += val;
-          g.n += 1;
-          mapC.set(cle, g);
+        // Plusieurs mesures : une série par mesure sur le même axe
+        const series = r.mesures.map((m) => calculerSerie(entetes, corps, r.x, m, { agregation: r.agregation, regrouperAutres: false }));
+        const temporel = series.some((x) => x.temporel);
+        const granularite = series.find((x) => x.granularite)?.granularite ?? null;
+        const aligne = alignerSeries(series);
+        if (aligne.labels.length < 2) continue;
+        const garder = <T,>(liste: T[]) => (temporel ? liste.slice(-r.limite) : liste.slice(0, r.limite));
+        const cles = garder(aligne.labels);
+        resultats.push({
+          id: `reco-${r.cle}`,
+          titre: r.titre,
+          type: r.type,
+          horizontal: r.horizontal,
+          empile: r.empile,
+          labels: cles.map((l) => (granularite ? libellePeriode(l) : l)),
+          filtresClic: cles.map((l) => filtrePourPoint(r.x, l, granularite)),
+          datasets: r.mesures.map((m, k) => {
+            const couleur = PALETTE[k % PALETTE.length];
+            return {
+              label: nomLisible(m),
+              data: garder(aligne.donnees[k]),
+              backgroundColor: lignes ? `${couleur}22` : couleur,
+              borderColor: couleur,
+              borderWidth: lignes ? 2 : 0,
+              borderRadius: 3,
+            };
+          }),
         });
-
-        const pairesC = Array.from(mapC.entries())
-          .map(([label, g]) => ({ label, valeur: arrondir(g.somme / g.n) }))
-          .sort((a, b) => b.valeur - a.valeur)
-          .slice(0, 35);
-
-        if (pairesC.length >= 2) {
-          resultats.push({
-            id: 920001,
-            titre: `Distribution : ${mesNom} par ${catNom}`,
-            type: "Barres",
-            labels: pairesC.map((p) => p.label),
-            datasets: [
-              {
-                label: `Moyenne — ${mesNom}`,
-                data: pairesC.map((p) => p.valeur),
-                backgroundColor: "#2563eb",
-                borderColor: "#1d4ed8",
-                borderRadius: 4,
-                borderWidth: 1,
-              },
-            ],
-          });
-        }
       }
     }
 
     return resultats;
   }, [entetes, corps, colonnesTemporelles, colonnesMesurables, colonnesCategorielles, colonnesSansSource, estModeComparaison, sourcesFichiers, idxSource]);
 
+  /** Calcule un graphique à partir de ses réglages et des données courantes (filtres compris). */
+  function construire(spec: SpecGraphique): { graphique: GraphiqueEpingle | null; erreur?: string; info?: string } {
+    if (spec.type === "Carte") {
+      return {
+        graphique: {
+          id: spec.id,
+          titre: `Carte géographique — ${spec.x}`,
+          type: "Carte",
+          labels: [],
+          datasets: [{ label: "Occurrences", data: [], backgroundColor: "#2563eb" }],
+        },
+      };
+    }
+
+    const { agregation: agg, limite: lim } = spec;
+    const besoinY = !["Nombre", "Pourcentage"].includes(agg);
+    if (entetes.indexOf(spec.x) === -1) return { graphique: null, erreur: `La colonne « ${spec.x} » n'existe plus.` };
+    if (besoinY && entetes.indexOf(spec.y) === -1) return { graphique: null, erreur: "Veuillez sélectionner une colonne pour l'axe Y." };
+
+    const colY = besoinY ? spec.y : null;
+    const circulaire = estCirculaire(spec.type);
+    const lignes = spec.type === "Courbe" || spec.type === "Aires";
+    const limiteEffective = circulaire ? Math.min(lim, MAX_PARTS_CIRCULAIRE) : lim;
+    const titreMesure =
+      agg === "Nombre" ? "Effectif" : agg === "Pourcentage" ? LIBELLES_AGREGATION.Pourcentage : `${LIBELLES_AGREGATION[agg]} — ${spec.y}`;
+    const additif = ["Somme", "Nombre", "Pourcentage"].includes(agg);
+    const base = { id: spec.id, type: spec.type, horizontal: spec.horizontal && spec.type === "Barres" };
+
+    // MODE COMPARATIF : une série par fichier, alignée sur un axe commun
+    if (estModeComparaison && spec.parFichier && sourcesFichiers.length >= 2 && !circulaire) {
+      const series = sourcesFichiers.map((sourceNom) =>
+        calculerSerie(entetes, corps, spec.x, colY, { agregation: agg, regrouperAutres: false }, (l) => String(l[idxSource] ?? "").trim() === sourceNom)
+      );
+      const temporel = series.some((x) => x.temporel);
+      const granularite = series.find((x) => x.granularite)?.granularite ?? null;
+      const aligne = alignerSeries(series);
+      if (!aligne.labels.length) return { graphique: null, erreur: "Aucune donnée exploitable pour cette combinaison de colonnes." };
+      const garder = <T,>(liste: T[]) => (temporel ? liste.slice(-lim) : liste.slice(0, lim));
+      const cles = garder(aligne.labels);
+      return {
+        graphique: {
+          ...base,
+          titre: `Benchmark (${sourcesFichiers.length} fichiers) : ${titreMesure} selon ${spec.x}`,
+          labels: cles.map((l) => (granularite ? libellePeriode(l) : l)),
+          filtresClic: cles.map((l) => filtrePourPoint(spec.x, l, granularite)),
+          empile: spec.empile && additif && spec.type !== "Courbe",
+          datasets: sourcesFichiers.map((sourceNom, sIdx) => {
+            const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
+            return {
+              label: sourceNom,
+              data: garder(aligne.donnees[sIdx]),
+              backgroundColor: lignes ? couleur.bgLeger : couleur.fill,
+              borderColor: couleur.border,
+              borderWidth: 2,
+              borderRadius: 4,
+              fill: spec.type === "Aires",
+            };
+          }),
+        },
+        info:
+          aligne.labels.length > lim
+            ? `${aligne.labels.length} valeurs sur l'axe X : les ${lim} ${temporel ? "plus récentes" : "plus importantes"} sont affichées.`
+            : "",
+      };
+    }
+
+    // VENTILATION PAR LÉGENDE : barres groupées ou empilées, courbes multiples
+    if (spec.legende && spec.legende !== spec.x && entetes.indexOf(spec.legende) !== -1 && !circulaire) {
+      const v = calculerSeriesVentilees(entetes, corps, spec.x, spec.legende, colY, { agregation: agg, limite: lim, limiteSeries: 8 });
+      if (!v.axe.length || !v.series.length) return { graphique: null, erreur: "Aucune donnée exploitable pour cette combinaison de colonnes." };
+      const empiler = spec.empile && additif && spec.type !== "Courbe";
+      const notes: string[] = [];
+      if (v.nbSeriesTotal > 8) notes.push(`${v.nbSeriesTotal} valeurs dans « ${spec.legende} » : les 8 plus fréquentes sont affichées${additif ? ", le reste dans « Autres »" : ""}.`);
+      if (spec.empile && !additif) notes.push(`Une ${LIBELLES_AGREGATION[agg].toLowerCase()} ne s'additionne pas : les séries sont affichées côte à côte.`);
+      return {
+        graphique: {
+          ...base,
+          titre: `${titreMesure} selon ${spec.x}, par ${spec.legende}${v.granularite ? ` (${NOMS_GRANULARITE[v.granularite]})` : ""}`,
+          labels: v.axe.map((a) => (v.granularite && a.cle !== undefined ? libellePeriode(a.label) : a.label)),
+          filtresClic: v.axe.map((a) => filtrePourPoint(spec.x, a.cle, v.granularite)),
+          empile: empiler,
+          datasets: v.series.map((serie, i) => {
+            const couleur = PALETTE[i % PALETTE.length];
+            return {
+              label: serie.nom,
+              data: serie.donnees,
+              backgroundColor: lignes ? `${couleur}${spec.type === "Aires" ? "55" : "22"}` : couleur,
+              borderColor: couleur,
+              borderWidth: lignes ? 2 : 0,
+              borderRadius: empiler ? 0 : 3,
+              fill: spec.type === "Aires",
+              pointRadius: v.axe.length > 40 ? 0 : 2.5,
+            };
+          }),
+        },
+        info: notes.join(" "),
+      };
+    }
+
+    const serie = calculerSerie(entetes, corps, spec.x, colY, { agregation: agg, limite: limiteEffective });
+    const pointsValides = serie.points.filter((p) => p.valeur !== null);
+    if (!pointsValides.length) {
+      return {
+        graphique: null,
+        erreur: besoinY ? `« ${spec.y} » ne contient aucune valeur numérique exploitable pour ce calcul.` : "Aucune donnée exploitable pour cette colonne.",
+      };
+    }
+    if (circulaire && pointsValides.some((p) => (p.valeur as number) < 0)) {
+      return { graphique: null, erreur: "Un camembert ne peut pas représenter des valeurs négatives : choisissez des barres." };
+    }
+
+    const notes: string[] = [];
+    if (serie.tronque) {
+      notes.push(
+        serie.temporel
+          ? `${serie.nbCategoriesTotal} périodes : les ${limiteEffective} plus récentes sont affichées.`
+          : `${serie.nbCategoriesTotal} catégories : les ${limiteEffective} premières sont affichées${additif ? ", le reste est regroupé dans « Autres »" : ""}.`
+      );
+    }
+    if (serie.nbNonNumeriques) notes.push(`${serie.nbNonNumeriques} valeur(s) non numérique(s) ignorée(s) dans « ${spec.y} ».`);
+
+    const points = circulaire ? pointsValides : serie.points;
+    return {
+      graphique: {
+        ...base,
+        titre: `${titreMesure} selon ${spec.x}${serie.granularite ? ` (${NOMS_GRANULARITE[serie.granularite]})` : ""}`,
+        labels: points.map((p) => (serie.granularite ? libellePeriode(p.label) : p.label)),
+        filtresClic: points.map((p) => filtrePourPoint(spec.x, p.cle, serie.granularite)),
+        datasets: habillerSerie(spec.type, titreMesure, points.map((p) => p.valeur)),
+      },
+      info: notes.join(" "),
+    };
+  }
+
   function construireGraphiqueManuel() {
     setMessageErreur("");
+    setMessageInfo("");
     if (!colonneAxeX) {
       setMessageErreur("Veuillez sélectionner une colonne pour l'Axe X.");
       return;
     }
-
-    if (typeGraphique === "Carte") {
-      compteur.current += 1;
-      const carte: GraphiqueEpingle = {
-        id: Date.now() * 1000 + compteur.current,
-        titre: `Carte géographique — ${colonneAxeX}`,
-        type: "Carte",
-        labels: [],
-        datasets: [{ label: "Occurrences", data: [], backgroundColor: "#2563eb" }],
-      };
-      setGraphiquesGeneres((prev) => [carte, ...prev]);
-      return;
-    }
-
-    const idxX = entetes.indexOf(colonneAxeX);
-    const idxY = entetes.indexOf(colonneAxeY);
-    const besoinY = !["Nombre", "Pourcentage"].includes(agregation);
-
-    if (besoinY && idxY === -1) {
-      setMessageErreur("Veuillez sélectionner une colonne pour l'axe Y.");
-      return;
-    }
-
     compteur.current += 1;
-    const titreMesure = agregation === "Nombre" ? "Effectif" : `${agregation} — ${colonneAxeY}`;
-
-    if (estModeComparaison && ventilerParFichier && sourcesFichiers.length >= 2) {
-      const modalitesUniques = Array.from(
-        new Set(corps.map((l) => String(l[idxX] ?? "").replace(/["'«»“”]/g, "").trim()).filter(Boolean))
-      ).slice(0, MAX_CATEGORIES);
-
-      if (typeGraphique === "Courbe" && modalitesUniques.every((m) => /^(19|20)\d{2}$/.test(m))) {
-        modalitesUniques.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-      }
-
-      const datasets = sourcesFichiers.map((sourceNom, sIdx) => {
-        const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
-        const data = modalitesUniques.map((mod) => {
-          const lignesFiltrees = corps.filter(
-            (l) =>
-              String(l[idxSource] ?? "").trim() === sourceNom &&
-              String(l[idxX] ?? "").replace(/["'«»“”]/g, "").trim() === mod
-          );
-
-          if (!lignesFiltrees.length) return 0;
-          if (agregation === "Nombre") return lignesFiltrees.length;
-
-          const valeurs = lignesFiltrees.map((l) => versNombre(l[idxY])).filter((n): n is number => n !== null);
-          if (!valeurs.length) return 0;
-          const somme = valeurs.reduce((a, b) => a + b, 0);
-
-          if (agregation === "Moyenne") return arrondir(somme / valeurs.length);
-          if (agregation === "Minimum") return Math.min(...valeurs);
-          if (agregation === "Maximum") return Math.max(...valeurs);
-          return arrondir(somme);
-        });
-
-        return {
-          label: sourceNom,
-          data,
-          backgroundColor: typeGraphique === "Courbe" ? couleur.bgLeger : couleur.fill,
-          borderColor: couleur.border,
-          borderWidth: 2,
-          borderRadius: 4,
-          fill: typeGraphique === "Courbe",
-        };
-      });
-
-      const nouveau: GraphiqueEpingle = {
-        id: Date.now() * 1000 + compteur.current,
-        titre: `Benchmark (${sourcesFichiers.length} fichiers) : ${titreMesure} selon ${colonneAxeX}`,
-        type: typeGraphique,
-        labels: modalitesUniques,
-        datasets,
-      };
-
-      setGraphiquesGeneres((prev) => [nouveau, ...prev]);
+    const spec: SpecGraphique = {
+      id: Date.now() * 1000 + compteur.current,
+      type: typeGraphique,
+      x: colonneAxeX,
+      y: colonneAxeY,
+      agregation,
+      limite,
+      legende: colonneLegende,
+      horizontal,
+      empile,
+      parFichier: ventilerParFichier,
+    };
+    const essai = construire(spec);
+    if (!essai.graphique) {
+      setMessageErreur(essai.erreur ?? "Graphique impossible avec ces réglages.");
       return;
     }
+    setMessageInfo(essai.info ?? "");
+    setSpecs((prev) => [spec, ...prev]);
+  }
 
-    const groupes = new Map<string, { somme: number; nNum: number; compte: number; min: number; max: number }>();
-    for (const ligne of corps) {
-      if (estValeurVide(ligne[idxX])) continue;
-      const cle = String(ligne[idxX]).replace(/["'«»“”]/g, "").trim();
-      const g = groupes.get(cle) ?? { somme: 0, nNum: 0, compte: 0, min: Infinity, max: -Infinity };
-      g.compte += 1;
-      if (besoinY && idxY !== -1) {
-        const n = versNombre(ligne[idxY]);
-        if (n !== null) {
-          g.somme += n;
-          g.nNum += 1;
-          if (n < g.min) g.min = n;
-          if (n > g.max) g.max = n;
+  // Les graphiques créés sont recalculés dès que les données changent : c'est ce qui permet le filtrage croisé
+  const graphiquesGeneres = useMemo<GraphiqueEpingle[]>(
+    () =>
+      specs.map((spec) => {
+        const r = construire(spec);
+        return (
+          r.graphique ?? {
+            id: spec.id,
+            titre: `${spec.agregation === "Nombre" ? "Effectif" : spec.y} selon ${spec.x}`,
+            type: spec.type,
+            labels: [],
+            datasets: [],
+          }
+        );
+      }),
+    // construire() ne dépend que des données ci-dessous
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [specs, entetes, corps, estModeComparaison, sourcesFichiers, idxSource]
+  );
+
+  /** Clic sur un point : ajoute le filtre correspondant, ou le retire s'il est déjà actif. */
+  function basculerFiltre(g: GraphiqueEpingle, index: number) {
+    const f = g.filtresClic?.[index];
+    if (!f) return;
+    const existant = (filtresActifs || []).findIndex((x) => memeFiltre(x, f));
+    if (existant >= 0) supprimerFiltre(existant);
+    else ajouterFiltre(f);
+  }
+
+  // Indicateurs clés : recalculés sur les données filtrées
+  const indicateurs = useMemo(() => {
+    const cartes: { titre: string; valeur: number; detail: string }[] = [{ titre: "Lignes", valeur: corps.length, detail: "enregistrements" }];
+    for (const col of colonnesMesurables.filter((c) => !estPseudoMesure(c)).slice(0, 3)) {
+      const idx = entetes.indexOf(col);
+      let somme = 0;
+      let n = 0;
+      for (const l of corps) {
+        const x = versNombre(l[idx]);
+        if (x !== null) {
+          somme += x;
+          n++;
         }
       }
-      groupes.set(cle, g);
+      if (!n) continue;
+      const enSomme = operationPour(col) === "somme";
+      cartes.push({ titre: col, valeur: enSomme ? somme : somme / n, detail: enSomme ? "total" : "moyenne" });
     }
-
-    let paires = [...groupes.entries()].map(([label, g]) => {
-      let valeur = g.compte;
-      if (agregation === "Somme") valeur = g.somme;
-      if (agregation === "Moyenne") valeur = g.nNum ? g.somme / g.nNum : 0;
-      if (agregation === "Minimum") valeur = g.min !== Infinity ? g.min : 0;
-      if (agregation === "Maximum") valeur = g.max !== -Infinity ? g.max : 0;
-      return { label, valeur: arrondir(valeur) };
-    });
-
-    if (typeGraphique === "Courbe") {
-      const sontAnnees = paires.every((p) => /^(19|20)\d{2}$/.test(p.label));
-      if (sontAnnees) {
-        paires.sort((a, b) => parseInt(a.label, 10) - parseInt(b.label, 10));
-      }
-    } else {
-      paires.sort((a, b) => b.valeur - a.valeur);
-    }
-
-    paires = paires.slice(0, MAX_CATEGORIES);
-
-    const nouveau: GraphiqueEpingle = {
-      id: Date.now() * 1000 + compteur.current,
-      titre: `${titreMesure} selon ${colonneAxeX}`,
-      type: typeGraphique,
-      labels: paires.map((p) => p.label),
-      datasets: [
-        {
-          label: titreMesure,
-          data: paires.map((p) => p.valeur),
-          backgroundColor:
-            typeGraphique === "Camembert"
-              ? paires.map((_, i) => PALETTE[i % PALETTE.length])
-              : "#2563eb",
-          borderColor: "#1d4ed8",
-          borderRadius: 4,
-          borderWidth: 1,
-        },
-      ],
-    };
-
-    setGraphiquesGeneres((prev) => [nouveau, ...prev]);
-  }
+    return cartes;
+  }, [corps, entetes, colonnesMesurables]);
 
   return (
     <div className="space-y-6">
+      {/* INDICATEURS CLÉS */}
+      {corps.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {indicateurs.map((k) => (
+            <div
+              key={k.titre}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3 shadow-sm"
+              title={formaterComplet(k.valeur)}
+            >
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 truncate">{k.titre}</p>
+              <p className="text-xl font-bold text-slate-900 dark:text-white tabular-nums">{formaterCompact(k.valeur)}</p>
+              <p className="text-[10px] text-slate-400">{k.detail}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* FILTRAGE CROISÉ */}
+      <div className="no-print print:hidden flex flex-wrap items-center gap-2 text-xs">
+        {(filtresActifs || []).length === 0 ? (
+          <span className="text-slate-500 dark:text-slate-400">
+            Cliquez sur une barre, un point ou un secteur pour filtrer tous les graphiques et les indicateurs.
+          </span>
+        ) : (
+          <>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Filtres actifs :</span>
+            {filtresActifs.map((f, i) => (
+              <button
+                key={`${libelleFiltre(f)}-${i}`}
+                onClick={() => supprimerFiltre(i)}
+                title="Retirer ce filtre"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-600 text-white font-semibold cursor-pointer hover:bg-blue-700"
+              >
+                {libelleFiltre(f)} <span aria-hidden>✕</span>
+              </button>
+            ))}
+            <button onClick={reinitialiserFiltres} className="text-rose-600 hover:underline font-semibold cursor-pointer">
+              Tout effacer
+            </button>
+          </>
+        )}
+      </div>
       {estModeComparaison && (
         <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -578,7 +761,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
             {graphiquesRecommandes.map((g, index) => {
               const estEpingle = estInclusPptx(g.id);
               const nbPoints = g.labels?.length || 0;
-              const prendPleinLargeur = graphiquesRecommandes.length === 1 || nbPoints > 20;
+              const prendPleinLargeur = graphiquesRecommandes.length === 1 || (nbPoints > 20 && !g.horizontal);
 
               return (
                 <div
@@ -614,15 +797,17 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                   <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700 pb-2">
                     <div
                       style={{
-                        minWidth: calculerLargeurConteneur(nbPoints),
-                        height: "280px",
+                        minWidth: g.horizontal || g.type === "Anneau" ? "100%" : calculerLargeurConteneur(nbPoints),
+                        height: g.horizontal ? `${Math.max(280, nbPoints * 28)}px` : "280px",
                       }}
                       className="relative"
                     >
-                      {g.type === "Courbe" ? (
-                        <Line data={g} options={creerOptionsChart(nbPoints)} />
+                      {g.type === "Courbe" || g.type === "Aires" ? (
+                        <Line data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                      ) : g.type === "Anneau" ? (
+                        <Doughnut data={g} options={{ ...creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
                       ) : (
-                        <Bar data={g} options={creerOptionsChart(nbPoints)} />
+                        <Bar data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
                       )}
                     </div>
                   </div>
@@ -674,6 +859,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
             >
               <option value="Barres">Barres verticales</option>
               <option value="Courbe">Courbe d’évolution</option>
+              <option value="Aires">Aires</option>
               <option value="Camembert">Camembert</option>
               <option value="Anneau">Anneau</option>
               <option value="Carte">Carte géographique</option>
@@ -706,11 +892,14 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                   onChange={(e) => setAgregation(e.target.value as Agregation)}
                   className={selectClasse}
                 >
+                  <option value="Somme">Somme</option>
                   <option value="Moyenne">Moyenne</option>
-                  <option value="Somme">Somme cumulée</option>
-                  <option value="Nombre">Nombre d’enregistrements</option>
+                  <option value="Mediane">Médiane</option>
                   <option value="Minimum">Minimum</option>
                   <option value="Maximum">Maximum</option>
+                  <option value="Nombre">Nombre d’enregistrements</option>
+                  <option value="Pourcentage">Part des lignes (%)</option>
+                  <option value="Valeurs distinctes">Nombre de valeurs distinctes</option>
                 </select>
               </div>
 
@@ -721,7 +910,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                 <select
                   value={colonneAxeY}
                   onChange={(e) => setColonneAxeY(e.target.value)}
-                  disabled={colonnesSansSource.length === 0 || agregation === "Nombre"}
+                  disabled={colonnesSansSource.length === 0 || agregation === "Nombre" || agregation === "Pourcentage"}
                   className={`${selectClasse} disabled:opacity-40`}
                 >
                   {colonnesMesurables
@@ -729,19 +918,76 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                     .map((nom) => (
                       <option key={nom} value={nom}>{nom}</option>
                     ))}
-                  {colonnesMesurables.length === 0 &&
+                  {(colonnesMesurables.length === 0 || agregation === "Valeurs distinctes") &&
                     colonnesSansSource
+                      .filter((c) => !colonnesMesurables.includes(c) || colonnesMesurables.length === 0)
                       .filter((c) => c !== colonneAxeX)
                       .map((nom) => (
                         <option key={nom} value={nom}>{nom}</option>
                       ))}
                 </select>
               </div>
+              {!estCirculaire(typeGraphique) && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                    Légende (ventiler par)
+                  </label>
+                  <select value={colonneLegende} onChange={(e) => setColonneLegende(e.target.value)} className={selectClasse}>
+                    <option value="">Aucune</option>
+                    {colonnesCategorielles
+                      .filter((c) => c !== colonneAxeX)
+                      .map((nom) => (
+                        <option key={nom} value={nom}>{nom}</option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {typeGraphique === "Barres" && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                    Disposition des barres
+                  </label>
+                  <select
+                    value={horizontal ? "h" : "v"}
+                    onChange={(e) => setHorizontal(e.target.value === "h")}
+                    className={selectClasse}
+                  >
+                    <option value="v">Verticales</option>
+                    <option value="h">Horizontales</option>
+                  </select>
+                </div>
+              )}
+
+              {(colonneLegende || (estModeComparaison && ventilerParFichier)) && (typeGraphique === "Barres" || typeGraphique === "Aires") && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                    Séries
+                  </label>
+                  <select value={empile ? "e" : "g"} onChange={(e) => setEmpile(e.target.value === "e")} className={selectClasse}>
+                    <option value="e">Empilées</option>
+                    <option value="g">Côte à côte</option>
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                  Nombre de valeurs affichées
+                </label>
+                <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} className={selectClasse}>
+                  <option value={5}>5 premières</option>
+                  <option value={10}>10 premières</option>
+                  <option value={20}>20 premières</option>
+                  <option value={50}>50 premières</option>
+                  <option value={100}>100 premières</option>
+                </select>
+              </div>
             </>
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={construireGraphiqueManuel}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs rounded-xl shadow transition cursor-pointer"
@@ -755,6 +1001,9 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
               <AlertCircle className="w-4 h-4 shrink-0" />
               {messageErreur}
             </span>
+          )}
+          {!messageErreur && messageInfo && (
+            <span className="text-xs text-slate-500 dark:text-slate-400">{messageInfo}</span>
           )}
         </div>
       </div>
@@ -800,7 +1049,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                         {estEpingle ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
                       </button>
                       <button
-                        onClick={() => setGraphiquesGeneres((prev) => prev.filter((x) => x.id !== g.id))}
+                        onClick={() => setSpecs((prev) => prev.filter((x) => x.id !== g.id))}
                         className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
                         title="Supprimer ce graphique"
                       >
@@ -812,23 +1061,32 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                   {/* CONTENEUR À LARGEUR ÉTIRÉE AVEC DÉFILEMENT */}
                   <div className={g.type === "Carte" ? "w-full min-h-[340px]" : "w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700 pb-2"}>
                     {g.type === "Carte" && <CarteGeographique entetes={entetes} corps={corps} />}
-                    {g.type !== "Carte" && (
+                    {g.type !== "Carte" && nbPoints === 0 && (
+                      <p className="h-[120px] flex items-center justify-center text-xs text-slate-500 dark:text-slate-400">
+                        Aucune donnée pour ce graphique avec les filtres actifs.
+                      </p>
+                    )}
+                    {g.type !== "Carte" && nbPoints > 0 && (
                       <div
                         style={{
-                          minWidth: g.type === "Camembert" || g.type === "Anneau" ? "100%" : calculerLargeurConteneur(nbPoints),
-                          height: "280px",
+                          minWidth: estCirculaire(g.type) || g.horizontal ? "100%" : calculerLargeurConteneur(nbPoints),
+                          height: g.horizontal ? `${Math.max(280, nbPoints * 28)}px` : "280px",
                         }}
                         className="relative"
                       >
-                        {g.type === "Barres" && <Bar data={g} options={creerOptionsChart(nbPoints)} />}
-                        {g.type === "Courbe" && <Line data={g} options={creerOptionsChart(nbPoints)} />}
-                        {g.type === "Camembert" && <Pie data={g} options={creerOptionsChart(nbPoints)} />}
-                        {g.type === "Anneau" && <Doughnut data={g} options={{ ...creerOptionsChart(nbPoints), cutout: "68%" }} />}
+                        {g.type === "Barres" && <Bar data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />}
+                        {(g.type === "Courbe" || g.type === "Aires") && (
+                          <Line data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                        )}
+                        {g.type === "Camembert" && <Pie data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />}
+                        {g.type === "Anneau" && (
+                          <Doughnut data={g} options={{ ...creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
+                        )}
                       </div>
                     )}
                   </div>
 
-                  <ExplicationDetailleeGraphique graphique={g} nomFichier={nomFichier} />
+                  {(nbPoints > 0 || g.type === "Carte") && <ExplicationDetailleeGraphique graphique={g} nomFichier={nomFichier} />}
                 </div>
               );
             })}

@@ -168,7 +168,7 @@ export default function Sidebar() {
          ======================================================== */}
       <nav
         aria-label="Navigation mobile"
-        className="md:hidden print:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 flex items-center justify-around px-2 z-50 shadow-lg"
+        className="md:hidden print:hidden fixed bottom-0 left-0 right-0 h-16 box-content pb-[env(safe-area-inset-bottom)] bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 flex items-center justify-around px-1 z-50 shadow-lg"
       >
         {navigation.map((item) => {
           const isActive = pathname === item.href;
@@ -178,14 +178,15 @@ export default function Sidebar() {
             <Link
               key={item.name}
               href={item.href}
-              className={`flex flex-col items-center justify-center gap-1 py-1 px-2.5 rounded-xl transition-all ${
+              aria-current={isActive ? "page" : undefined}
+              className={`flex flex-1 max-w-[96px] min-h-[48px] flex-col items-center justify-center gap-1 py-1 px-1 rounded-xl transition-all ${
                 isActive
                   ? "text-blue-400 font-bold"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
               <Icon className={`w-5 h-5 ${isActive ? "text-blue-400" : "text-slate-400"}`} />
-              <span className="text-[10px] tracking-tight">{item.name}</span>
+              <span className="text-[10px] tracking-tight truncate max-w-full">{item.name}</span>
             </Link>
           );
         })}

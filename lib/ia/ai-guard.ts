@@ -47,7 +47,7 @@ const SIGNAUX = [
   // Corrélations, Liens & Statistiques
   "corrélation", "corrélations", "correlation", "correlations", "corréler", "correler",
   "régression", "regression", "liaison", "liaisons", "lien", "liens", "relation", "relations",
-  "dépendance", "dependance", "synergie", "découplage", "decouplage", "inversion", "r", "r2",
+  "dépendance", "dependance", "synergie", "découplage", "decouplage", "inversion", "r2",
   "coefficient", "pearson", "statistique", "statistiques", "stats",
 
   // Agrégations & Mesures
@@ -72,9 +72,15 @@ const SIGNAUX = [
 
   // Décisionnel & Business
   "kpi", "indicateur", "indicateurs", "performance", "performances", "chiffre d'affaires",
-  "chiffre d’affaires", "ca", "marge", "marges", "coût", "cout", "coûts", "couts", "prix",
+  "chiffre d’affaires", "c.a.", "marge", "marges", "coût", "cout", "coûts", "couts", "prix",
   "quantité", "quantite", "vente", "ventes", "recommandation", "recommandations", "conseil",
-  "conseils", "stratégie", "strategie", "priorité", "priorite", "action", "actions", "alerte"
+  "conseils", "stratégie", "strategie", "priorité", "priorite", "action", "actions", "alerte",
+
+  // Questions de comptage et de classement
+  "combien", "nombre", "classement", "top", "palmarès", "palmares", "analyse", "analyses", "analyser",
+  "insight", "insights", "résultat", "résultats", "resultat", "resultats", "aperçu", "apercu",
+  "how many", "how much", "average", "mean", "median", "sum", "highest", "lowest", "ranking",
+  "summary", "summarize", "summarise", "overview", "analysis", "analyze", "analyse", "breakdown", "share"
 ];
 
 function normaliserTexte(s: string): string {
@@ -94,7 +100,9 @@ export function verifierQuestionLieeAuxFichier(
   question: string,
   contexte: unknown,
   langueConversation?: string,
-  mode?: "fichier" | "monchamp"
+  mode?: "fichier" | "monchamp",
+  /** Vrai si la conversation a déjà commencé : « et par région ? », « pourquoi ? » sont alors des relances légitimes. */
+  conversationEnCours = false
 ): ResultatGarde {
   const L = langueConversation === "en" ? "en" : "fr";
   const qBrute = String(question ?? "").trim();
@@ -155,6 +163,18 @@ export function verifierQuestionLieeAuxFichier(
     }
   }
 
+  // Vérification dans les modalités les plus fréquentes des colonnes (« combien pour Poro ? »)
+  if (ctx.statistiques && typeof ctx.statistiques === "object") {
+    for (const info of Object.values(ctx.statistiques as Record<string, unknown>)) {
+      const top = (info as { stats?: { topValeurs?: { valeur?: unknown }[] } })?.stats?.topValeurs;
+      if (!Array.isArray(top)) continue;
+      for (const t of top) {
+        const v = normaliserTexte(String(t?.valeur ?? ""));
+        if (v.length >= 3 && v.length <= 80 && qNorm.includes(v)) return { ok: true };
+      }
+    }
+  }
+
   // Vérification dans les premières lignes de données
   if (Array.isArray(ctx.apercuPremieresLignes)) {
     const textes: string[] = [];
@@ -168,6 +188,12 @@ export function verifierQuestionLieeAuxFichier(
     if (textes.some((v) => qNorm.includes(v))) {
       return { ok: true };
     }
+  }
+
+  // Relance courte dans une conversation déjà engagée sur le fichier : le fil de la discussion fait foi.
+  // Les demandes hors sujet explicites et les tentatives d'injection ont déjà été écartées plus haut.
+  if (conversationEnCours && qNorm.length <= 160 && !/^(bonjour|salut|hello|hi|coucou|bonsoir)\b/.test(qNorm)) {
+    return { ok: true };
   }
 
   return { ok: false, message: MSG.horsSujet[L] };

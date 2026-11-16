@@ -17,16 +17,23 @@ export function calculerTendance(valeurs: number[]) {
   if (valeurs.length < 3) return null;
   const { pente, origine, r2 } = regressionLineaire(valeurs);
   return {
-    direction: pente > 0.0001 ? "hausse" : pente < -0.0001 ? "baisse" : "stable",
+    // Seuil relatif au niveau de la série : +0,5 sur des millions n'est pas une hausse
+    direction: (() => {
+      const niveau = valeurs.reduce((a, b) => a + Math.abs(b), 0) / valeurs.length;
+      const variation = niveau ? (pente * (valeurs.length - 1)) / niveau : 0;
+      // Un nuage sans direction nette (R² < 0,1) n'est ni une hausse ni une baisse
+      if (r2 < 0.1) return "stable";
+      return variation > 0.02 ? "hausse" : variation < -0.02 ? "baisse" : "stable";
+    })(),
     pente: arrondir(pente),
     r2: arrondir(r2),
     predictionProchaineValeur: arrondir(pente * valeurs.length + origine),
   };
 }
 
-export function correlationPearson(x: number[], y: number[]) {
+export function correlationPearson(x: number[], y: number[]): number | null {
   const n = Math.min(x.length, y.length);
-  if (n < 2) return 0;
+  if (n < 2) return null;
   const mx = x.slice(0, n).reduce((a, b) => a + b, 0) / n;
   const my = y.slice(0, n).reduce((a, b) => a + b, 0) / n;
   let cov = 0, vx = 0, vy = 0;
@@ -35,8 +42,10 @@ export function correlationPearson(x: number[], y: number[]) {
     vx += (x[i] - mx) ** 2;
     vy += (y[i] - my) ** 2;
   }
-  const r = vx && vy ? cov / Math.sqrt(vx * vy) : 0;
-  return arrondir(Math.max(-1, Math.min(1, r)));
+  // Une colonne constante n'a pas de corrélation définie
+  if (!vx || !vy) return null;
+  const r = cov / Math.sqrt(vx * vy);
+  return Math.round(Math.max(-1, Math.min(1, r)) * 100) / 100;
 }
 
 export function interpreterCorrelation(r: number, langue: "fr" | "en" = "fr") {

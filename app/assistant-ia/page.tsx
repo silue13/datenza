@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import { analyserColonnes } from "../../lib/analyse/analyse";
-import { construireContexte } from "../../lib/analyse/context";
+import { construireContexte, estColonneSensible } from "../../lib/analyse/context";
+import { executerRequete, extraireRequetes, resultatsPourIA, type ResultatRequete } from "../../lib/analyse/requete";
 import { calculerTdcAvecLimite, type Agregation } from "../../lib/analyse/tdc";
 import { parseNombre, arrondir, type Cellule } from "../../lib/analyse/utils";
 import TableTdc from "../components/TableTdc";
@@ -26,6 +27,8 @@ interface Message {
   role: "user" | "assistant";
   text: string;
   via?: string;
+  /** Calculs exécutés par le moteur pour produire cette réponse. */
+  calculs?: ResultatRequete[];
 }
 
 const AGGS: Record<string, Agregation> = {
@@ -157,11 +160,62 @@ function ReponseIA({ texte, entetes, corps }: { texte: string; entetes: string[]
   );
 }
 
+/** Calculs exécutés pour cette réponse : affichés pour que chaque chiffre de l'IA puisse être vérifié. */
+function CalculsIA({ calculs }: { calculs: ResultatRequete[] }) {
+  const cellule = (v: string | number | null) =>
+    v === null ? "—" : typeof v === "number" ? v.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) : v;
+  return (
+    <details className="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/60">
+      <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+        {calculs.length} calcul{calculs.length > 1 ? "s" : ""} exécuté{calculs.length > 1 ? "s" : ""} sur toutes les lignes — voir le détail
+      </summary>
+      <div className="px-3 pb-3 space-y-3">
+        {calculs.map((r, i) => (
+          <div key={i}>
+            <p className="text-[11px] font-bold text-slate-800 dark:text-slate-200">{r.titre}</p>
+            {r.erreur ? (
+              <p className="text-[11px] text-rose-600 dark:text-rose-400">{r.erreur}</p>
+            ) : (
+              <>
+                <div className="overflow-x-auto mt-1">
+                  <table className="text-[11px] border-collapse">
+                    <thead>
+                      <tr>
+                        {r.colonnes.map((c) => (
+                          <th key={c} className={`${BORD} text-left font-semibold bg-slate-200 dark:bg-slate-700`}>{c}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {r.lignes.map((l, j) => (
+                        <tr key={j}>
+                          {l.map((v, k) => (
+                            <td key={k} className={`${BORD} ${typeof v === "number" ? "text-right tabular-nums" : ""}`}>{cellule(v)}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {r.nbLignesRetenues.toLocaleString("fr-FR")} ligne(s) du fichier prises en compte
+                  {r.tronque ? ` · ${r.lignes.length} premiers résultats sur ${r.nbGroupes}` : ""}
+                </p>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export default function AssistantIAPage() {
   const { nomFichier, corps, entetes, resultat } = useData();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [chargement, setChargement] = useState(false);
+  const [etape, setEtape] = useState<"reflexion" | "calcul" | "redaction">("reflexion");
   const [fournisseur, setFournisseur] = useState("auto");
   const [dispo, setDispo] = useState<{ id: string; nom: string }[]>([]);
   const finDiscussionRef = useRef<HTMLDivElement>(null);
@@ -392,12 +446,16 @@ Le fichier de référence étalon est : « ${refSource} ».
       return;
     }
 
-    const historique = messages.slice(-12).map((m) => ({ role: m.role, content: m.text }));
+    // Les messages d'erreur affichés (« ⚠ … ») ne sont pas des réponses du modèle : on ne les lui renvoie pas
+    const historique = messages
+      .filter((m) => !m.text.startsWith("⚠"))
+      .slice(-12)
+      .map((m) => ({ role: m.role, content: m.text }));
     setMessages((p) => [...p, { role: "user", text: question }]);
     if (!texteDirect) setInput("");
     setChargement(true);
 
-    try {
+    const appeler = async (resultatsCalculs?: string) => {
       const rep = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -408,15 +466,33 @@ Le fichier de référence étalon est : « ${refSource} ».
           fournisseur,
           langueConversation: "auto",
           langueApp: "fr",
+          calculs: true,
+          ...(resultatsCalculs ? { resultatsCalculs } : {}),
         }),
       });
-      const data = (await rep.json().catch(() => ({}))) as {
-        reponse?: string;
-        fournisseur?: string;
-        error?: string;
-      };
+      const data = (await rep.json().catch(() => ({}))) as { reponse?: string; fournisseur?: string; error?: string };
       if (!rep.ok || !data.reponse) throw new Error(data.error ?? `Erreur ${rep.status}`);
-      setMessages((p) => [...p, { role: "assistant", text: data.reponse as string, via: data.fournisseur }]);
+      return data as { reponse: string; fournisseur?: string };
+    };
+
+    try {
+      setEtape("reflexion");
+      let data = await appeler();
+      let calculs: ResultatRequete[] | undefined;
+
+      // Le modèle a demandé des calculs : on les exécute ici, sur toutes les lignes, puis on lui rend les résultats
+      const demandes = extraireRequetes(data.reponse);
+      if (demandes && demandes.length) {
+        setEtape("calcul");
+        calculs = demandes.map((d) => executerRequete(entetes, corps, d, estColonneSensible));
+        setEtape("redaction");
+        data = await appeler(resultatsPourIA(calculs));
+        // S'il redemande des calculs au lieu de répondre, on montre au moins les résultats obtenus
+        if (extraireRequetes(data.reponse)) {
+          data = { ...data, reponse: "Voici les résultats calculés sur l'ensemble du fichier." };
+        }
+      }
+      setMessages((p) => [...p, { role: "assistant", text: data.reponse, via: data.fournisseur, calculs }]);
     } catch (e) {
       setMessages((p) => [
         ...p,
@@ -493,7 +569,7 @@ Le fichier de référence étalon est : « ${refSource} ».
       </div>
 
       {/* Cadre de discussion */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl h-[580px] flex flex-col shadow-sm overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl h-[calc(100dvh-14rem)] min-h-[420px] md:h-[580px] flex flex-col shadow-sm overflow-hidden">
         {/* Barre de contrôle supérieure */}
         <div className="px-5 py-2.5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs bg-slate-50/50 dark:bg-slate-850">
           <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
@@ -582,6 +658,7 @@ Le fichier de référence étalon est : « ${refSource} ».
                 {m.role === "assistant" ? (
                   <>
                     <ReponseIA texte={m.text} entetes={entetes} corps={corps} />
+                    {m.calculs && m.calculs.length > 0 && <CalculsIA calculs={m.calculs} />}
                     {m.via && (
                       <p className="mt-2 pt-2 border-t border-slate-200/50 dark:border-slate-700/50 text-[10px] text-slate-400">
                         Réponse générée par {dispo.find((f) => f.id === m.via)?.nom ?? m.via}
@@ -599,7 +676,11 @@ Le fichier de référence étalon est : « ${refSource} ».
             <div className="flex justify-start">
               <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-2xl rounded-bl-none text-xs text-purple-600 dark:text-purple-400 flex items-center gap-2 font-medium shadow-sm">
                 <span className="w-2 h-2 rounded-full bg-purple-600 animate-ping"></span>
-                DATENZA IA analyse les {sourcesFichiers.length || 1} source(s) de données et prépare la réponse…
+                {etape === "calcul"
+                  ? `Calcul en cours sur les ${corps.length.toLocaleString("fr-FR")} lignes…`
+                  : etape === "redaction"
+                    ? "Calculs terminés, rédaction de la réponse…"
+                    : `DATENZA IA analyse les ${sourcesFichiers.length || 1} source(s) de données et prépare la réponse…`}
               </div>
             </div>
           )}

@@ -301,6 +301,38 @@ select {
   }
 }
 
+/* Téléphones et petites tablettes */
+@media (max-width: 767px) {
+  /* En dessous de 16px, iOS zoome sur le champ dès qu'on le touche et la page reste zoomée */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Encoche et barre de gestes : le contenu ne passe pas dessous */
+  body {
+    padding-bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Défilement horizontal fluide des tableaux et graphiques larges, sans entraîner toute la page */
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  /* Les cellules de tableau restent lisibles sans occuper tout l'écran */
+  table th,
+  table td {
+    max-width: 60vw;
+  }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 /* ============================================================
    RÈGLES D'EXPORT PDF / IMPRESSION EXECUTIVE DATENZA
    ============================================================ */

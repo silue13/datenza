@@ -1,15 +1,11 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
-import * as XLSX from "xlsx";
+import { lireFichier, EXTENSIONS_ACCEPTEES } from "../lib/import/lecture";
 import { useData } from "./context/DataContext";
 import { analyserColonnes } from "../lib/analyse/analyse";
 import { genererRapport } from "../lib/analyse/rapport";
-import {
-  type Cellule,
-  estValeurVide,
-  estLigneTotal,
-} from "../lib/analyse/utils";
+import { type Cellule } from "../lib/analyse/utils";
 import { useRouter } from "next/navigation";
 import BoutonInstallerApp from "./components/BoutonInstallerApp";
 import GuideUtilisation from "./components/GuideUtilisation";
@@ -35,85 +31,7 @@ interface FichierImporte {
   nbLignes: number;
   entetes: string[];
   corps: Cellule[][];
-}
-
-/** En-têtes sûrs : purge du BOM, suppression des guillemets et déduplication */
-function nettoyerEntetes(brut: Cellule[]): string[] {
-  const vus = new Map<string, number>();
-  return brut.map((c, i) => {
-    let base = String(c ?? "")
-      .replace(/^\uFEFF/, "")
-      .replace(/^["'«»“”]|["'«»“”]$/g, "")
-      .trim();
-
-    if (!base) base = `Colonne ${i + 1}`;
-    const n = (vus.get(base) ?? 0) + 1;
-    vus.set(base, n);
-    return n === 1 ? base : `${base} (${n})`;
-  });
-}
-
-/** Détection automatique du séparateur CSV (; ou , ou \t) */
-function detecterSeparateur(texte: string): string {
-  const lignes = texte.split(/\r\n|\n/).filter((l) => l.trim() !== "").slice(0, 5);
-  if (!lignes.length) return ",";
-
-  const premierLigne = lignes[0];
-  const nbPVTete = (premierLigne.match(/;/g) || []).length;
-  const nbVirgTete = (premierLigne.match(/,/g) || []).length;
-  const nbTabTete = (premierLigne.match(/\t/g) || []).length;
-
-  if (nbPVTete > nbVirgTete && nbPVTete > nbTabTete) return ";";
-  if (nbTabTete > nbVirgTete && nbTabTete > nbPVTete) return "\t";
-
-  const echantillon = lignes.join("\n");
-  const nbPointVirgule = (echantillon.match(/;/g) || []).length;
-  const nbVirgule = (echantillon.match(/,/g) || []).length;
-  const nbTab = (echantillon.match(/\t/g) || []).length;
-
-  if (nbPointVirgule > nbVirgule && nbPointVirgule > nbTab) return ";";
-  if (nbTab > nbVirgule && nbTab > nbPointVirgule) return "\t";
-  return ",";
-}
-
-/** Sélectionne intelligemment la feuille de données d'un classeur Excel */
-function selectionnerMeilleureFeuille(wb: XLSX.WorkBook): XLSX.WorkSheet {
-  if (!wb.SheetNames || wb.SheetNames.length === 0) {
-    throw new Error("Le classeur Excel ne contient aucune feuille.");
-  }
-
-  const nomDonnees = wb.SheetNames.find((n) =>
-    /donn[eé]es?|data/i.test(n.trim())
-  );
-  if (nomDonnees && wb.Sheets[nomDonnees]) {
-    return wb.Sheets[nomDonnees];
-  }
-
-  const feuillesUtiles = wb.SheetNames.filter(
-    (n) =>
-      !/^(m[eé]tadonn[eé]es?|metadata|sch[eé]ma|requ[eê]te|notice|sommaire|notes?|lisez[_\-\s]?moi)$/i.test(
-        n.trim()
-      )
-  );
-
-  const candidates = feuillesUtiles.length > 0 ? feuillesUtiles : wb.SheetNames;
-
-  let meilleure = wb.Sheets[candidates[0]];
-  let maxCellules = 0;
-
-  for (const nom of candidates) {
-    const sh = wb.Sheets[nom];
-    if (sh && sh["!ref"]) {
-      const range = XLSX.utils.decode_range(sh["!ref"]);
-      const nb = (range.e.r - range.s.r + 1) * (range.e.c - range.s.c + 1);
-      if (nb > maxCellules) {
-        maxCellules = nb;
-        meilleure = sh;
-      }
-    }
-  }
-
-  return meilleure || wb.Sheets[wb.SheetNames[0]];
+  avertissements?: string[];
 }
 
 export default function HomePage() {
@@ -141,64 +59,15 @@ export default function HomePage() {
   const lignesParPage = 8;
 
   async function parserFichier(f: File): Promise<FichierImporte> {
-    const ext = f.name.split(".").pop()?.toLowerCase();
-    let lignes: Cellule[][] = [];
-
-    if (ext === "csv") {
-      const texteBrut = await f.text();
-      const texte = texteBrut.replace(/^\uFEFF/, "");
-      const separateur = detecterSeparateur(texte);
-
-      const wb = XLSX.read(texte, {
-        type: "string",
-        raw: false,
-        FS: separateur,
-      });
-
-      const feuille = wb.Sheets[wb.SheetNames[0]];
-      if (!feuille) throw new Error(`Le fichier CSV ${f.name} est vide.`);
-
-      lignes = XLSX.utils.sheet_to_json<Cellule[]>(feuille, {
-        header: 1,
-        raw: false,
-        defval: "",
-      });
-    } else {
-      const buffer = await f.arrayBuffer();
-      const wb = XLSX.read(new Uint8Array(buffer), { type: "array" });
-      const feuille = selectionnerMeilleureFeuille(wb);
-
-      lignes = XLSX.utils.sheet_to_json<Cellule[]>(feuille, {
-        header: 1,
-        raw: false,
-        defval: "",
-      });
-    }
-
-    const [tete, ...reste] = lignes;
-    if (!tete || tete.length === 0) {
-      throw new Error(`Fichier ${f.name} vide : aucune colonne détectée.`);
-    }
-
-    const resteFiltre = reste.filter((ligne) => {
-      if (!ligne || ligne.length === 0) return false;
-      const aDesValeurs = ligne.some((c) => !estValeurVide(c));
-      if (!aDesValeurs) return false;
-      return !estLigneTotal(ligne);
-    });
-
-    if (resteFiltre.length === 0) {
-      throw new Error(`Le fichier ${f.name} contient des en-têtes mais aucune donnée exploitable.`);
-    }
-
-    const entetesNettoyes = nettoyerEntetes(tete);
-
+    // Lecture unique et robuste : vraies valeurs Excel, encodage, séparateur, ligne d'en-têtes, totaux…
+    const tableau = await lireFichier(f);
     return {
       id: `${f.name}-${Date.now()}-${Math.random()}`,
       nom: f.name,
-      nbLignes: resteFiltre.length,
-      entetes: entetesNettoyes,
-      corps: resteFiltre,
+      nbLignes: tableau.corps.length,
+      entetes: tableau.entetes,
+      corps: tableau.corps,
+      avertissements: tableau.avertissements,
     };
   }
 
@@ -215,15 +84,15 @@ export default function HomePage() {
         nouveaux.push(item);
       }
 
-      setFichiers((anciens) => {
-        const tous = [...anciens, ...nouveaux];
-        if (anciens.length === 0 && nouveaux.length > 0) {
-          const premier = nouveaux[0];
-          chargerDonnees(premier.nom, premier.entetes, premier.corps);
-          setChoisies(premier.entetes);
-        }
-        return tous;
-      });
+      // La fonction passée à setFichiers ne doit faire que calculer la nouvelle liste : y charger les données
+      // modifiait un autre composant pendant le rendu (erreur React « Cannot update a component while rendering »).
+      const etaitVide = fichiers.length === 0;
+      setFichiers((anciens) => [...anciens, ...nouveaux]);
+      if (etaitVide && nouveaux.length > 0) {
+        const premier = nouveaux[0];
+        chargerDonnees(premier.nom, premier.entetes, premier.corps);
+        setChoisies(premier.entetes);
+      }
 
       setPageIndex(0);
     } catch (e) {
@@ -240,17 +109,15 @@ export default function HomePage() {
   }
 
   function retirerFichier(id: string) {
-    setFichiers((anciens) => {
-      const restants = anciens.filter((f) => f.id !== id);
-      setFichiersSelectionnesPourComparaison((prev) => prev.filter((item) => item !== id));
-      if (restants.length > 0) {
-        selectionnerFichierActif(restants[0]);
-      } else {
-        chargerDonnees("", [], []);
-        setChoisies([]);
-      }
-      return restants;
-    });
+    const restants = fichiers.filter((f) => f.id !== id);
+    setFichiers(restants);
+    setFichiersSelectionnesPourComparaison((prev) => prev.filter((item) => item !== id));
+    if (restants.length > 0) {
+      selectionnerFichierActif(restants[0]);
+    } else {
+      chargerDonnees("", [], []);
+      setChoisies([]);
+    }
   }
 
   function basculerSelectionComparaison(id: string) {
@@ -372,7 +239,7 @@ export default function HomePage() {
       >
         <input
           type="file"
-          accept=".xlsx,.xls,.csv"
+          accept={EXTENSIONS_ACCEPTEES}
           multiple
           disabled={enChargement}
           onChange={(e: ChangeEvent<HTMLInputElement>) => {
@@ -400,7 +267,7 @@ export default function HomePage() {
                 : "Glissez vos fichiers ici ou touchez pour parcourir"}
             </p>
             <p className="text-[11px] sm:text-xs text-slate-400 mt-1">
-              Prise en charge de plusieurs fichiers Excel (.xlsx, .xls) et CSV
+              Prise en charge de plusieurs fichiers Excel (.xlsx, .xls, .ods), CSV, TSV, TXT et JSON
             </p>
           </div>
 
@@ -476,11 +343,18 @@ export default function HomePage() {
                       className="accent-blue-600 h-4 w-4 rounded cursor-pointer shrink-0"
                     />
 
-                    <div className="truncate">
+                    <div className="min-w-0">
                       <p className="font-bold truncate text-xs">{f.nom}</p>
                       <p className="text-[10px] text-slate-400">
                         {f.nbLignes.toLocaleString("fr-FR")} lignes · {f.entetes.length} cols
                       </p>
+                      {f.avertissements && f.avertissements.length > 0 && (
+                        <ul className="mt-1 space-y-0.5 text-[10px] leading-snug text-amber-700 dark:text-amber-400 whitespace-normal">
+                          {f.avertissements.map((a) => (
+                            <li key={a}>• {a}</li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   </div>
 

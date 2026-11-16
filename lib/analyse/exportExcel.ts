@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
-import { Cellule, parseNombre } from "./utils";
+import { type Cellule, parseNombre, estValeurVide, estColonneIdentifiant, estColonneTemporelle } from "./utils";
+import { convertirDate, detecterOrdreDate } from "./dates";
+import { operationPour } from "./mesures";
 // Style d'en-tête Cobalt Executive
 function styliserEnTete(worksheet: ExcelJS.Worksheet) {
   const headerRow = worksheet.getRow(1);
@@ -42,70 +44,103 @@ export async function exporterExcelExecutive(
   wsData.addRow(entetes);
   styliserEnTete(wsData);
 
+  // Nature de chaque colonne décidée UNE fois, d'après ses valeurs (plus de devinette sur un bout de nom :
+  // « Préfecture » contient « ref », « Valide » contient « id »… et restaient en texte).
+  type Nature = "texte" | "date" | "entier" | "decimal" | "pourcent" | "statut";
+  const sansAccent = (x: string) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const natures: { nature: Nature; diviser: boolean; ordre: "JMA" | "MJA" }[] = entetes.map((nom, j) => {
+    const valeurs = corps.map((l) => l[j]);
+    const nonVides = valeurs.filter((v) => !estValeurVide(v));
+    const n = sansAccent(nom);
+    const ordre = detecterOrdreDate(nonVides);
+    const base = { diviser: false, ordre };
+    if (!nonVides.length || nom === "Fichier Source") return { nature: "texte" as Nature, ...base };
+    if (/(statut|status|etat|controle|state)/.test(n)) return { nature: "statut" as Nature, ...base };
+    if (estColonneIdentifiant(nom, valeurs)) return { nature: "texte" as Nature, ...base };
+    const echantillon = nonVides.slice(0, 2000);
+    if (echantillon.filter((v) => convertirDate(v, ordre)).length / echantillon.length >= 0.8) return { nature: "date" as Nature, ...base };
+    if (estColonneTemporelle(nom, valeurs)) return { nature: "texte" as Nature, ...base }; // années, mois en lettres, trimestres
+    const nums = echantillon.map((v) => (typeof v === "boolean" ? null : parseNombre(v)));
+    const valides = nums.filter((x): x is number => x !== null);
+    if (valides.length / echantillon.length < 0.8) return { nature: "texte" as Nature, ...base };
+    const marquePourcent = echantillon.some((v) => typeof v === "string" && v.includes("%"));
+    if (marquePourcent || /(%|\bpct\b|pourcent|\btaux\b|percent)/.test(n)) {
+      // Une seule règle pour toute la colonne : 25 -> 25 %, mais une colonne déjà en fractions (0,25) reste telle quelle
+      const maxAbs = valides.reduce((m, x) => Math.max(m, Math.abs(x)), 0);
+      return { nature: "pourcent" as Nature, diviser: marquePourcent || maxAbs > 1, ordre };
+    }
+    return { nature: (valides.every((x) => Number.isInteger(x)) ? "entier" : "decimal") as Nature, ...base };
+  });
+
+  const BORDURE = {
+    left: { style: "thin" as const, color: { argb: "FFE2E8F0" } },
+    right: { style: "thin" as const, color: { argb: "FFE2E8F0" } },
+    bottom: { style: "thin" as const, color: { argb: "FFE2E8F0" } },
+  };
+
   corps.forEach((ligneData, index) => {
-    const row = wsData.addRow(ligneData);
+    // Conversion des valeurs AVANT l'écriture : vrais nombres, vraies dates, vrais pourcentages
+    const valeurs = entetes.map((_, j) => {
+      const v = ligneData[j];
+      const { nature, diviser, ordre } = natures[j];
+      if (estValeurVide(v)) return null;
+      if (nature === "date") {
+        const d = convertirDate(v, ordre);
+        // Date construite en UTC : Excel affiche exactement le jour lu, quel que soit le fuseau du navigateur
+        return d ? new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes())) : v;
+      }
+      if (nature === "entier" || nature === "decimal" || nature === "pourcent") {
+        const x = typeof v === "boolean" ? null : parseNombre(v);
+        if (x === null) return v;
+        return nature === "pourcent" && diviser ? x / 100 : x;
+      }
+      return v;
+    });
+    const row = wsData.addRow(valeurs);
     zebrerLigne(row, index);
 
-    row.eachCell((cell, colNumber) => {
-      const colName = entetes[colNumber - 1].toLowerCase();
-      const valStr = String(cell.value || "").trim();
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const { nature } = natures[colNumber - 1] ?? { nature: "texte" as Nature };
+      const valStr = String(cell.value ?? "").trim();
+      cell.border = BORDURE;
 
-      const estIdentifiantOuDate = /(id|code|num|ref|matricule|tel|phone|postal|zip|date|jour|mois|annee)/i.test(colName);
-      if (!estIdentifiantOuDate && typeof cell.value === "string") {
-        const parsed = parseNombre(cell.value);
-        if (parsed !== null) {
-          cell.value = parsed;
-        }
-      }
-
-      const valNum = Number(cell.value);
-
-      cell.border = {
-        left: { style: "thin", color: { argb: "FFE2E8F0" } },
-        right: { style: "thin", color: { argb: "FFE2E8F0" } },
-        bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
-      };
-
-      cell.alignment = { vertical: "middle", horizontal: valStr.length > 20 ? "left" : "center" };
-
-      if (colName.includes("quantité") || colName.includes("nombre")) {
-        cell.numFmt = "#,##0";
-        cell.alignment = { horizontal: "right", vertical: "middle" };
-      } else if (
-        colName.includes("montant") ||
-        colName.includes("chiffre") ||
-        colName.includes("prix") ||
-        colName.includes("superficie") ||
-        colName.includes("valeur")
-      ) {
-        cell.numFmt = "#,##0.00";
-        cell.alignment = { horizontal: "right", vertical: "middle" };
-        if (!isNaN(valNum) && valNum < 0) cell.font = { color: { argb: "FFDC2626" }, bold: true };
-      } else if (colName.includes("pct") || colName.includes("taux") || colName.includes("%") || colName.includes("remise")) {
-        if (typeof cell.value === "number" && Math.abs(cell.value) > 1) {
-          cell.value = cell.value / 100;
-        }
-        cell.numFmt = "0.00%";
-        cell.alignment = { horizontal: "right", vertical: "middle" };
-      } else if (colName.includes("statut") || colName.includes("état") || colName.includes("contrôle")) {
+      if (nature === "date" && cell.value instanceof Date) {
+        cell.numFmt = cell.value.getUTCHours() || cell.value.getUTCMinutes() ? "dd/mm/yyyy hh:mm" : "dd/mm/yyyy";
         cell.alignment = { horizontal: "center", vertical: "middle" };
-        const valBas = valStr.toLowerCase();
-        if (["ok", "succès", "payé", "valide", "ouvert"].some((m) => valBas.includes(m))) {
+      } else if ((nature === "entier" || nature === "decimal" || nature === "pourcent") && typeof cell.value === "number") {
+        cell.numFmt = nature === "pourcent" ? "0.00%" : nature === "entier" ? "#,##0" : "#,##0.00";
+        cell.alignment = { horizontal: "right", vertical: "middle" };
+        if (cell.value < 0) cell.font = { color: { argb: "FFDC2626" }, bold: true };
+      } else if (nature === "statut") {
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        const valBas = sansAccent(valStr);
+        if (["ok", "succes", "paye", "valide", "ouvert", "livre", "approuve", "termine", "conforme"].some((m) => valBas.includes(m))) {
           cell.font = { color: { argb: "FF16A34A" }, bold: true };
-        } else if (["alerte", "contrôler", "attente"].some((m) => valBas.includes(m))) {
+        } else if (["alerte", "controler", "attente", "en cours", "retard"].some((m) => valBas.includes(m))) {
           cell.font = { color: { argb: "FFD97706" }, bold: true };
-        } else if (["erreur", "échec", "ferme", "manquant", "défaillance"].some((m) => valBas.includes(m))) {
+        } else if (["erreur", "echec", "ferme", "manquant", "defaillance", "rejete", "annule", "refuse"].some((m) => valBas.includes(m))) {
           cell.font = { color: { argb: "FFDC2626" }, bold: true };
         }
+      } else {
+        cell.alignment = { vertical: "middle", horizontal: valStr.length > 20 ? "left" : "center" };
       }
     });
   });
 
-  wsData.columns.forEach((column) => {
-    let max = 10;
-    column.eachCell!({ includeEmpty: true }, (c) => {
-      max = Math.max(max, c.value ? String(c.value).length : 10);
-    });
+  // Filtres automatiques sur la ligne d'en-têtes
+  if (entetes.length) {
+    wsData.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: entetes.length } };
+  }
+
+  // Largeur d'après l'en-tête et un échantillon de lignes (inutile de parcourir 100 000 cellules par colonne)
+  wsData.columns.forEach((column, j) => {
+    let max = Math.max(10, String(entetes[j] ?? "").length);
+    const nature = natures[j]?.nature;
+    for (let i = 0; i < Math.min(corps.length, 500); i++) {
+      const v = corps[i][j];
+      if (v !== null && v !== undefined) max = Math.max(max, String(v).length);
+    }
+    if (nature === "date") max = Math.max(12, Math.min(max, 18));
     column.width = Math.min(max + 4, 45);
   });
 
@@ -128,7 +163,10 @@ export async function exporterExcelExecutive(
       const s = info.stats;
 
       if (info.type === "numerique" && s) {
-        detail = `Moy: ${s.moyenne !== null ? s.moyenne.toLocaleString("fr-FR") : "-"} | Min: ${s.min} | Max: ${s.max}`;
+        const nf = (x: number | null | undefined) => (x === null || x === undefined ? "-" : x.toLocaleString("fr-FR"));
+        // Additionner un taux, un ratio ou une taille moyenne n'a pas de sens : pas de total pour ces colonnes
+        const total = operationPour(nomCol) === "somme" ? `Total: ${nf(s.somme)} | ` : "";
+        detail = `${total}Moy: ${nf(s.moyenne)} | Médiane: ${nf(s.mediane)} | Écart-type: ${nf(s.ecartType)} | Min: ${nf(s.min)} | Max: ${nf(s.max)}${s.atypiques ? ` | Atypiques: ${s.atypiques}` : ""}`;
       } else if (info.type === "categorielle" && s && s.topValeurs && s.topValeurs.length > 0) {
         detail = `Top: ${s.topValeurs[0].valeur} (${s.topValeurs[0].pourcentage}%) | Distincts: ${s.nbCategoriesDistinctes}`;
       } else if (info.type === "identifiant" && s) {
@@ -153,7 +191,7 @@ export async function exporterExcelExecutive(
     wsStats.getColumn(1).width = 25;
     wsStats.getColumn(2).width = 18;
     wsStats.getColumn(3).width = 15;
-    wsStats.getColumn(4).width = 60;
+    wsStats.getColumn(4).width = 110;
   }
 
   // =========================================================================

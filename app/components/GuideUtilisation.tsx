@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
+  type LucideIcon,
   Compass,
   X,
   Home,
@@ -25,7 +26,7 @@ interface ModuleGuide {
   badge: string;
   titre: string;
   finaliteMetier: string;
-  icone: any;
+  icone: LucideIcon;
   protocole: {
     etape: string;
     description: string;
