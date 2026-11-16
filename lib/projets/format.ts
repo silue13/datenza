@@ -2,9 +2,10 @@
 // Aucun appel réseau ici : ce fichier se teste seul.
 import type { Cellule } from "../analyse/utils";
 import type { EtatPersiste } from "../persistance";
+import { normaliserSource } from "../import/source";
 
 /** Tout ce qui décrit un projet, hors lignes du fichier et hors analyse (recalculée à l'ouverture). */
-export type ReglagesProjet = Pick<EtatPersiste, "choisies" | "rapport" | "graphiquesEpingles" | "filtresActifs" | "definitionsCalculs">;
+export type ReglagesProjet = Pick<EtatPersiste, "choisies" | "rapport" | "graphiquesEpingles" | "filtresActifs" | "definitionsCalculs" | "source">;
 
 export interface DonneesProjet {
   v: 1;
@@ -21,6 +22,7 @@ export function extraireReglages(etat: EtatPersiste): ReglagesProjet {
     graphiquesEpingles: etat.graphiquesEpingles,
     filtresActifs: etat.filtresActifs,
     definitionsCalculs: etat.definitionsCalculs,
+    source: etat.source ?? null,
   };
   // Passage par JSON : on n'envoie que ce qui se relira à l'identique
   return JSON.parse(JSON.stringify(reglages)) as ReglagesProjet;
@@ -44,6 +46,7 @@ export function assemblerEtat(nomFichier: string, donnees: unknown, reglages: un
     graphiquesEpingles: liste(r.graphiquesEpingles),
     filtresActifs: liste(r.filtresActifs),
     definitionsCalculs: liste(r.definitionsCalculs),
+    source: normaliserSource(r.source),
   };
 }
 

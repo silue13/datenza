@@ -28,7 +28,7 @@ describe("projets/format", () => {
   it("n'enregistre pas l'analyse ni les lignes dans les réglages", () => {
     const etat = { ...assemblerEtat("f", donnees, {}), resultat: { nbLignes: 3 } } as unknown as EtatPersiste;
     const r = extraireReglages(etat) as Record<string, unknown>;
-    expect(Object.keys(r).sort()).toEqual(["choisies", "definitionsCalculs", "filtresActifs", "graphiquesEpingles", "rapport"]);
+    expect(Object.keys(r).sort()).toEqual(["choisies", "definitionsCalculs", "filtresActifs", "graphiquesEpingles", "rapport", "source"]);
   });
   it("propose un nom et reconnaît un identifiant de partage", () => {
     expect(nomParDefaut("Ventes 2024.xlsx")).toBe("Ventes 2024");
