@@ -549,3 +549,170 @@ export function recommanderGraphiques(
 
   return recos.slice(0, 4);
 }
+
+export interface LigneExplication {
+  titre: string;
+  texte: string;
+}
+
+export interface ExplicationGraphique {
+  /** Vrai s'il y a plusieurs séries (fichiers comparés, légende, plusieurs mesures). */
+  multiSeries: boolean;
+  nbSeries: number;
+  lignes: LigneExplication[];
+}
+
+interface GraphiqueDecrit {
+  titre?: string;
+  type?: string;
+  labels?: unknown[];
+  datasets?: { label?: string; data?: unknown[] }[];
+}
+
+const versValeur = (v: unknown): number | null =>
+  v === null || v === undefined || v === "" || typeof v === "boolean" || Number.isNaN(Number(v)) ? null : Number(v);
+const estAutres = (label: string) => /^autres \(\d+\)$/i.test(label.trim());
+const mediane = (vals: number[]) => percentile([...vals].sort((a, b) => a - b), 0.5);
+
+/**
+ * Texte affiché sous un graphique : uniquement des constats vérifiables sur les valeurs dessinées.
+ *  - une valeur absente n'est jamais comptée comme zéro ;
+ *  - le regroupement « Autres (n) » n'est jamais présenté comme premier ou dernier ;
+ *  - une série dans le temps est décrite comme une évolution, pas comme un classement ;
+ *  - pas de part du total ni de total pour des moyennes, des médianes, des minimums ou des maximums.
+ */
+export function expliquerGraphique(g: GraphiqueDecrit): ExplicationGraphique | null {
+  const labels = (g.labels ?? []).map((l) => String(l ?? ""));
+  const series = (g.datasets ?? []).map((d) => ({ nom: String(d.label ?? "Série"), valeurs: labels.map((_, i) => versValeur(d.data?.[i])) }));
+  if (!labels.length || !series.length) return null;
+
+  const f = (v: number) => formaterComplet(arrondir(v));
+  const pct = (v: number) => `${formaterComplet(Math.round(v * 10) / 10)} %`;
+  const descriptif = `${g.titre ?? ""} ${series[0].nom}`;
+  const nonAdditif = /(moyenne|m[ée]diane|minimum|maximum|average|median)/i.test(descriptif);
+  const type = String(g.type ?? "").toLowerCase();
+  const temporel =
+    type.includes("courbe") || type.includes("aire") || (labels.length >= 3 && trierChronologiquement(labels, (x) => x) !== null);
+  const unite = temporel ? "période" : "catégorie";
+  const lignes: LigneExplication[] = [];
+
+  // ---------- Plusieurs séries
+  if (series.length >= 2) {
+    const resume = series.map((s) => {
+      const valides = s.valeurs.filter((v): v is number => v !== null);
+      const total = valides.reduce((a, b) => a + b, 0);
+      return { nom: s.nom, n: valides.length, niveau: nonAdditif ? (valides.length ? total / valides.length : null) : valides.length ? total : null };
+    });
+    const classees = resume.filter((r) => r.niveau !== null).sort((a, b) => (b.niveau as number) - (a.niveau as number));
+    if (!classees.length) return null;
+    const [premiere, seconde] = classees;
+    const sommeNiveaux = classees.reduce((a, r) => a + (r.niveau as number), 0);
+    const parts = !nonAdditif && sommeNiveaux > 0 && classees.every((r) => (r.niveau as number) >= 0);
+    lignes.push({
+      titre: "Première série",
+      texte:
+        `« ${premiere.nom} » : ${f(premiere.niveau as number)}${nonAdditif ? " en moyenne sur les valeurs affichées" : " au total"}` +
+        (parts ? ` (${pct(((premiere.niveau as number) / sommeNiveaux) * 100)} de l'ensemble des séries)` : "") +
+        (seconde ? `, devant « ${seconde.nom} » (${f(seconde.niveau as number)}).` : "."),
+    });
+
+    const victoires = new Map<string, number>();
+    let comparables = 0;
+    let ecartMax: { label: string; a: string; va: number; b: string; vb: number } | null = null;
+    labels.forEach((label, i) => {
+      const pts = series.map((s) => ({ nom: s.nom, v: s.valeurs[i] })).filter((x): x is { nom: string; v: number } => x.v !== null).sort((a, b) => b.v - a.v);
+      if (pts.length < 2) return;
+      comparables++;
+      if (pts[0].v > pts[1].v) victoires.set(pts[0].nom, (victoires.get(pts[0].nom) ?? 0) + 1);
+      const dernier = pts[pts.length - 1];
+      if (!estAutres(label) && (!ecartMax || pts[0].v - dernier.v > ecartMax.va - ecartMax.vb)) {
+        ecartMax = { label, a: pts[0].nom, va: pts[0].v, b: dernier.nom, vb: dernier.v };
+      }
+    });
+    if (comparables > 0) {
+      const detail = [...victoires.entries()].sort((a, b) => b[1] - a[1]).map(([nom, k]) => `« ${nom} » sur ${k}`);
+      lignes.push({
+        titre: `Par ${unite}`,
+        texte: detail.length
+          ? `En tête : ${detail.join(", ")} (sur ${comparables} ${unite}${comparables > 1 ? "s" : ""} comparable${comparables > 1 ? "s" : ""}).`
+          : `Les séries sont à égalité sur les ${comparables} ${unite}s comparables.`,
+      });
+    }
+    const e = ecartMax as { label: string; a: string; va: number; b: string; vb: number } | null;
+    if (e && e.va > e.vb) {
+      lignes.push({
+        titre: "Plus grand écart",
+        texte: `Sur « ${e.label} » : « ${e.a} » (${f(e.va)}) contre « ${e.b} » (${f(e.vb)}), soit ${f(e.va - e.vb)} d'écart.`,
+      });
+    }
+    return { multiSeries: true, nbSeries: series.length, lignes };
+  }
+
+  // ---------- Une seule série
+  const tous = labels.map((label, i) => ({ label, v: series[0].valeurs[i] }));
+  const points = tous.filter((p): p is { label: string; v: number } => p.v !== null);
+  const nbSansDonnee = tous.length - points.length;
+  if (!points.length) return null;
+  if (points.length === 1) {
+    return { multiSeries: false, nbSeries: 1, lignes: [{ titre: "Une seule valeur", texte: `« ${points[0].label} » : ${f(points[0].v)}. Rien à comparer à ce niveau de détail.` }] };
+  }
+
+  const total = points.reduce((a, p) => a + p.v, 0);
+  const moyenne = total / points.length;
+
+  if (temporel) {
+    const premier = points[0];
+    const dernier = points[points.length - 1];
+    const haut = points.reduce((a, p) => (p.v > a.v ? p : a));
+    const bas = points.reduce((a, p) => (p.v < a.v ? p : a));
+    const delta = dernier.v - premier.v;
+    lignes.push({
+      titre: "Évolution",
+      texte:
+        delta === 0
+          ? `Même niveau au début et à la fin : ${f(premier.v)} en « ${premier.label} » comme en « ${dernier.label} ».`
+          : `De ${f(premier.v)} (« ${premier.label} ») à ${f(dernier.v)} (« ${dernier.label} ») : ${delta > 0 ? "hausse" : "baisse"} de ${f(Math.abs(delta))}` +
+            (premier.v !== 0 ? ` (${delta > 0 ? "+" : "−"}${pct(Math.abs((delta / Math.abs(premier.v)) * 100))})` : "") +
+            ".",
+    });
+    lignes.push({ titre: "Point haut et point bas", texte: `Maximum en « ${haut.label} » (${f(haut.v)}), minimum en « ${bas.label} » (${f(bas.v)}).` });
+    lignes.push({
+      titre: "Repère",
+      texte:
+        `Moyenne des ${points.length} périodes : ${f(moyenne)}. La dernière période est ${dernier.v >= moyenne ? "au-dessus" : "en dessous"} de cette moyenne.` +
+        (nbSansDonnee ? ` ${nbSansDonnee} période${nbSansDonnee > 1 ? "s" : ""} sans donnée.` : ""),
+    });
+    return { multiSeries: false, nbSeries: 1, lignes };
+  }
+
+  const nommes = points.filter((p) => !estAutres(p.label));
+  const aAutres = nommes.length < points.length;
+  if (!nommes.length) return null;
+  const tete = nommes.reduce((a, p) => (p.v > a.v ? p : a));
+  const queue = nommes.reduce((a, p) => (p.v < a.v ? p : a));
+  const parts = !nonAdditif && total > 0 && points.every((p) => p.v >= 0);
+  lignes.push({
+    titre: "En tête",
+    texte: `« ${tete.label} » : ${f(tete.v)}${parts ? `, soit ${pct((tete.v / total) * 100)} du total` : ""}.`,
+  });
+  if (nommes.length >= 2) {
+    lignes.push({
+      titre: aAutres ? "En dernier parmi les valeurs détaillées" : "En dernier",
+      texte:
+        `« ${queue.label} » : ${f(queue.v)}. Écart avec la première : ${f(tete.v - queue.v)}` +
+        (queue.v > 0 && tete.v / queue.v >= 1.5 ? ` (${formaterComplet(Math.round((tete.v / queue.v) * 10) / 10)} fois plus)` : "") +
+        ".",
+    });
+  }
+  if (parts && nommes.length >= 4) {
+    const top3 = [...nommes].sort((a, b) => b.v - a.v).slice(0, 3).reduce((a, p) => a + p.v, 0);
+    lignes.push({ titre: "Concentration", texte: `Les trois premières représentent ${pct((top3 / total) * 100)} du total.` });
+  } else if (nonAdditif && nommes.length >= 3) {
+    lignes.push({ titre: "Repère", texte: `La moitié des ${nommes.length} catégories est au-dessus de ${f(mediane(nommes.map((p) => p.v)))}, l'autre moitié en dessous.` });
+  }
+  if (nbSansDonnee) {
+    lignes.push({ titre: "Données manquantes", texte: `${nbSansDonnee} catégorie${nbSansDonnee > 1 ? "s" : ""} sans valeur numérique : non prise${nbSansDonnee > 1 ? "s" : ""} en compte ci-dessus.` });
+  }
+  return { multiSeries: false, nbSeries: 1, lignes };
+}
+

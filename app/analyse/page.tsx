@@ -287,6 +287,8 @@ export default function AnalysePage() {
     resultat,
     rapport,
     graphiquesEpingles,
+    graphiquesAffiches,
+    graphiquesExclus,
     epinglerGraphique,
   } = useData();
 
@@ -731,7 +733,9 @@ export default function AnalysePage() {
         }
       }
 
-      let graphiquesExport: any[] = (graphiquesEpingles || []) as any;
+      // Le PowerPoint reprend les graphiques de l'écran (automatiques puis créés à la main, sauf ceux retirés),
+      // suivis des éléments ajoutés depuis les autres modules (prévision, carte, tableau croisé).
+      let graphiquesExport: any[] = [...graphiquesPourPptx] as any;
       if (graphiquesExport.length === 0 && estBenchmarkActif) {
         const colCat = noms.find((n) => {
           const idx = entetes.indexOf(n);
@@ -786,6 +790,16 @@ export default function AnalysePage() {
       setExportPptxEnCours(false);
     }
   };
+
+  // Liste exacte des graphiques du PowerPoint : même contenu et même ordre qu'à l'écran
+  const graphiquesPourPptx = useMemo(() => {
+    const affiches = (graphiquesAffiches || []).filter((g) => !(graphiquesExclus || []).includes(String(g.id)));
+    const ids = new Set(affiches.map((g) => String(g.id)));
+    const titres = new Set(affiches.map((g) => g.titre));
+    // Un ancien graphique épinglé identique à un graphique affiché ne doit pas apparaître deux fois
+    const autres = (graphiquesEpingles || []).filter((g) => !ids.has(String(g.id)) && !titres.has(g.titre));
+    return [...affiches, ...autres];
+  }, [graphiquesAffiches, graphiquesExclus, graphiquesEpingles]);
 
   const correlationsStandard = useMemo(() => {
     return [...(resultatActif?.correlations ?? [])]
@@ -1045,10 +1059,10 @@ Ne mets ni introduction ni conclusion.`;
               {estBenchmarkActif ? "Sources" : "Rapport PPTX"}
             </p>
             <h3 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white mt-0.5">
-              {estBenchmarkActif ? `${sourcesFichiers.length}` : graphiquesEpingles.length}
+              {estBenchmarkActif ? `${sourcesFichiers.length}` : graphiquesPourPptx.length}
             </h3>
             <p className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 font-medium truncate">
-              {estBenchmarkActif ? "Séries sync" : `graphique${graphiquesEpingles.length > 1 ? "s" : ""} ajouté${graphiquesEpingles.length > 1 ? "s" : ""}`}
+              {estBenchmarkActif ? "Séries sync" : `graphique${graphiquesPourPptx.length > 1 ? "s" : ""} dans le rapport`}
             </p>
           </div>
           <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold shrink-0">

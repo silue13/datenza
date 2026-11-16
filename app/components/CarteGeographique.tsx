@@ -305,6 +305,47 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     externes,
   ]);
 
+  // Lieux du fichier qui n'ont pas pu être placés : à signaler, sinon la carte laisse croire qu'elle est complète
+  const lieuxNonPlaces = useMemo(() => {
+    if (estFormatMatriciel) return [];
+    const idxGeo = entetes.indexOf(colonneGeo);
+    if (idxGeo === -1) return [];
+    const places = new Set(points.map((p) => cleGeo(p.nom) || p.nom));
+    const manquants = new Map<string, string>();
+    for (const ligne of corps) {
+      if (estValeurVide(ligne[idxGeo])) continue;
+      const lieu = String(ligne[idxGeo] ?? "").replace(/["'«»“”]/g, "").trim();
+      if (!lieu || /^\d+$/.test(lieu) || /^(sous[- ]?)?tota(l|ux)\b/i.test(lieu)) continue;
+      const cle = cleGeo(lieu) || lieu;
+      if (places.has(cle) || manquants.has(cle)) continue;
+      // Encore en cours de recherche (réponse du géocodeur pas arrivée) : on ne l'annonce pas comme introuvable
+      if (!trouverLieuCI(lieu) && !PAYS_DU_MONDE[cle] && externes[lieu] === undefined) continue;
+      manquants.set(cle, lieu);
+    }
+    // La carte n'affiche que les MAX_LIEUX premiers : les suivants ne sont pas « introuvables »
+    return points.length >= MAX_LIEUX ? [] : [...manquants.values()];
+  }, [estFormatMatriciel, entetes, colonneGeo, corps, points, externes]);
+
+  // Phrase de lecture : le premier lieu, sa part si les valeurs s'additionnent, et la concentration
+  const lectureCarte = useMemo(() => {
+    if (points.length < 2) return "";
+    const nb = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+    const tries = [...points].sort((a, b) => b.totalGlobal - a.totalGlobal);
+    const premier = tries[0];
+    const dernier = tries[tries.length - 1];
+    const total = tries.reduce((s, p) => s + p.totalGlobal, 0);
+    const additif = agregation !== "Moyenne" && total > 0 && tries.every((p) => p.totalGlobal >= 0);
+    let texte = `« ${premier.nom} » arrive en tête avec ${nb(premier.totalGlobal)}`;
+    if (additif) texte += `, soit ${nb(Math.round((premier.totalGlobal / total) * 1000) / 10)} % du total des ${points.length} lieux placés`;
+    texte += `. Le lieu le plus faible est « ${dernier.nom} » (${nb(dernier.totalGlobal)}).`;
+    if (additif && tries.length >= 5) {
+      const top3 = tries.slice(0, 3).reduce((s, p) => s + p.totalGlobal, 0);
+      texte += ` Les trois premiers lieux concentrent ${nb(Math.round((top3 / total) * 1000) / 10)} % du total.`;
+    }
+    if (agregation === "Moyenne") texte += " Il s'agit de moyennes par lieu : elles ne s'additionnent pas.";
+    return texte;
+  }, [points, agregation]);
+
   // 4. GÉOCODAGE NOMINATIM
   useEffect(() => {
     if (estFormatMatriciel) return;
@@ -618,6 +659,18 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       {/* Ruban des zones localisées */}
       {points.length > 0 && (
         <div className="space-y-1.5 pt-1 text-xs">
+          {lectureCarte && (
+            <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+              <strong>Ce que montre la carte :</strong> {lectureCarte}
+            </p>
+          )}
+          {lieuxNonPlaces.length > 0 && (
+            <p className="text-amber-700 dark:text-amber-400 leading-relaxed">
+              <strong>{lieuxNonPlaces.length} lieu(x) non placé(s)</strong>, absents de la carte et des chiffres ci-dessus :{" "}
+              {lieuxNonPlaces.slice(0, 8).join(", ")}
+              {lieuxNonPlaces.length > 8 ? `… (+${lieuxNonPlaces.length - 8})` : ""}. Vérifiez leur orthographe.
+            </p>
+          )}
           <span className="font-bold text-slate-600 dark:text-slate-300">
             {points.length} lieu(x) localisé(s) sur la carte :
           </span>

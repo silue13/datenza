@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { executerRequete, extraireRequetes, resultatsPourIA, trouverColonne } from "./requete";
+import { contientBlocRequetes, executerRequete, extraireRequetes, resultatsPourIA, trouverColonne } from "./requete";
 
 const e = ["Date", "Departement", "Sous_prefecture", "Population_totale", "Statut", "Email"];
 const c = [
@@ -62,5 +62,65 @@ describe("analyse/requete", () => {
     const r = executerRequete(e, c, { titre: "T", grouper_par: ["Statut"] });
     expect(resultatsPourIA([r, executerRequete(e, c, { grouper_par: ["X"] })])).toContain("Rural | 3");
     expect(resultatsPourIA([executerRequete(e, c, { grouper_par: ["X"] })])).toContain("ERREUR");
+  });
+});
+
+describe("analyse/requete — cas limites", () => {
+  const e2 = ["Date", "Dept", "Pop", "Statut", "Salaire"];
+  const c2 = [
+    ["2024-01-15", "Bouaké", 1000, "Urbain", 500],
+    ["2024-02-20", "BOUAKE", 1500, "Rural", 900],
+    ["2024-03-03", "Béoumi", 2000, "", 100],
+    ["2025-01-10", "Botro", 1000, "Rural", 300],
+    ["01/02/2024", "Botro", 250, "Rural", 300],
+  ];
+  const nb = (spec: unknown) => executerRequete(e2, c2, spec).lignes[0][0];
+
+  it("distingue « plus de » (strict) de « au moins »", () => {
+    expect(nb({ filtres: [{ colonne: "Pop", operateur: ">", valeur: 1000 }] })).toBe(2);
+    expect(nb({ filtres: [{ colonne: "Pop", operateur: "superieur", valeur: 1000 }] })).toBe(4);
+    expect(nb({ filtres: [{ colonne: "Pop", operateur: "<", valeur: 1000 }] })).toBe(1);
+    expect(nb({ filtres: [{ colonne: "Pop", operateur: "<=", valeur: 1000 }] })).toBe(3);
+  });
+  it("classe du plus petit au plus grand même si la colonne de tri est absente ou mal nommée", () => {
+    const base = { grouper_par: ["Dept"], mesures: [{ colonne: "Pop", calcul: "somme" }], limite: 1 };
+    expect(executerRequete(e2, c2, { ...base, trier: { ordre: "asc" } }).lignes).toEqual([["Bouaké", 1000]]);
+    expect(executerRequete(e2, c2, { ...base, trier: { par: "total", ordre: "asc" } }).lignes).toEqual([["Bouaké", 1000]]);
+    expect(executerRequete(e2, c2, base).lignes).toEqual([["Béoumi", 2000]]);
+  });
+  it("n'ignore jamais une demande mal formée", () => {
+    expect(nb({ mesures: { colonne: "Pop", calcul: "somme" } })).toBe(5750);
+    expect(nb({ filtres: { colonne: "Dept", operateur: "egal", valeur: "Botro" } })).toBe(2);
+    expect(executerRequete(e2, c2, { grouper_par: "Dept" }).nbGroupes).toBe(4);
+    expect(executerRequete(e2, c2, { filtres: [{ colonne: "Pop", operateur: "entre", valeur: 10 }] }).erreur).toContain("valeurFin");
+    expect(executerRequete(e2, c2, { filtres: [{ colonne: "Pop", operateur: ">", valeur: "beaucoup" }] }).erreur).toContain("n'est pas");
+    expect(executerRequete(e2, c2, { grouper_par: ["Date"], granularite: "semaine" }).erreur).toContain("Granularité");
+  });
+  it("filtre sans accents, sur une liste, et sur une année ou un mois entier", () => {
+    expect(nb({ filtres: [{ colonne: "Dept", operateur: "egal", valeur: "bouake" }] })).toBe(2);
+    expect(nb({ filtres: [{ colonne: "Dept", operateur: "egal", valeur: ["Botro", "Béoumi"] }] })).toBe(3);
+    expect(nb({ filtres: [{ colonne: "Dept", operateur: "different", valeur: ["Botro", "Béoumi"] }] })).toBe(2);
+    expect(nb({ filtres: [{ colonne: "Date", operateur: "egal", valeur: "2024" }] })).toBe(4);
+    expect(nb({ filtres: [{ colonne: "Date", operateur: "egal", valeur: "2024-02" }] })).toBe(2);
+    expect(nb({ filtres: [{ colonne: "Date", operateur: ">", valeur: 2024 }] })).toBe(1);
+    expect(nb({ filtres: [{ colonne: "Date", operateur: "entre", valeur: "2024-02", valeurFin: "2024-03" }] })).toBe(3);
+  });
+  it("lit les dates américaines de la même façon pour filtrer et pour regrouper", () => {
+    const us = [["01/13/2024", 1], ["02/14/2024", 1], ["03/05/2024", 1], ["12/25/2024", 1], ["03/04/2024", 1]];
+    const r = executerRequete(["Date", "V"], us, { filtres: [{ colonne: "Date", operateur: "entre", valeur: "2024-03-01", valeurFin: "2024-03-31" }] });
+    expect(r.lignes).toEqual([[2]]);
+  });
+  it("refuse un filtre sur une colonne sensible et signale les lignes sans groupe", () => {
+    const interdit = (n: string) => n === "Salaire";
+    expect(executerRequete(e2, c2, { filtres: [{ colonne: "Salaire", operateur: ">=", valeur: 500 }], grouper_par: ["Dept"] }, interdit).erreur).toContain("filtre");
+    const r = executerRequete(e2, c2, { grouper_par: ["Statut"] });
+    expect(r.nbLignesSansGroupe).toBe(1);
+    expect(resultatsPourIA([r])).toContain("dont 1 sans valeur de regroupement");
+  });
+  it("lit un bloc de requêtes imparfait", () => {
+    expect(extraireRequetes('DATENZA_REQUETES: {"mesures":[{"calcul":"nombre"}]}')).toHaveLength(1);
+    expect(extraireRequetes('DATENZA_REQUETES:\n```json\n[{"mesures":[{"calcul":"nombre"},],}]\n```')).toHaveLength(1);
+    expect(contientBlocRequetes("DATENZA_REQUETES: [{cassé")).toBe(true);
+    expect(contientBlocRequetes("Réponse normale")).toBe(false);
   });
 });

@@ -42,6 +42,8 @@ export interface ResultatPrevisionValide {
     sensTendance: "hausse" | "baisse" | "stable";
     fiabilite: "Élevée" | "Moyenne" | "Faible";
     variationEstimeePct: number;
+    /** Période observée à laquelle la variation est mesurée (la même période un an plus tôt s'il y a un cycle annuel). */
+    referenceVariation?: string;
     /** Vrai si un cycle annuel (mois par mois) a été détecté et intégré aux projections. */
     saisonnalite?: boolean;
   };
@@ -253,8 +255,8 @@ export function calculerPrevisionGenerale(
     };
   }
 
-  const a = den !== 0 ? num / den : 0;
-  const b = moyY - a * moyX;
+  let a = den !== 0 ? num / den : 0;
+  let b = moyY - a * moyX;
 
   let sommeCarresResidus = 0;
   for (let i = 0; i < n; i++) {
@@ -271,22 +273,38 @@ export function calculerPrevisionGenerale(
   };
   let saison: number[] | null = null;
   if (formatTemps === "date_mois" && n >= 24 && serie.every((p) => moisDe(p.periode) >= 0)) {
-    const cumul = Array.from({ length: 12 }, () => ({ s: 0, k: 0 }));
-    for (let i = 0; i < n; i++) {
-      const m = moisDe(serie[i].periode);
-      cumul[m].s += y[i] - (a * x[i] + b);
-      cumul[m].k += 1;
-    }
-    if (cumul.every((c) => c.k >= 2)) {
-      const brut = cumul.map((c) => c.s / c.k);
-      const centre = brut.reduce((s, v) => s + v, 0) / 12;
-      const indices = brut.map((v) => v - centre);
+    const mois = serie.map((p) => moisDe(p.periode));
+    const effectifs = Array(12).fill(0) as number[];
+    for (const m of mois) effectifs[m] += 1;
+    if (effectifs.every((k) => k >= 2)) {
+      // Tendance et cycle sont estimés ENSEMBLE, par allers-retours : un pic en fin de série (décembre)
+      // tirait la droite vers le haut, et tous les mois suivants étaient prévus trop haut.
+      let aS = a;
+      let bS = b;
+      let indices = Array(12).fill(0) as number[];
+      for (let tour = 0; tour < 6; tour++) {
+        // 1. écart moyen de chaque mois du calendrier à la tendance courante
+        const cumul = Array(12).fill(0) as number[];
+        for (let i = 0; i < n; i++) cumul[mois[i]] += y[i] - (aS * x[i] + bS);
+        const brut = cumul.map((v, m) => v / effectifs[m]);
+        const centre = brut.reduce((t, v) => t + v, 0) / 12;
+        indices = brut.map((v) => v - centre);
+        // 2. tendance recalculée sur la série débarrassée de ce cycle
+        const yd = y.map((v, i) => v - indices[mois[i]]);
+        const moyD = yd.reduce((t, v) => t + v, 0) / n;
+        let numD = 0;
+        for (let i = 0; i < n; i++) numD += (x[i] - moyX) * (yd[i] - moyD);
+        aS = den !== 0 ? numD / den : 0;
+        bS = moyD - aS * moyX;
+      }
       let residusAjustes = 0;
-      for (let i = 0; i < n; i++) residusAjustes += (y[i] - (a * x[i] + b) - indices[moisDe(serie[i].periode)]) ** 2;
+      for (let i = 0; i < n; i++) residusAjustes += (y[i] - (aS * x[i] + bS) - indices[mois[i]]) ** 2;
       // Estimer 12 moyennes mensuelles réduit toujours un peu l'erreur, même sur du bruit pur.
       // On compare donc les variances corrigées des degrés de liberté : le cycle doit la diviser par deux.
       if (sommeCarresResidus > 0 && residusAjustes / (n - 13) <= 0.5 * (sommeCarresResidus / (n - 2))) {
         saison = indices;
+        a = aS;
+        b = bS;
         sommeCarresResidus = residusAjustes;
       }
     }
@@ -335,7 +353,11 @@ export function calculerPrevisionGenerale(
     });
   }
 
-  const derniereReelle = y[n - 1];
+  // Avec un cycle annuel, comparer mars prévu à décembre observé n'a pas de sens (« -63 % » après chaque pic) :
+  // on compare à la même période un an plus tôt.
+  const indexAnPasse = n + horizon - 13;
+  const memePeriode = saison !== null && indexAnPasse >= 0 && indexAnPasse < n;
+  const derniereReelle = memePeriode ? y[indexAnPasse] : y[n - 1];
   const dernierePrevue = projections[projections.length - 1].valeurPrevue;
   let variationEstimeePct = 0;
   if (derniereReelle !== 0) {
@@ -362,6 +384,7 @@ export function calculerPrevisionGenerale(
       sensTendance,
       fiabilite,
       variationEstimeePct,
+      referenceVariation: memePeriode ? serie[indexAnPasse].periode : serie[n - 1].periode,
       saisonnalite: saison !== null,
     },
   };

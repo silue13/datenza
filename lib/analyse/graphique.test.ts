@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recommanderGraphiques, calculerSerie, calculerSeriesVentilees, filtrePourPoint, alignerSeries, formaterCompact, libellePeriode } from "./graphique";
+import { expliquerGraphique, recommanderGraphiques, calculerSerie, calculerSeriesVentilees, filtrePourPoint, alignerSeries, formaterCompact, libellePeriode } from "./graphique";
 import { appliquerFiltres } from "./filtres";
 
 const entetes = ["Date", "Region", "Montant", "Mois"];
@@ -106,5 +106,45 @@ describe("analyse/graphique", () => {
     // Sans mesure : on compte les lignes
     const s = recommanderGraphiques(e, c, { temporelles: [], mesurables: [], categorielles: ["Departement"] }, op, () => false);
     expect(s.map((x) => [x.type, x.agregation])).toEqual([["Anneau", "Nombre"]]);
+  });
+  it("explique un classement sans compter les vides comme des zéros ni citer « Autres »", () => {
+    const e = expliquerGraphique({
+      titre: "Somme — Montant selon Region",
+      type: "Barres",
+      labels: ["Poro", "Gbeke", "Tonkpi", "Bagoue", "Autres (7)"],
+      datasets: [{ label: "Somme — Montant", data: [50, 30, null, 10, 110] }],
+    })!;
+    const texte = e.lignes.map((l) => `${l.titre}: ${l.texte}`).join(" | ");
+    expect(texte).toContain("En tête: « Poro » : 50, soit 25 % du total.");
+    expect(texte).toContain("« Bagoue » : 10");
+    expect(texte).toContain("5 fois plus");
+    expect(texte).toContain("1 catégorie sans valeur numérique");
+    expect(texte).not.toContain("« Autres");
+    expect(texte).not.toContain("Tonkpi");
+  });
+  it("ne parle ni de total ni de part pour une moyenne", () => {
+    const e = expliquerGraphique({ titre: "Moyenne — Prix selon Ville", type: "Barres", labels: ["A", "B", "C"], datasets: [{ label: "Moyenne — Prix", data: [10, 20, 60] }] })!;
+    const texte = e.lignes.map((l) => l.texte).join(" ");
+    expect(texte).not.toContain("du total");
+    expect(texte).toContain("La moitié des 3 catégories est au-dessus de 20");
+  });
+  it("décrit une série dans le temps comme une évolution", () => {
+    const e = expliquerGraphique({ titre: "Somme — Ventes selon Date", type: "Aires", labels: ["janv. 2024", "févr. 2024", "mars 2024", "avr. 2024"], datasets: [{ label: "Somme — Ventes", data: [100, 180, null, 150] }] })!;
+    expect(e.lignes[0]).toEqual({ titre: "Évolution", texte: "De 100 (« janv. 2024 ») à 150 (« avr. 2024 ») : hausse de 50 (+50 %)." });
+    expect(e.lignes[1].texte).toBe("Maximum en « févr. 2024 » (180), minimum en « janv. 2024 » (100).");
+    expect(e.lignes[2].texte).toContain("1 période sans donnée");
+  });
+  it("compare plusieurs séries sans supposer que ce sont des fichiers", () => {
+    const e = expliquerGraphique({
+      titre: "Hommes, Femmes par Departement",
+      type: "Barres",
+      labels: ["Bouake", "Beoumi", "Botro"],
+      datasets: [{ label: "Hommes", data: [100, 40, null] }, { label: "Femmes", data: [90, 45, 20] }],
+    })!;
+    expect(e.multiSeries).toBe(true);
+    expect(e.lignes[0].texte).toBe("« Femmes » : 155 au total (52,5 % de l'ensemble des séries), devant « Hommes » (140).");
+    expect(e.lignes[1].texte).toBe("En tête : « Hommes » sur 1, « Femmes » sur 1 (sur 2 catégories comparables).");
+    expect(e.lignes[2].texte).toBe("Sur « Bouake » : « Hommes » (100) contre « Femmes » (90), soit 10 d'écart.");
+    expect(expliquerGraphique({ labels: [], datasets: [] })).toBeNull();
   });
 });

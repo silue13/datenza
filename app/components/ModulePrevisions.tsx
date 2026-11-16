@@ -397,9 +397,15 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     );
 
     let pireChute = 0;
+    let pireChuteDe = "";
+    let pireChuteA = "";
     for (let i = 1; i < hist.length; i++) {
       const chute = hist[i - 1].valeur - hist[i].valeur;
-      if (chute > pireChute) pireChute = chute;
+      if (chute > pireChute) {
+        pireChute = chute;
+        pireChuteDe = hist[i - 1].periode;
+        pireChuteA = hist[i].periode;
+      }
     }
 
     const plafondEngagement = Math.round(
@@ -410,6 +416,8 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       effortMensuelMoyen,
       seuilAlerteJ30,
       pireChute: Math.round(pireChute),
+      pireChuteDe,
+      pireChuteA,
       plafondEngagement,
       prochainMois,
       cibleFinale,
@@ -558,7 +566,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     if (estBenchmarkActif && calculsComparatifs && calculsComparatifs.possible) {
       interpretation = `Confrontation prévisionnelle sur ${sourcesFichiers.length} sources.\nLeader projeté : « ${calculsComparatifs.leader.nomSrc} » (${calculsComparatifs.leader.cibleFinale.toLocaleString("fr-FR")}).\nPlus forte dynamique : « ${calculsComparatifs.plusDynamique.nomSrc} » (${calculsComparatifs.plusDynamique.variationPct >= 0 ? "+" : ""}${calculsComparatifs.plusDynamique.variationPct} %).`;
     } else if (sourceActive && calculsDecisionnels) {
-      interpretation = `Projection à +${horizon} périodes.\nFiabilité : ${sourceActive.metriques.fiabilite} (R² = ${sourceActive.metriques.r2}).\nAtterrissage projeté : ${calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} (${sourceActive.metriques.variationEstimeePct >= 0 ? "+" : ""}${sourceActive.metriques.variationEstimeePct} %). Seuil d'invalidation J+30 : ${calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}.`;
+      interpretation = `Projection à +${horizon} périodes.\nFiabilité : ${sourceActive.metriques.fiabilite} (R² = ${sourceActive.metriques.r2}).\nAtterrissage projeté : ${calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} (${sourceActive.metriques.variationEstimeePct >= 0 ? "+" : ""}${sourceActive.metriques.variationEstimeePct} %). Seuil de vigilance pour la prochaine période : ${calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}.`;
     }
 
     const objetExport: any = {
@@ -635,6 +643,21 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       },
     },
   };
+
+  // Repères utilisés par les textes d'explication (fichier unique)
+  const resultatSimple = !estBenchmarkActif && diagnosticOuResultat && diagnosticOuResultat.possible ? diagnosticOuResultat : null;
+  const cycleAnnuel = Boolean(resultatSimple?.metriques.saisonnalite);
+  // Écart moyen entre le modèle et les valeurs réellement observées : c'est lui qui fixe la largeur de la fourchette
+  const erreurTypique =
+    resultatSimple?.ajustement && resultatSimple.ajustement.length === resultatSimple.historique.length
+      ? Math.round(
+          (resultatSimple.historique.reduce((t, p, i) => t + Math.abs(p.valeur - resultatSimple.ajustement![i].valeur), 0) /
+            resultatSimple.historique.length) *
+            100
+        ) / 100
+      : null;
+  // Pente de la tendance (hors cycle) ; à défaut, progression moyenne des projections
+  const rythmeFond = resultatSimple ? resultatSimple.metriques.pente : calculsDecisionnels?.effortMensuelMoyen ?? 0;
 
   const estPrevisionPossible = estBenchmarkActif
     ? Boolean(calculsComparatifs?.possible)
@@ -1015,7 +1038,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                 {ongletExplication === "scenarios" && (
                   <div className="space-y-4">
                     <p className="text-slate-600 dark:text-slate-400">
-                      À l&apos;horizon <strong>{analyseAvancee.derniereProj.periode}</strong>
+                      À l&apos;horizon <strong>{libellePeriode(analyseAvancee.derniereProj.periode)}</strong>
                       {estBenchmarkActif && (
                         <span> pour la série <strong>{sourceActive.nom}</strong></span>
                       )}
@@ -1030,14 +1053,14 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                             Scénario Prudent (Bas)
                           </span>
                           <span className="text-[10px] bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold">
-                            Plancher de sécurité
+                            Borne basse à 95 %
                           </span>
                         </div>
                         <div className="text-xl font-black text-slate-900 dark:text-white">
                           {analyseAvancee.derniereProj.borneBasse.toLocaleString("fr-FR")}
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                          Le seuil minimal statistique si les aléas défavorables se cumulent. Utilisez ce montant pour sécuriser votre trésorerie ou calibrer un budget strict.
+                          D&apos;après les écarts constatés par le passé, il y a environ 2,5 % de chances que la valeur réelle soit plus basse. C&apos;est l&apos;hypothèse à retenir pour rester prudent.
                         </p>
                       </div>
 
@@ -1055,7 +1078,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                           {analyseAvancee.derniereProj.valeurPrevue.toLocaleString("fr-FR")}
                         </div>
                         <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                          L&apos;atterrissage le plus probable d&apos;après le prolongement mathématique de la tendance ({sourceActive.metriques.variationEstimeePct >= 0 ? "+" : ""}{sourceActive.metriques.variationEstimeePct} %). Votre repère d&apos;objectifs.
+                          L&apos;atterrissage le plus probable d&apos;après le prolongement mathématique de la tendance ({sourceActive.metriques.variationEstimeePct >= 0 ? "+" : ""}{sourceActive.metriques.variationEstimeePct} %{"referenceVariation" in sourceActive.metriques && sourceActive.metriques.referenceVariation ? ` par rapport à ${libellePeriode(String(sourceActive.metriques.referenceVariation))}` : ""}). Votre repère d&apos;objectifs.
                         </p>
                       </div>
 
@@ -1066,14 +1089,14 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                             Scénario Favorable (Haut)
                           </span>
                           <span className="text-[10px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">
-                            Potentiel maximal
+                            Borne haute à 95 %
                           </span>
                         </div>
                         <div className="text-xl font-black text-slate-900 dark:text-white">
                           {analyseAvancee.derniereProj.borneHaute.toLocaleString("fr-FR")}
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                          Le plafond envisageable si l&apos;activité connaît une dynamique particulièrement forte sans à-coups négatifs.
+                          Il y a environ 2,5 % de chances que la valeur réelle soit plus haute. Ce n&apos;est pas un maximum possible, mais une limite rarement dépassée.
                         </p>
                       </div>
                     </div>
@@ -1107,7 +1130,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                               <tr key={p.periode} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                                 <td className="p-3 font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
                                   <span className="w-2 h-2 rounded-full bg-cyan-600"></span>
-                                  {p.periode} {idx === 0 && <span className="text-[10px] text-slate-400 font-normal">(prochaine période)</span>}
+                                  {libellePeriode(p.periode)} {idx === 0 && <span className="text-[10px] text-slate-400 font-normal">(prochaine période)</span>}
                                 </td>
                                 <td className="p-3 text-right text-slate-600 dark:text-slate-400 font-mono">
                                   {p.borneBasse.toLocaleString("fr-FR")}
@@ -1137,7 +1160,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
                         <span className="text-slate-400 block text-[11px]">Creux historique le plus bas</span>
-                        <strong className="text-rose-600 text-sm">{analyseAvancee.pointMin.periode}</strong>
+                        <strong className="text-rose-600 text-sm">{libellePeriode(analyseAvancee.pointMin.periode)}</strong>
                         <p className="font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5">
                           {analyseAvancee.pointMin.valeur.toLocaleString("fr-FR")}
                         </p>
@@ -1145,15 +1168,15 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
 
                       <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
                         <span className="text-slate-400 block text-[11px]">Pic historique le plus haut</span>
-                        <strong className="text-emerald-600 text-sm">{analyseAvancee.pointMax.periode}</strong>
+                        <strong className="text-emerald-600 text-sm">{libellePeriode(analyseAvancee.pointMax.periode)}</strong>
                         <p className="font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5">
                           {analyseAvancee.pointMax.valeur.toLocaleString("fr-FR")}
                         </p>
                       </div>
 
                       <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                        <span className="text-slate-400 block text-[11px]">Volatilité mensuelle constatée</span>
-                        <strong className="text-purple-600 text-sm">± {analyseAvancee.volatilitePct} % de variation</strong>
+                        <span className="text-slate-400 block text-[11px]">Dispersion des valeurs passées</span>
+                        <strong className="text-purple-600 text-sm">écart-type = {analyseAvancee.volatilitePct} % de la moyenne</strong>
                         <p className="text-slate-500 text-[11px] mt-0.5">
                           {analyseAvancee.ecartExtremes !== null
                             ? `Écart max/min de ${analyseAvancee.ecartExtremes}×`
@@ -1165,15 +1188,15 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                     <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
                       <h4 className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4 text-amber-500" />
-                        Pourquoi la fourchette est-elle aussi large ?
+                        D&apos;où vient la fourchette ?
                       </h4>
                       <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                        L&apos;historique de <strong>{sourceActive.nom}</strong> a connu un creux en{" "}
-                        <strong>{analyseAvancee.pointMin.periode}</strong> ({analyseAvancee.pointMin.valeur.toLocaleString("fr-FR")}) avant de rebondir en{" "}
-                        <strong>{analyseAvancee.pointMax.periode}</strong> ({analyseAvancee.pointMax.valeur.toLocaleString("fr-FR")}).
+                        Sur la période observée, les valeurs ont varié entre{" "}
+                        <strong>{analyseAvancee.pointMin.valeur.toLocaleString("fr-FR")}</strong> ({libellePeriode(analyseAvancee.pointMin.periode)}) et{" "}
+                        <strong>{analyseAvancee.pointMax.valeur.toLocaleString("fr-FR")}</strong> ({libellePeriode(analyseAvancee.pointMax.periode)}).
                       </p>
                       <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-                        Le moteur statistique prend en compte cette fluctuation passée (R² = {sourceActive.metriques.r2}). Pour éviter une certitude artificielle, il élargit proportionnellement l&apos;intervalle de confiance.
+                        La fourchette ne vient pas de ces extrêmes, mais de l&apos;écart entre le modèle et ce qui s&apos;est réellement passé{erreurTypique !== null ? ` : en moyenne, le modèle s'est écarté de ${erreurTypique.toLocaleString("fr-FR")} par période` : ""} (R² = {sourceActive.metriques.r2}). Plus la période prévue est lointaine, plus la fourchette s&apos;élargit.
                       </p>
                     </div>
                   </div>
@@ -1196,22 +1219,18 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                             <Target className="w-4 h-4 text-purple-600" />
-                            Seuil d&apos;invalidation à J+30 ({calculsDecisionnels.prochainMois.periode})
+                            Seuil de vigilance pour {libellePeriode(calculsDecisionnels.prochainMois.periode)}
                           </span>
                           <span className="text-[10px] font-bold bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300 px-2 py-0.5 rounded-full">
-                            Contrôle immédiat
+                            Prochaine période
                           </span>
                         </div>
                         <p className="text-xl font-black text-rose-600 dark:text-rose-400 font-mono">
                           &lt; {calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}
                         </p>
                         <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                          La cible prévue pour la prochaine période sur <strong>{sourceActive.nom}</strong> est de <strong>{calculsDecisionnels.prochainMois.valeurPrevue.toLocaleString("fr-FR")}</strong>.{" "}
-                          {sourceActive.metriques.sensTendance === "baisse" ? (
-                            <>La dynamique observée est en recul. Une clôture sous <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong> signale une baisse supérieure aux tolérances : ajustez vos coûts sans attendre.</>
-                          ) : (
-                            <>Une clôture sous <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong> compromet la dynamique haussière : réajustez vos objectifs sans attendre la fin du trimestre.</>
-                          )}
+                          La valeur prévue pour la prochaine période est de <strong>{calculsDecisionnels.prochainMois.valeurPrevue.toLocaleString("fr-FR")}</strong>. Si la valeur réelle passe sous{" "}
+                          <strong>{calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}</strong>, elle s&apos;écarte nettement de la prévision (près de la moitié du chemin vers la borne basse) : la tendance utilisée ne tient plus, et la projection doit être recalculée avec les nouvelles données.
                         </p>
                       </div>
 
@@ -1219,18 +1238,18 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                             <TrendingUp className="w-4 h-4 text-emerald-600" />
-                            Cadence périodique requise
+                            Tendance de fond
                           </span>
                           <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 px-2 py-0.5 rounded-full">
-                            Plan d&apos;action
+                            Rythme constaté
                           </span>
                         </div>
                         <p className="text-xl font-black text-slate-900 dark:text-white font-mono">
-                          {calculsDecisionnels.effortMensuelMoyen >= 0 ? "+" : ""}
-                          {calculsDecisionnels.effortMensuelMoyen.toLocaleString("fr-FR")} / période
+                          {rythmeFond >= 0 ? "+" : ""}
+                          {rythmeFond.toLocaleString("fr-FR")} / période
                         </p>
                         <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                          Pour passer du niveau actuel ({calculsDecisionnels.dernierReelVal.toLocaleString("fr-FR")}) à la cible finale de {calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} en {calculsDecisionnels.cibleFinale.periode}, l&apos;activité doit générer cette progression nette régulière.
+                          {cycleAnnuel ? "Une fois le cycle annuel mis de côté, la" : "La"} série évolue en moyenne de cette valeur d&apos;une période à la suivante. C&apos;est une tendance constatée dans les données, pas un objectif à atteindre.
                         </p>
                       </div>
 
@@ -1238,17 +1257,17 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                             <ShieldAlert className="w-4 h-4 text-amber-600" />
-                            Plafond d&apos;engagement sécurisé
+                            Valeur prudente pour planifier
                           </span>
                           <span className="text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 px-2 py-0.5 rounded-full">
-                            Trésorerie / Achats
+                            Hypothèse basse
                           </span>
                         </div>
                         <p className="text-xl font-black text-amber-600 dark:text-amber-400 font-mono">
-                          {calculsDecisionnels.plafondEngagement.toLocaleString("fr-FR")} max
+                          {calculsDecisionnels.plafondEngagement.toLocaleString("fr-FR")}
                         </p>
                         <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                          En raison de l&apos;incertitude constatée ({sourceActive.metriques.fiabilite.toLowerCase()}), engagez au maximum ce montant pour préserver vos marges en cas de retournement.
+                          Valeur située entre la borne basse et la projection centrale de {libellePeriode(calculsDecisionnels.cibleFinale.periode)}. Pour dimensionner un budget, un stock ou un effectif, elle laisse une marge si la réalité est moins bonne que prévu (fiabilité {sourceActive.metriques.fiabilite.toLowerCase()}).
                         </p>
                       </div>
 
@@ -1256,17 +1275,17 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                             <Activity className="w-4 h-4 text-cyan-600" />
-                            Coussin d&apos;accident historique
+                            Plus forte baisse d&apos;une période à l&apos;autre
                           </span>
                           <span className="text-[10px] font-bold bg-cyan-50 text-cyan-800 dark:bg-cyan-950/50 dark:text-cyan-300 px-2 py-0.5 rounded-full">
-                            Risque de creux
+                            Historique
                           </span>
                         </div>
                         <p className="text-xl font-black text-cyan-600 dark:text-cyan-400 font-mono">
-                          {calculsDecisionnels.pireChute > 0 ? `${calculsDecisionnels.pireChute.toLocaleString("fr-FR")} de réserve` : "Faible amplitude"}
+                          {calculsDecisionnels.pireChute > 0 ? `− ${calculsDecisionnels.pireChute.toLocaleString("fr-FR")}` : "Aucune baisse"}
                         </p>
                         <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                          La plus forte chute observée dans l&apos;historique de {sourceActive.nom} a atteint <strong>{calculsDecisionnels.pireChute.toLocaleString("fr-FR")}</strong>. C&apos;est le montant de réserve recommandé pour pallier un creux similaire.
+                          {calculsDecisionnels.pireChute > 0 ? `Observée entre ${libellePeriode(calculsDecisionnels.pireChuteDe)} et ${libellePeriode(calculsDecisionnels.pireChuteA)}. ${cycleAnnuel ? "Avec un cycle annuel, une telle baisse juste après un pic est attendue : elle est déjà intégrée aux projections." : "Une baisse de cet ordre s'est déjà produite : elle peut se reproduire."}` : "La série n'a jamais baissé d'une période à la suivante sur l'historique."}
                         </p>
                       </div>
                     </div>

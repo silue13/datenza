@@ -51,4 +51,20 @@ describe("analyse/prevision", () => {
     const r = calculerPrevisionGenerale(serie, "date_mois", 3);
     expect(r.possible && r.metriques.saisonnalite).toBe(false);
   });
+  it("ne laisse pas un pic de fin de série gonfler la tendance", () => {
+    // 2 ans, tendance réelle +2 par mois, pic de +300 chaque décembre (dont le dernier point)
+    const serie = Array.from({ length: 24 }, (_, i) => ({
+      periode: `${2023 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`,
+      valeur: 200 + 2 * i + (i % 12 === 11 ? 300 : 0),
+    }));
+    const r = calculerPrevisionGenerale(serie, "date_mois", 12);
+    expect(r.possible && r.metriques.saisonnalite).toBe(true);
+    if (r.possible) {
+      // Janvier 2025 attendu : 200 + 2 × 24 = 248 (et non ~300 avec une tendance gonflée par les pics)
+      expect(Math.abs(r.projections[0].valeurPrevue - 248)).toBeLessThan(3);
+      expect(Math.abs(r.metriques.pente - 2)).toBeLessThan(0.2);
+      const dec = r.projections.find((p) => p.periode === "2025-12")!;
+      expect(Math.abs(dec.valeurPrevue - (200 + 2 * 35 + 300))).toBeLessThan(5);
+    }
+  });
 });

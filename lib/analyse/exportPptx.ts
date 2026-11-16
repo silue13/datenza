@@ -1,5 +1,6 @@
 import pptxgen from "pptxgenjs";
 import { trierChronologiquement } from "./dates";
+import { expliquerGraphique } from "./graphique";
 import { parseNombre } from "./utils";
 
 // =========================================================================
@@ -832,11 +833,17 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       const maxPoints = estLigne ? 36 : estCirculaire ? 8 : 15;
       const debut = estLigne ? Math.max(0, tousLabels.length - maxPoints) : 0;
       const chartLabels = tousLabels.slice(debut, debut + maxPoints);
+      // PowerPoint dessine les barres horizontales de bas en haut : on inverse l'ordre pour garder le premier en haut
+      const inverser = Boolean(graphique.horizontal) && !estLigne && !estCirculaire;
+      const ordonner = <T,>(liste: T[]) => (inverser ? [...liste].reverse() : liste);
+      const etiquettes = ordonner(chartLabels);
       const chartData = (graphique.datasets || []).map((ds: any) => ({
         name: nettoyerNomMetier(ds.label || "Valeur"),
-        labels: chartLabels,
-        values: (ds.data || []).slice(debut, debut + maxPoints).map((v: any) => Number(v) || 0),
+        labels: etiquettes,
+        values: ordonner((ds.data || []).slice(debut, debut + maxPoints).map((v: any) => Number(v) || 0)),
       }));
+      // Libellés longs sous des barres verticales : inclinés pour ne pas se chevaucher
+      const libellesLongs = chartLabels.length > 5 && chartLabels.reduce((t, l) => t + l.length, 0) / chartLabels.length > 9;
 
       // Valeurs complètes (non tronquées) pour les indicateurs : total par libellé si plusieurs séries s'additionnent
       const nonAdditif = /(moyenne|m[ée]diane|minimum|maximum|average|median)/i.test(
@@ -891,6 +898,11 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
           dataLabelFormatCode: estCirculaire ? "0.0%" : aDecimales && maxAbs < 1000 ? "#,##0.0#" : "#,##0",
           valAxisLabelFormatCode: aDecimales && maxAbs < 10 ? "#,##0.0#" : "#,##0",
           catAxisLabelFontSize: chartLabels.length > 15 ? 8 : 10,
+          valAxisLabelFontSize: 10,
+          legendFontSize: 10,
+          dataLabelFontSize: 9,
+          ...(typePptx === pptx.ChartType.bar && !graphique.horizontal && libellesLongs ? { catAxisLabelRotate: 45 } : {}),
+          ...(estLigne && chartLabels.length > 12 ? { catAxisLabelRotate: 45, lineDataSymbolSize: 4 } : {}),
           ...(typePptx === pptx.ChartType.bar
             ? {
                 barDir: graphique.horizontal ? "bar" : "col",
@@ -966,9 +978,15 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       });
 
       // Synthèse textuelle managériale et adaptée
+      const explicationEcran = graphique.image
+        ? null
+        : expliquerGraphique({ titre: graphique.titre, type: typeStr, labels: graphique.labels, datasets: graphique.datasets });
       let texteFinal = "";
       if (graphique.interpretation && graphique.interpretation.length > 50) {
         texteFinal = nettoyerTexteProfessionnel(graphique.interpretation);
+      } else if (explicationEcran && explicationEcran.lignes.length) {
+        // Même lecture que sous le graphique à l'écran
+        texteFinal = explicationEcran.lignes.map((l) => `• ${l.titre.toUpperCase()} :\n${l.texte}`).join("\n\n");
       } else if (datasetPremier.length <= 1 || minVolume === maxVolume) {
         texteFinal = [
           `• PÉRIMÈTRE :\n${datasetPremier.length <= 1 ? `Une seule valeur est représentée (« ${nomLeader} », ${fr(maxVolume)}).` : `Toutes les valeurs sont identiques (${fr(maxVolume)}).`}`,
@@ -1002,7 +1020,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       }
 
       slideGraph.addText(texteFinal, {
-        x: cardX + 0.2, y: cardY + 1.95, w: cardW - 0.4, h: 3.2, fontFace: "Calibri", fontSize: 9.5, color: COULEURS.textePrincipal, lineSpacingMultiple: 1.25,
+        x: cardX + 0.2, y: cardY + 1.95, w: cardW - 0.4, h: 3.2, fontFace: "Calibri", fontSize: 9.5, color: COULEURS.textePrincipal, lineSpacingMultiple: 1.25, valign: "top", fit: "shrink",
       });
     });
   }

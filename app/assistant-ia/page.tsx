@@ -17,7 +17,7 @@ import {
 import { useData } from "../context/DataContext";
 import { analyserColonnes } from "../../lib/analyse/analyse";
 import { construireContexte, estColonneSensible } from "../../lib/analyse/context";
-import { executerRequete, extraireRequetes, resultatsPourIA, type ResultatRequete } from "../../lib/analyse/requete";
+import { contientBlocRequetes, executerRequete, extraireRequetes, resultatsPourIA, type ResultatRequete } from "../../lib/analyse/requete";
 import { calculerTdcAvecLimite, type Agregation } from "../../lib/analyse/tdc";
 import { parseNombre, arrondir, type Cellule } from "../../lib/analyse/utils";
 import TableTdc from "../components/TableTdc";
@@ -199,6 +199,7 @@ function CalculsIA({ calculs }: { calculs: ResultatRequete[] }) {
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">
                   {r.nbLignesRetenues.toLocaleString("fr-FR")} ligne(s) du fichier prises en compte
+                  {r.nbLignesSansGroupe ? ` · dont ${r.nbLignesSansGroupe.toLocaleString("fr-FR")} sans valeur de regroupement, absentes du tableau` : ""}
                   {r.tronque ? ` · ${r.lignes.length} premiers résultats sur ${r.nbGroupes}` : ""}
                 </p>
               </>
@@ -488,9 +489,12 @@ Le fichier de référence étalon est : « ${refSource} ».
         setEtape("redaction");
         data = await appeler(resultatsPourIA(calculs));
         // S'il redemande des calculs au lieu de répondre, on montre au moins les résultats obtenus
-        if (extraireRequetes(data.reponse)) {
+        if (contientBlocRequetes(data.reponse)) {
           data = { ...data, reponse: "Voici les résultats calculés sur l'ensemble du fichier." };
         }
+      } else if (contientBlocRequetes(data.reponse)) {
+        // Demande de calcul illisible ou vide : on n'affiche jamais le bloc technique à la place d'une réponse
+        throw new Error("L'assistant n'a pas réussi à formuler le calcul. Reformulez la question, par exemple en nommant la colonne concernée.");
       }
       setMessages((p) => [...p, { role: "assistant", text: data.reponse, via: data.fournisseur, calculs }]);
     } catch (e) {

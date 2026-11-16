@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Bar, Line, Pie, Doughnut } from "react-chartjs-2";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,6 +29,7 @@ import {
   calculerSerie,
   calculerSeriesVentilees,
   recommanderGraphiques,
+  expliquerGraphique,
   nomLisible,
   filtrePourPoint,
   alignerSeries,
@@ -273,9 +274,17 @@ const libelleFiltre = (f: ConditionFiltre) =>
 const memeFiltre = (a: ConditionFiltre, b: ConditionFiltre) =>
   a.colonne === b.colonne && a.operateur === b.operateur && String(a.valeur) === String(b.valeur) && String(a.valeurFin ?? "") === String(b.valeurFin ?? "");
 
-export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: GraphiqueGenerateurProps) {
-  const { graphiquesEpingles, epinglerGraphique, nomFichier, filtresActifs, ajouterFiltre, supprimerFiltre, reinitialiserFiltres } = useData();
-  const actionEpingler = onEpingler || epinglerGraphique;
+export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerateurProps) {
+  const {
+    nomFichier,
+    filtresActifs,
+    ajouterFiltre,
+    supprimerFiltre,
+    reinitialiserFiltres,
+    publierGraphiquesAffiches,
+    graphiquesExclus,
+    basculerExclusionGraphique,
+  } = useData();
 
   const estModeComparaison = entetes.includes("Fichier Source");
   const idxSource = entetes.indexOf("Fichier Source");
@@ -344,8 +353,9 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
   const [messageErreur, setMessageErreur] = useState<string>("");
   const compteur = useRef(0);
 
+  // Tout graphique affiché part dans le PowerPoint, sauf si l'utilisateur l'en a retiré
   const estInclusPptx = (id: number | string) => {
-    return (graphiquesEpingles || []).some((g) => g.id === id);
+    return !(graphiquesExclus || []).includes(String(id));
   };
 
   // 2. MOTEUR DE RECOMMANDATION SANS DOUBLON (1 seul graphique par donnée analysée)
@@ -638,6 +648,17 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
     [specs, entetes, corps, estModeComparaison, sourcesFichiers, idxSource]
   );
 
+  // Les graphiques affichés (automatiques puis créés à la main) sont ceux du PowerPoint : on les publie
+  // à chaque changement de données, de filtre ou de réglage, pour que l'export reflète exactement l'écran.
+  useEffect(() => {
+    publierGraphiquesAffiches([
+      ...graphiquesRecommandes,
+      ...graphiquesGeneres.filter((g) => g.type !== "Carte" && (g.labels?.length ?? 0) > 0),
+    ]);
+    // publierGraphiquesAffiches est recréée à chaque rendu du contexte : seules les listes comptent
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphiquesRecommandes, graphiquesGeneres]);
+
   /** Clic sur un point : ajoute le filtre correspondant, ou le retire s'il est déjà actif. */
   function basculerFiltre(g: GraphiqueEpingle, index: number) {
     const f = g.filtresClic?.[index];
@@ -781,7 +802,8 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                     </div>
 
                     <button
-                      onClick={() => actionEpingler && actionEpingler(g)}
+                      onClick={() => basculerExclusionGraphique(g.id)}
+                      title={estEpingle ? "Cliquez pour retirer ce graphique du PowerPoint" : "Cliquez pour le remettre dans le PowerPoint"}
                       className={`no-print print:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer ${
                         estEpingle
                           ? "bg-blue-600 text-white shadow-xs"
@@ -789,7 +811,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                       }`}
                     >
                       <Presentation className="w-3.5 h-3.5" />
-                      {estEpingle ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
+                      {estEpingle ? "✓ Dans le PPTX" : "Retiré du PPTX"}
                     </button>
                   </div>
 
@@ -1038,7 +1060,8 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                     </h4>
                     <div className="no-print print:hidden flex items-center gap-2 shrink-0">
                       <button
-                        onClick={() => actionEpingler && actionEpingler(g)}
+                        onClick={() => basculerExclusionGraphique(g.id)}
+                      title={estEpingle ? "Cliquez pour retirer ce graphique du PowerPoint" : "Cliquez pour le remettre dans le PowerPoint"}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                           estEpingle
                             ? "bg-blue-600 text-white shadow-xs"
@@ -1046,7 +1069,7 @@ export default function GraphiqueGenerateur({ entetes, corps, onEpingler }: Grap
                         }`}
                       >
                         <Presentation className="w-3.5 h-3.5" />
-                        {estEpingle ? "✓ Inclus au PPTX" : "+ Ajouter au PPTX"}
+                        {estEpingle ? "✓ Dans le PPTX" : "Retiré du PPTX"}
                       </button>
                       <button
                         onClick={() => setSpecs((prev) => prev.filter((x) => x.id !== g.id))}
@@ -1104,121 +1127,27 @@ function ExplicationDetailleeGraphique({
   graphique: GraphiqueEpingle;
   nomFichier?: string;
 }) {
-  const estComparatifMultiSeries = (graphique.datasets || []).length >= 2;
-
   const [syntheseDecisionnelle, setSyntheseDecisionnelle] = useState<string | null>(null);
   const [chargement, setChargement] = useState<boolean>(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
-  const analyse = useMemo(() => {
-    const labels = (graphique.labels || []).map(String);
-    const datasets = graphique.datasets || [];
-    if (!labels.length || !datasets.length) return null;
-
-    if (estComparatifMultiSeries) {
-      const syntheseDatasets = datasets.map((d) => {
-        const nums = (d.data || []).map((v) => Number(v) || 0);
-        const total = nums.reduce((acc, v) => acc + v, 0);
-        const moyenne = nums.length ? total / nums.length : 0;
-        return {
-          nom: d.label || "Série",
-          total: Math.round(total * 100) / 100,
-          moyenne: Math.round(moyenne * 100) / 100,
-          data: nums,
-        };
-      });
-
-      const classement = [...syntheseDatasets].sort((a, b) => b.total - a.total);
-      const leader = classement[0];
-      const dauphin = classement[1];
-      const ecartLeaderDauphin = Math.round((leader.total - dauphin.total) * 100) / 100;
-      const pctAvance = dauphin.total > 0 ? Math.round((ecartLeaderDauphin / dauphin.total) * 1000) / 10 : 0;
-
-      const victoiresParSource: Record<string, number> = {};
-      syntheseDatasets.forEach((d) => (victoiresParSource[d.nom] = 0));
-
-      let plusGrosEcart = {
-        label: labels[0],
-        amplitude: -1,
-        premier: "",
-        valeurPremier: 0,
-        second: "",
-        valeurSecond: 0,
-      };
-
-      labels.forEach((lab, idx) => {
-        const pointsSurCat = syntheseDatasets
-          .map((d) => ({ nom: d.nom, val: d.data[idx] || 0 }))
-          .sort((a, b) => b.val - a.val);
-
-        const premierCat = pointsSurCat[0];
-        const secondCat = pointsSurCat[1] || { nom: "", val: 0 };
-        const amplitudeCat = Math.round((premierCat.val - secondCat.val) * 100) / 100;
-
-        if (premierCat && victoiresParSource[premierCat.nom] !== undefined) {
-          victoiresParSource[premierCat.nom]++;
-        }
-
-        if (amplitudeCat > plusGrosEcart.amplitude) {
-          plusGrosEcart = {
-            label: lab,
-            amplitude: amplitudeCat,
-            premier: premierCat.nom,
-            valeurPremier: premierCat.val,
-            second: secondCat.nom,
-            valeurSecond: secondCat.val,
-          };
-        }
-      });
-
-      const classementVictoires = Object.entries(victoiresParSource).sort((a, b) => b[1] - a[1]);
-
-      return {
-        estComparatif: true as const,
-        nombreSeries: datasets.length,
-        syntheseDatasets,
-        classement,
-        leader,
-        dauphin,
-        ecartLeaderDauphin,
-        pctAvance,
-        victoiresParSource,
-        classementVictoires,
-        plusGrosEcart,
-        nbPoints: labels.length,
-      };
-    }
-
-    const points = labels.map((l, idx) => ({
-      label: l,
-      valeur: Number(datasets[0]?.data[idx]) || 0,
-    }));
-
-    const total = points.reduce((acc, p) => acc + p.valeur, 0);
-    const triees = [...points].sort((a, b) => b.valeur - a.valeur);
-    const max = triees[0];
-    const min = triees[triees.length - 1];
-    const ecartAbsolu = Math.round((max.valeur - min.valeur) * 100) / 100;
-    const ratio = min.valeur > 0 ? Math.round((max.valeur / min.valeur) * 10) / 10 : null;
-
-    return {
-      estComparatif: false as const,
-      max,
-      min,
-      ecartAbsolu,
-      ratio,
-      moyenne: Math.round((total / points.length) * 100) / 100,
-      nbModalites: points.length,
-    };
-  }, [graphique, estComparatifMultiSeries]);
+  // Constats calculés sur les valeurs dessinées (fonction testée dans lib/analyse/graphique.ts)
+  const analyse = useMemo(() => expliquerGraphique(graphique), [graphique]);
 
   async function genererSyntheseApprofondie() {
     setChargement(true);
     setErreur(null);
     try {
       const labels = (graphique.labels || []).map(String);
-      const resumePoints = labels.slice(0, 10).map((lab, i) => {
-        const val = (graphique.datasets || []).map((d) => `${d.label || "Valeur"}: ${d.data[i] ?? 0}`).join(", ");
+      // Jusqu'à 40 points : les plus récents pour une série dans le temps, les premiers pour un classement.
+      // Une valeur absente est transmise comme « absente », jamais comme 0.
+      const dansLeTemps = graphique.type === "Courbe" || graphique.type === "Aires";
+      const debut = dansLeTemps ? Math.max(0, labels.length - 40) : 0;
+      const resumePoints = labels.slice(debut, debut + 40).map((lab, k) => {
+        const i = debut + k;
+        const val = (graphique.datasets || [])
+          .map((d) => `${d.label || "Valeur"}: ${d.data[i] === null || d.data[i] === undefined ? "absente" : d.data[i]}`)
+          .join(", ");
         return `${lab} (${val})`;
       });
 
@@ -1226,14 +1155,16 @@ function ExplicationDetailleeGraphique({
         fichier: nomFichier || "Données",
         graphique: graphique.titre,
         type: graphique.type,
+        nombre_de_points: labels.length,
         donnees: resumePoints,
+        constats_deja_calcules: (analyse?.lignes ?? []).map((l) => `${l.titre} : ${l.texte}`),
       });
 
-      const question = `Rédige une analyse managériale concise de ce graphique intitulé "${graphique.titre}" :
-- Constat majeur chiffré (volume, part dominante ou concentration).
-- Contraste ou divergence opérationnelle notable.
-- Recommandation concrète d'action.
-Reste concis, précis, direct et professionnel, sans formule d'introduction ni de conclusion. Ne mentionne jamais que tu es une IA.`;
+      const question = `Rédige une lecture concise de ce graphique intitulé "${graphique.titre}" :
+- Le constat principal, chiffré, à partir des données fournies uniquement.
+- Un contraste ou une irrégularité notable.
+- Une piste à vérifier ou une question à se poser.
+N'invente aucun chiffre, aucune cause et aucun contexte absents des données ; ne contredis pas les constats déjà calculés. Si une valeur est « absente », ne la traite pas comme zéro. Reste concis et direct, sans formule d'introduction ni de conclusion. Ne mentionne jamais que tu es une IA.`;
 
       const moteurPref = typeof window !== "undefined" ? lireFournisseur() : "auto";
 
@@ -1275,9 +1206,7 @@ Reste concis, précis, direct et professionnel, sans formule d'introduction ni d
         <div className="flex items-center gap-2">
           <BarChart3 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
           <h5 className="font-bold text-slate-800 dark:text-slate-200">
-            {analyse.estComparatif
-              ? `Lecture comparative multi-sources (${analyse.nombreSeries} fichiers) :`
-              : "Indicateurs & Points clés :"}
+            {analyse.multiSeries ? `Lecture comparée (${analyse.nbSeries} séries) :` : "Ce que montre ce graphique :"}
           </h5>
         </div>
 
@@ -1305,72 +1234,22 @@ Reste concis, précis, direct et professionnel, sans formule d'introduction ni d
         </button>
       </div>
 
-      {analyse.estComparatif ? (
-        <div className="space-y-1.5">
-          <div className="flex items-start gap-1.5">
+      <div className="space-y-1">
+        {analyse.lignes.map((l) => (
+          <div key={l.titre} className="flex items-start gap-1.5">
             <span className="font-bold text-blue-600">•</span>
             <p className="text-slate-700 dark:text-slate-300">
-              <strong>Leader global du graphique : </strong>
-              <strong>« {analyse.leader.nom} »</strong> arrive en première position avec un volume cumulé de{" "}
-              <strong>{analyse.leader.total.toLocaleString("fr-FR")}</strong> (moyenne de {analyse.leader.moyenne.toLocaleString("fr-FR")} par élément), devançant <strong>« {analyse.dauphin.nom} »</strong> de{" "}
-              <span className="font-bold text-emerald-600">
-                +{analyse.ecartLeaderDauphin.toLocaleString("fr-FR")} (+{analyse.pctAvance} %)
-              </span>.
+              <strong>{l.titre} :</strong> {l.texte}
             </p>
           </div>
-
-          <div className="flex items-start gap-1.5">
-            <span className="font-bold text-blue-600">•</span>
-            <p className="text-slate-700 dark:text-slate-300">
-              <strong>Répartition des positions : </strong>
-              {analyse.classementVictoires.map(([nom, victoires], i) => (
-                <span key={nom}>
-                  <strong>« {nom} »</strong> l&apos;emporte sur {victoires} catégorie(s)
-                  {i < analyse.classementVictoires.length - 1 ? ", " : "."}
-                </span>
-              ))}
-            </p>
-          </div>
-
-          <div className="flex items-start gap-1.5">
-            <span className="font-bold text-blue-600">•</span>
-            <p className="text-slate-700 dark:text-slate-300">
-              <strong>Plus forte divergence constatée : </strong>
-              Sur <strong>« {analyse.plusGrosEcart.label} »</strong>, l&apos;écart atteint{" "}
-              <strong>{analyse.plusGrosEcart.amplitude.toLocaleString("fr-FR")}</strong> en faveur de{" "}
-              <strong>« {analyse.plusGrosEcart.premier} »</strong> ({analyse.plusGrosEcart.valeurPremier.toLocaleString("fr-FR")} vs {analyse.plusGrosEcart.valeurSecond.toLocaleString("fr-FR")} pour {analyse.plusGrosEcart.second}).
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-1">
-          <div className="flex items-start gap-1.5">
-            <span className="font-bold text-blue-600">•</span>
-            <p className="text-slate-700 dark:text-slate-300">
-              <strong>Pôle dominant :</strong> <strong>{analyse.max.label}</strong> ({analyse.max.valeur.toLocaleString("fr-FR")}).
-            </p>
-          </div>
-          <div className="flex items-start gap-1.5">
-            <span className="font-bold text-blue-600">•</span>
-            <p className="text-slate-700 dark:text-slate-300">
-              <strong>Pôle en retrait :</strong> <strong>{analyse.min.label}</strong> ({analyse.min.valeur.toLocaleString("fr-FR")}).
-            </p>
-          </div>
-          <div className="flex items-start gap-1.5">
-            <span className="font-bold text-blue-600">•</span>
-            <p className="text-slate-700 dark:text-slate-300">
-              <strong>Disparité :</strong> Écart de <strong>{analyse.ecartAbsolu.toLocaleString("fr-FR")}</strong>
-              {analyse.ratio ? ` (ratio de ${analyse.ratio}×)` : ""}.
-            </p>
-          </div>
-        </div>
-      )}
+        ))}
+      </div>
 
       {syntheseDecisionnelle && (
         <div className="mt-2.5 pt-2.5 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
           <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-slate-100 text-[11px]">
             <span className="w-2 h-2 rounded-full bg-blue-600"></span>
-            <span className="uppercase tracking-wider">Synthèse décisionnelle &amp; Recommandations :</span>
+            <span className="uppercase tracking-wider">Lecture approfondie (rédigée par l&apos;IA) :</span>
           </div>
           <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_GRAPH}>

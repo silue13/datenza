@@ -66,6 +66,12 @@ interface DataContextType {
   setRapport: React.Dispatch<React.SetStateAction<BlocRapport[]>>;
   setResultat: React.Dispatch<React.SetStateAction<ResultatAnalyse | null>>;
   epinglerGraphique: (graphique: GraphiqueEpingle) => void;
+  /** Graphiques actuellement à l'écran (automatiques et créés à la main) : ce sont eux qui partent dans le PowerPoint. */
+  graphiquesAffiches: GraphiqueEpingle[];
+  publierGraphiquesAffiches: (graphiques: GraphiqueEpingle[]) => void;
+  /** Identifiants des graphiques affichés que l'utilisateur a retirés du PowerPoint. */
+  graphiquesExclus: string[];
+  basculerExclusionGraphique: (id: number | string) => void;
   desepinglerGraphique: (id: number | string) => void;
   ajouterFiltre: (filtre: ConditionFiltre) => void;
   supprimerFiltre: (index: number) => void;
@@ -294,6 +300,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
     void effacerEtat();
   }
 
+  const [graphiquesAffiches, setGraphiquesAffiches] = useState<GraphiqueEpingle[]>([]);
+  const [graphiquesExclus, setGraphiquesExclus] = useState<string[]>([]);
+
+  function publierGraphiquesAffiches(graphiques: GraphiqueEpingle[]) {
+    setGraphiquesAffiches(graphiques);
+  }
+
+  function basculerExclusionGraphique(id: number | string) {
+    const cle = String(id);
+    setGraphiquesExclus((prev) => (prev.includes(cle) ? prev.filter((x) => x !== cle) : [...prev, cle]));
+  }
+
   function epinglerGraphique(graphique: GraphiqueEpingle) {
     setGraphiquesEpingles((prev) =>
       prev.some((g) => String(g.id) === String(graphique.id)) ? prev : [graphique, ...prev]
@@ -314,6 +332,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         rapport,
         resultat,
         graphiquesEpingles,
+        graphiquesAffiches,
+        publierGraphiquesAffiches,
+        graphiquesExclus,
+        basculerExclusionGraphique,
         filtresActifs,
         chargerDonnees,
         setChoisies,
