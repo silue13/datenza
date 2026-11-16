@@ -23,7 +23,17 @@ export interface ProjetCourant {
 }
 
 export type ResultatAnalyse = ReturnType<typeof analyserColonnes>;
-export type TypeGraphique = "Barres" | "Courbe" | "Camembert" | "Anneau" | "Radar" | "Aires" | "Carte";
+export type TypeGraphique =
+  | "Barres"
+  | "Courbe"
+  | "Camembert"
+  | "Anneau"
+  | "Radar"
+  | "Aires"
+  | "Carte"
+  | "Nuage"
+  | "Histogramme"
+  | "Combine";
 
 export interface GraphiqueEpingle {
   id: number | string;
@@ -40,6 +50,10 @@ export interface GraphiqueEpingle {
     fill?: boolean;
     borderDash?: number[];
     pointRadius?: number;
+    /** Graphique combiné : nature de la série (barres ou courbe) et axe des valeurs utilisé. */
+    type?: "bar" | "line";
+    yAxisID?: "y" | "y1";
+    order?: number;
   }[];
   chartType?: string;
   interpretation?: string;
@@ -47,6 +61,19 @@ export interface GraphiqueEpingle {
   horizontal?: boolean;
   /** Séries empilées plutôt que côte à côte. */
   empile?: boolean;
+  /** Nuage de points : une ligne du fichier par point, et la droite de tendance si elle a un sens. */
+  nuage?: {
+    series: { nom: string; points: { x: number; y: number }[] }[];
+    droite: { x1: number; y1: number; x2: number; y2: number } | null;
+    r: number | null;
+    nbPoints: number;
+  };
+  /** Titres des axes (nuage, histogramme, combiné). */
+  axes?: { x?: string; y?: string; y2?: string };
+  /** Constats calculés propres à ce type de graphique : remplacent la lecture générique sous le graphique. */
+  constats?: { titre: string; texte: string }[];
+  /** Deux indicateurs pour la fiche du PowerPoint, quand « premier rang » et « total » n'ont pas de sens. */
+  indicateurs?: { titre: string; valeur: string; detail: string }[];
   /** Filtre appliqué quand on clique sur le point n° i (filtrage croisé) ; null si le point n'est pas filtrable. */
   filtresClic?: (ConditionFiltre | null)[];
 }

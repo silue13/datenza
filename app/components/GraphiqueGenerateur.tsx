@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Bar, Line, Pie, Doughnut } from "react-chartjs-2";
+import { Bar, Line, Pie, Doughnut, Scatter } from "react-chartjs-2";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -39,6 +39,15 @@ import {
   type AgregationGraphique,
   type SerieGraphique,
 } from "../../lib/analyse/graphique";
+import {
+  calculerNuage,
+  expliquerNuage,
+  calculerHistogramme,
+  expliquerHistogramme,
+  calculerCombine,
+  expliquerCombine,
+} from "../../lib/analyse/graphiquesAvances";
+import { interpreterCorrelation } from "../../lib/analyse/stats";
 import { operationPour, estPseudoMesure } from "../../lib/analyse/mesures";
 import type { ConditionFiltre } from "../../lib/analyse/filtres";
 import { useData, type GraphiqueEpingle, type TypeGraphique } from "../context/DataContext";
@@ -77,6 +86,18 @@ const PALETTE = [
 ];
 
 const MAX_PARTS_CIRCULAIRE = 8;
+const COULEUR_AUTRES = "#94a3b8";
+const COULEUR_COURBE_COMBINEE = "#d97706";
+
+/** Types qui ne passent pas par l'agrégation « catégorie → valeur » habituelle. */
+const estNuageOuHistogramme = (type: TypeGraphique) => type === "Nuage" || type === "Histogramme";
+
+/** Nombre d'éléments sur l'axe ; pour un nuage, 1 dès qu'il y a au moins un point. */
+const compterPoints = (g: GraphiqueEpingle) => (g.type === "Nuage" ? Math.min(1, g.nuage?.nbPoints ?? 0) : g.labels?.length || 0);
+
+/** Libellé d'une mesure agrégée : « Somme — Ventes », « Effectif »… */
+const nomMesure = (agg: Agregation, colonne: string) =>
+  agg === "Nombre" ? "Effectif" : agg === "Pourcentage" ? LIBELLES_AGREGATION.Pourcentage : `${LIBELLES_AGREGATION[agg]} — ${colonne}`;
 
 const estCirculaire = (type: TypeGraphique) => type === "Camembert" || type === "Anneau";
 
@@ -119,6 +140,19 @@ function versNombre(v: Cellule): number | null {
   if (estValeurVide(v)) return null;
   return parseNombre(v);
 }
+
+const OPTIONS_AGREGATION = (
+  <>
+    <option value="Somme">Somme</option>
+    <option value="Moyenne">Moyenne</option>
+    <option value="Mediane">Médiane</option>
+    <option value="Minimum">Minimum</option>
+    <option value="Maximum">Maximum</option>
+    <option value="Nombre">Nombre d’enregistrements</option>
+    <option value="Pourcentage">Part des lignes (%)</option>
+    <option value="Valeurs distinctes">Nombre de valeurs distinctes</option>
+  </>
+);
 
 const selectClasse =
   "w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-blue-500";
@@ -180,8 +214,10 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
       if (cible) cible.style.cursor = cliquable && elements.length && g.filtresClic?.[elements[0].index] ? "pointer" : "default";
     },
     elements: { line: { tension: 0.25 }, point: { hoverRadius: 5 } },
-    // Quelques barres ne s'étalent plus sur toute la largeur de l'écran
-    datasets: { bar: { maxBarThickness: 56, categoryPercentage: 0.72, barPercentage: 0.9 } },
+    // Quelques barres ne s'étalent plus sur toute la largeur de l'écran ; celles d'un histogramme se touchent presque
+    datasets: {
+      bar: g.type === "Histogramme" ? { categoryPercentage: 1, barPercentage: 0.96 } : { maxBarThickness: 56, categoryPercentage: 0.72, barPercentage: 0.9 },
+    },
     plugins: {
       legend: {
         display: circulaire || multi,
@@ -226,7 +262,9 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
 
   if (circulaire) return commun;
 
+  const titreAxe = (texte?: string) => ({ display: !!texte, text: texte ?? "", color: "#64748b", font: { size: 10, weight: "bold" as const } });
   const axeValeurs = {
+    title: titreAxe(g.axes?.y),
     beginAtZero: g.type !== "Courbe" || empile,
     stacked: empile,
     grid: { color: "rgba(148,163,184,0.18)" },
@@ -235,6 +273,7 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
     grace: "8%",
   };
   const axeCategories = {
+    title: titreAxe(g.axes?.x),
     stacked: empile,
     grid: { display: false },
     ticks: {
@@ -246,9 +285,86 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
     },
   };
 
+  // Graphique combiné à deux échelles : l'axe de droite porte la courbe et ne trace pas de seconde grille
+  const deuxAxes = g.type === "Combine" && (g.datasets || []).some((d) => d.yAxisID === "y1");
+  const axeDroite = { ...axeValeurs, title: titreAxe(g.axes?.y2), position: "right" as const, grid: { drawOnChartArea: false } };
+
   return {
     ...commun,
-    scales: horizontal ? { x: axeValeurs, y: axeCategories } : { y: axeValeurs, x: axeCategories },
+    scales: horizontal
+      ? { x: axeValeurs, y: axeCategories }
+      : { y: axeValeurs, x: axeCategories, ...(deuxAxes ? { y1: axeDroite } : {}) },
+  };
+}
+
+/** Données Chart.js d'un nuage de points : une série par catégorie, puis la droite de tendance. */
+function donneesNuage(g: GraphiqueEpingle): any {
+  const n = g.nuage;
+  if (!n) return { datasets: [] };
+  const dense = n.series.reduce((t, s) => t + s.points.length, 0) > 400;
+  const datasets: any[] = n.series.map((s, i) => {
+    const couleur = /^Autres \(\d+\)$/.test(s.nom) ? COULEUR_AUTRES : PALETTE[i % PALETTE.length];
+    return {
+      label: s.nom || g.axes?.y || "Lignes",
+      data: s.points,
+      backgroundColor: `${couleur}${dense ? "80" : "b3"}`,
+      borderColor: "#ffffff",
+      borderWidth: dense ? 0 : 1,
+      pointRadius: dense ? 3 : 4.5,
+      pointHoverRadius: 7,
+    };
+  });
+  if (n.droite) {
+    datasets.push({
+      type: "line",
+      label: "Droite de tendance",
+      data: [
+        { x: n.droite.x1, y: n.droite.y1 },
+        { x: n.droite.x2, y: n.droite.y2 },
+      ],
+      borderColor: "#475569",
+      backgroundColor: "#475569",
+      borderWidth: 2,
+      borderDash: [6, 4],
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      pointHitRadius: 0,
+      pointStyle: "line",
+    });
+  }
+  return { datasets };
+}
+
+function creerOptionsNuage(g: GraphiqueEpingle): any {
+  const axe = (texte?: string) => ({
+    type: "linear" as const,
+    title: { display: !!texte, text: texte ?? "", color: "#64748b", font: { size: 10, weight: "bold" as const } },
+    grid: { color: "rgba(148,163,184,0.18)" },
+    border: { display: false },
+    ticks: { color: "#64748b", font: { size: 10 }, callback: (v: number | string) => formaterCompact(Number(v)) },
+  });
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    // Des milliers de points : pas d'animation, l'affichage reste immédiat
+    animation: false,
+    interaction: { mode: "nearest" as const, intersect: true },
+    plugins: {
+      legend: {
+        display: (g.nuage?.series.length ?? 0) > 1 || !!g.nuage?.droite,
+        position: "top" as const,
+        labels: { boxWidth: 10, boxHeight: 8, pointStyleWidth: 14, usePointStyle: true, color: "#64748b", font: { size: 11, weight: "bold" as const } },
+      },
+      datalabels: { display: false },
+      tooltip: {
+        filter: (item: any) => item.dataset.type !== "line",
+        callbacks: {
+          title: (items: any[]) => (items[0]?.dataset?.label && (g.nuage?.series.length ?? 0) > 1 ? items[0].dataset.label : ""),
+          label: (ctx: any) => [`${g.axes?.x ?? "X"} : ${formaterComplet(ctx.parsed.x)}`, `${g.axes?.y ?? "Y"} : ${formaterComplet(ctx.parsed.y)}`],
+        },
+      },
+    },
+    scales: { x: axe(g.axes?.x), y: axe(g.axes?.y) },
   };
 }
 
@@ -264,7 +380,15 @@ interface SpecGraphique {
   horizontal: boolean;
   empile: boolean;
   parFichier: boolean;
+  /** Graphique combiné : mesure de la courbe et choix de son échelle. */
+  y2: string;
+  agregation2: Agregation;
+  echelle: EchelleCourbe;
+  /** Histogramme : nombre de classes demandé, 0 pour un choix automatique. */
+  classes: number;
 }
+
+type EchelleCourbe = "auto" | "commune" | "separee";
 
 const libelleFiltre = (f: ConditionFiltre) =>
   f.operateur === "entre"
@@ -351,7 +475,32 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
   const [horizontal, setHorizontal] = useState<boolean>(false);
   const [empile, setEmpile] = useState<boolean>(true);
   const [messageErreur, setMessageErreur] = useState<string>("");
+  const [colonneY2, setColonneY2] = useState<string>("");
+  const [agregation2, setAgregation2] = useState<Agregation>("Moyenne");
+  const [echelle, setEchelle] = useState<EchelleCourbe>("auto");
+  const [nbClasses, setNbClasses] = useState<number>(0);
   const compteur = useRef(0);
+
+  /** Changer de format ajuste les colonnes proposées : un nuage ou un histogramme ne portent que sur des mesures. */
+  function changerType(type: TypeGraphique) {
+    setTypeGraphique(type);
+    setMessageErreur("");
+    setMessageInfo("");
+    if (estNuageOuHistogramme(type)) {
+      const x = colonnesMesurables.includes(colonneAxeX) ? colonneAxeX : colonnesMesurables[0] ?? "";
+      setColonneAxeX(x);
+      if (type === "Nuage" && (!colonnesMesurables.includes(colonneAxeY) || colonneAxeY === x)) {
+        setColonneAxeY(colonnesMesurables.find((c) => c !== x) ?? "");
+      }
+    }
+    if (type === "Combine") {
+      const autre = colonnesMesurables.find((c) => c !== colonneAxeY && c !== colonneAxeX);
+      if (!colonneY2 || colonneY2 === colonneAxeY || !colonnesMesurables.includes(colonneY2)) {
+        setColonneY2(autre ?? "");
+        setAgregation2(autre ? (operationPour(autre) === "somme" ? "Somme" : "Moyenne") : "Nombre");
+      }
+    }
+  }
 
   // Tout graphique affiché part dans le PowerPoint, sauf si l'utilisateur l'en a retiré
   const estInclusPptx = (id: number | string) => {
@@ -481,15 +630,131 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
 
     const { agregation: agg, limite: lim } = spec;
     const besoinY = !["Nombre", "Pourcentage"].includes(agg);
-    if (entetes.indexOf(spec.x) === -1) return { graphique: null, erreur: `La colonne « ${spec.x} » n'existe plus.` };
+    if (entetes.indexOf(spec.x) === -1) return { graphique: null, erreur: spec.x ? `La colonne « ${spec.x} » n'existe plus.` : "Veuillez sélectionner une colonne." };
+
+    // NUAGE DE POINTS : une ligne du fichier par point, sans agrégation
+    if (spec.type === "Nuage") {
+      if (entetes.indexOf(spec.y) === -1) return { graphique: null, erreur: "Veuillez sélectionner une mesure pour l'axe Y." };
+      if (spec.x === spec.y) return { graphique: null, erreur: "Choisissez deux colonnes différentes pour l'axe X et l'axe Y." };
+      const couleur = spec.legende && spec.legende !== spec.x && spec.legende !== spec.y && entetes.includes(spec.legende) ? spec.legende : "";
+      const n = calculerNuage(entetes, corps, spec.x, spec.y, { colonneSerie: couleur || undefined });
+      if (!n.nbPoints) return { graphique: null, erreur: `Aucune ligne n'a de valeur numérique à la fois dans « ${spec.x} » et « ${spec.y} ».` };
+      const notes: string[] = [];
+      if (n.nbAffiches < n.nbPoints) notes.push(`${formaterComplet(n.nbPoints)} lignes : ${formaterComplet(n.nbAffiches)} points sont dessinés, les calculs portent sur toutes.`);
+      if (couleur && n.nbSeriesTotal > 8) notes.push(`${n.nbSeriesTotal} valeurs dans « ${couleur} » : les 8 plus fréquentes ont leur couleur, le reste est en gris.`);
+      return {
+        graphique: {
+          id: spec.id,
+          type: "Nuage",
+          titre: `${spec.y} en fonction de ${spec.x}${couleur ? `, par ${couleur}` : ""}`,
+          labels: [],
+          datasets: [],
+          nuage: { series: n.series, droite: n.droite, r: n.r, nbPoints: n.nbPoints },
+          axes: { x: spec.x, y: spec.y },
+          constats: expliquerNuage(n, spec.x, spec.y),
+          indicateurs: [
+            { titre: "CORRÉLATION", valeur: n.r === null ? "—" : `r = ${formaterComplet(n.r)}`, detail: n.r === null ? "non mesurable" : `liaison ${interpreterCorrelation(n.r)}` },
+            { titre: "POINTS", valeur: formaterComplet(n.nbPoints), detail: "une ligne du fichier par point" },
+          ],
+        },
+        info: notes.join(" "),
+      };
+    }
+
+    // HISTOGRAMME : répartition d'une colonne numérique en classes de largeur égale
+    if (spec.type === "Histogramme") {
+      const h = calculerHistogramme(entetes, corps, spec.x, { nbClasses: spec.classes || undefined });
+      if (!h.n) return { graphique: null, erreur: `« ${spec.x} » ne contient aucune valeur numérique.` };
+      return {
+        graphique: {
+          id: spec.id,
+          type: "Histogramme",
+          titre: `Répartition de ${spec.x}`,
+          labels: h.classes.map((c) => c.label),
+          // Un clic filtre sur les valeurs réellement présentes dans la classe (la borne haute en est exclue)
+          filtresClic: h.classes.map((c) =>
+            c.effectif && c.minObserve !== null && c.maxObserve !== null
+              ? { colonne: spec.x, operateur: "entre" as const, valeur: c.minObserve, valeurFin: c.maxObserve }
+              : null
+          ),
+          datasets: [{ label: "Nombre de lignes", data: h.classes.map((c) => c.effectif), backgroundColor: "#2563eb", borderRadius: 2, borderWidth: 0 }],
+          axes: { x: spec.x, y: "Nombre de lignes" },
+          constats: expliquerHistogramme(h, spec.x),
+          indicateurs: [
+            { titre: "MÉDIANE", valeur: formaterComplet(h.mediane ?? 0), detail: `Moyenne : ${formaterComplet(h.moyenne ?? 0)}` },
+            { titre: "VALEURS", valeur: formaterComplet(h.n), detail: `de ${formaterComplet(h.min ?? 0)} à ${formaterComplet(h.max ?? 0)}` },
+          ],
+        },
+        info: h.nbIgnores ? `${h.nbIgnores} valeur(s) non numérique(s) ignorée(s) dans « ${spec.x} ».` : "",
+      };
+    }
+
+    // GRAPHIQUE COMBINÉ : une mesure en barres, une autre en courbe, sur le même axe
+    if (spec.type === "Combine") {
+      const besoinY2 = !["Nombre", "Pourcentage"].includes(spec.agregation2);
+      if (besoinY && entetes.indexOf(spec.y) === -1) return { graphique: null, erreur: "Veuillez sélectionner la mesure des barres." };
+      if (besoinY2 && entetes.indexOf(spec.y2) === -1) return { graphique: null, erreur: "Veuillez sélectionner la mesure de la courbe." };
+      const nomBarres = nomMesure(agg, spec.y);
+      const nomCourbe = nomMesure(spec.agregation2, spec.y2);
+      if (nomBarres === nomCourbe) return { graphique: null, erreur: "Les barres et la courbe montrent la même mesure : choisissez-en deux différentes." };
+      const c = calculerCombine(
+        entetes,
+        corps,
+        spec.x,
+        { colonne: besoinY ? spec.y : null, agregation: agg },
+        { colonne: besoinY2 ? spec.y2 : null, agregation: spec.agregation2 },
+        { limite: lim }
+      );
+      if (!c.axe.length || (!c.barres.some((v) => v !== null) && !c.courbe.some((v) => v !== null))) {
+        return { graphique: null, erreur: "Aucune donnée exploitable pour cette combinaison de colonnes." };
+      }
+      const deuxAxes = spec.echelle === "separee" || (spec.echelle === "auto" && c.echellesEloignees);
+      const libelles = c.axe.map((a) => (c.granularite ? libellePeriode(a.label) : a.label));
+      const notes: string[] = [];
+      if (c.tronque) notes.push(`${c.nbCategoriesTotal} ${c.temporel ? "périodes" : "catégories"} : les ${lim} ${c.temporel ? "plus récentes" : "premières"} sont affichées.`);
+      if (deuxAxes && spec.echelle === "auto") notes.push("Les deux mesures n'ont pas le même ordre de grandeur : la courbe a sa propre échelle, à droite.");
+      const sommet = (valeurs: (number | null)[]) => valeurs.reduce<number>((m, v) => (v !== null && v > m ? v : m), -Infinity);
+      const texteSommet = (valeurs: (number | null)[]) => (Number.isFinite(sommet(valeurs)) ? formaterComplet(sommet(valeurs)) : "—");
+      return {
+        graphique: {
+          id: spec.id,
+          type: "Combine",
+          titre: `${nomBarres} et ${nomCourbe} selon ${spec.x}${c.granularite ? ` (${NOMS_GRANULARITE[c.granularite]})` : ""}`,
+          labels: libelles,
+          filtresClic: c.axe.map((a) => filtrePourPoint(spec.x, a.cle, c.granularite)),
+          datasets: [
+            { type: "bar", label: nomBarres, data: c.barres, backgroundColor: "#2563eb", borderRadius: 4, borderWidth: 0, yAxisID: "y", order: 1 },
+            {
+              type: "line",
+              label: nomCourbe,
+              data: c.courbe,
+              backgroundColor: COULEUR_COURBE_COMBINEE,
+              borderColor: COULEUR_COURBE_COMBINEE,
+              borderWidth: 2.5,
+              pointRadius: c.axe.length > 40 ? 0 : 3.5,
+              fill: false,
+              yAxisID: deuxAxes ? "y1" : "y",
+              order: 0,
+            },
+          ],
+          axes: deuxAxes ? { y: nomBarres, y2: nomCourbe } : {},
+          constats: expliquerCombine(c, libelles, nomBarres, nomCourbe, deuxAxes),
+          indicateurs: [
+            { titre: "MAXIMUM — BARRES", valeur: texteSommet(c.barres), detail: nomBarres },
+            { titre: "MAXIMUM — COURBE", valeur: texteSommet(c.courbe), detail: nomCourbe },
+          ],
+        },
+        info: notes.join(" "),
+      };
+    }
+
     if (besoinY && entetes.indexOf(spec.y) === -1) return { graphique: null, erreur: "Veuillez sélectionner une colonne pour l'axe Y." };
 
     const colY = besoinY ? spec.y : null;
     const circulaire = estCirculaire(spec.type);
     const lignes = spec.type === "Courbe" || spec.type === "Aires";
     const limiteEffective = circulaire ? Math.min(lim, MAX_PARTS_CIRCULAIRE) : lim;
-    const titreMesure =
-      agg === "Nombre" ? "Effectif" : agg === "Pourcentage" ? LIBELLES_AGREGATION.Pourcentage : `${LIBELLES_AGREGATION[agg]} — ${spec.y}`;
+    const titreMesure = nomMesure(agg, spec.y);
     const additif = ["Somme", "Nombre", "Pourcentage"].includes(agg);
     const base = { id: spec.id, type: spec.type, horizontal: spec.horizontal && spec.type === "Barres" };
 
@@ -603,7 +868,9 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
     setMessageErreur("");
     setMessageInfo("");
     if (!colonneAxeX) {
-      setMessageErreur("Veuillez sélectionner une colonne pour l'Axe X.");
+      setMessageErreur(
+        estNuageOuHistogramme(typeGraphique) ? "Ce format demande une colonne de nombres : ce fichier n'en contient pas." : "Veuillez sélectionner une colonne pour l'Axe X."
+      );
       return;
     }
     compteur.current += 1;
@@ -618,6 +885,10 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
       horizontal,
       empile,
       parFichier: ventilerParFichier,
+      y2: colonneY2,
+      agregation2,
+      echelle,
+      classes: nbClasses,
     };
     const essai = construire(spec);
     if (!essai.graphique) {
@@ -653,7 +924,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
   useEffect(() => {
     publierGraphiquesAffiches([
       ...graphiquesRecommandes,
-      ...graphiquesGeneres.filter((g) => g.type !== "Carte" && (g.labels?.length ?? 0) > 0),
+      ...graphiquesGeneres.filter((g) => g.type !== "Carte" && compterPoints(g) > 0),
     ]);
     // publierGraphiquesAffiches est recréée à chaque rendu du contexte : seules les listes comptent
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -825,11 +1096,11 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
                       className="relative"
                     >
                       {g.type === "Courbe" || g.type === "Aires" ? (
-                        <Line data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                        <Line data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
                       ) : g.type === "Anneau" ? (
-                        <Doughnut data={g} options={{ ...creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
+                        <Doughnut data={g as any} options={{ ...creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
                       ) : (
-                        <Bar data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                        <Bar data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
                       )}
                     </div>
                   </div>
@@ -871,64 +1142,80 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-4 bg-slate-50 dark:bg-slate-800/40 p-3 sm:p-4 rounded-xl border border-slate-200/60 dark:border-slate-700/50">
           <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-              Format d&apos;affichage
-            </label>
-            <select
-              value={typeGraphique}
-              onChange={(e) => setTypeGraphique(e.target.value as TypeGraphique)}
-              className={selectClasse}
-            >
-              <option value="Barres">Barres verticales</option>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Format d&apos;affichage</label>
+            <select value={typeGraphique} onChange={(e) => changerType(e.target.value as TypeGraphique)} className={selectClasse}>
+              <option value="Barres">Barres</option>
               <option value="Courbe">Courbe d’évolution</option>
               <option value="Aires">Aires</option>
+              <option value="Combine">Combiné (barres + courbe)</option>
               <option value="Camembert">Camembert</option>
               <option value="Anneau">Anneau</option>
+              <option value="Nuage" disabled={colonnesMesurables.length < 2}>Nuage de points</option>
+              <option value="Histogramme" disabled={colonnesMesurables.length < 1}>Histogramme</option>
               <option value="Carte">Carte géographique</option>
             </select>
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-              Axe X (Catégorie ou Date)
+              {typeGraphique === "Histogramme" ? "Colonne à répartir" : typeGraphique === "Nuage" ? "Axe X (mesure)" : "Axe X (Catégorie ou Date)"}
             </label>
-            <select
-              value={colonneAxeX}
-              onChange={(e) => setColonneAxeX(e.target.value)}
-              className={selectClasse}
-            >
-              {colonnesSansSource.map((nom) => (
+            <select value={colonneAxeX} onChange={(e) => setColonneAxeX(e.target.value)} className={selectClasse}>
+              {(estNuageOuHistogramme(typeGraphique) ? colonnesMesurables : colonnesSansSource).map((nom) => (
                 <option key={nom} value={nom}>{nom}</option>
               ))}
             </select>
           </div>
 
-          {typeGraphique !== "Carte" && (
+          {typeGraphique === "Nuage" && (
             <>
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                  Opération de calcul
-                </label>
-                <select
-                  value={agregation}
-                  onChange={(e) => setAgregation(e.target.value as Agregation)}
-                  className={selectClasse}
-                >
-                  <option value="Somme">Somme</option>
-                  <option value="Moyenne">Moyenne</option>
-                  <option value="Mediane">Médiane</option>
-                  <option value="Minimum">Minimum</option>
-                  <option value="Maximum">Maximum</option>
-                  <option value="Nombre">Nombre d’enregistrements</option>
-                  <option value="Pourcentage">Part des lignes (%)</option>
-                  <option value="Valeurs distinctes">Nombre de valeurs distinctes</option>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Axe Y (mesure)</label>
+                <select value={colonneAxeY} onChange={(e) => setColonneAxeY(e.target.value)} className={selectClasse}>
+                  {colonnesMesurables
+                    .filter((c) => c !== colonneAxeX)
+                    .map((nom) => (
+                      <option key={nom} value={nom}>{nom}</option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Couleur (par catégorie)</label>
+                <select value={colonneLegende} onChange={(e) => setColonneLegende(e.target.value)} className={selectClasse}>
+                  <option value="">Aucune</option>
+                  {colonnesCategorielles.map((nom) => (
+                    <option key={nom} value={nom}>{nom}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+
+          {typeGraphique === "Histogramme" && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Nombre de classes</label>
+              <select value={nbClasses} onChange={(e) => setNbClasses(Number(e.target.value))} className={selectClasse}>
+                <option value={0}>Automatique</option>
+                <option value={5}>Environ 5</option>
+                <option value={8}>Environ 8</option>
+                <option value={10}>Environ 10</option>
+                <option value={15}>Environ 15</option>
+                <option value={20}>Environ 20</option>
+              </select>
+            </div>
+          )}
+
+          {typeGraphique !== "Carte" && !estNuageOuHistogramme(typeGraphique) && (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{typeGraphique === "Combine" ? "Barres : calcul" : "Opération de calcul"}</label>
+                <select value={agregation} onChange={(e) => setAgregation(e.target.value as Agregation)} className={selectClasse}>
+                  {OPTIONS_AGREGATION}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                  Axe Y (Mesure)
-                </label>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{typeGraphique === "Combine" ? "Barres : mesure" : "Axe Y (Mesure)"}</label>
                 <select
                   value={colonneAxeY}
                   onChange={(e) => setColonneAxeY(e.target.value)}
@@ -949,11 +1236,45 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
                       ))}
                 </select>
               </div>
-              {!estCirculaire(typeGraphique) && (
+
+              {typeGraphique === "Combine" && (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Courbe : calcul</label>
+                    <select value={agregation2} onChange={(e) => setAgregation2(e.target.value as Agregation)} className={selectClasse}>
+                      {OPTIONS_AGREGATION}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Courbe : mesure</label>
+                    <select
+                      value={colonneY2}
+                      onChange={(e) => setColonneY2(e.target.value)}
+                      disabled={agregation2 === "Nombre" || agregation2 === "Pourcentage"}
+                      className={`${selectClasse} disabled:opacity-40`}
+                    >
+                      {!colonneY2 && <option value="">Choisir…</option>}
+                      {(agregation2 === "Valeurs distinctes" ? colonnesSansSource : colonnesMesurables)
+                        .filter((c) => c !== colonneAxeX)
+                        .map((nom) => (
+                          <option key={nom} value={nom}>{nom}</option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Échelle de la courbe</label>
+                    <select value={echelle} onChange={(e) => setEchelle(e.target.value as EchelleCourbe)} className={selectClasse}>
+                      <option value="auto">Automatique</option>
+                      <option value="commune">Même axe que les barres</option>
+                      <option value="separee">Axe séparé, à droite</option>
+                    </select>
+                  </div>
+                </>
+              )}
+
+              {!estCirculaire(typeGraphique) && typeGraphique !== "Combine" && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                    Légende (ventiler par)
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Légende (ventiler par)</label>
                   <select value={colonneLegende} onChange={(e) => setColonneLegende(e.target.value)} className={selectClasse}>
                     <option value="">Aucune</option>
                     {colonnesCategorielles
@@ -967,14 +1288,8 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
 
               {typeGraphique === "Barres" && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                    Disposition des barres
-                  </label>
-                  <select
-                    value={horizontal ? "h" : "v"}
-                    onChange={(e) => setHorizontal(e.target.value === "h")}
-                    className={selectClasse}
-                  >
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Disposition des barres</label>
+                  <select value={horizontal ? "h" : "v"} onChange={(e) => setHorizontal(e.target.value === "h")} className={selectClasse}>
                     <option value="v">Verticales</option>
                     <option value="h">Horizontales</option>
                   </select>
@@ -983,9 +1298,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
 
               {(colonneLegende || (estModeComparaison && ventilerParFichier)) && (typeGraphique === "Barres" || typeGraphique === "Aires") && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                    Séries
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Séries</label>
                   <select value={empile ? "e" : "g"} onChange={(e) => setEmpile(e.target.value === "e")} className={selectClasse}>
                     <option value="e">Empilées</option>
                     <option value="g">Côte à côte</option>
@@ -994,9 +1307,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
-                  Nombre de valeurs affichées
-                </label>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Nombre de valeurs affichées</label>
                 <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} className={selectClasse}>
                   <option value={5}>5 premières</option>
                   <option value={10}>10 premières</option>
@@ -1044,7 +1355,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
           >
             {graphiquesGeneres.map((g) => {
               const estEpingle = estInclusPptx(g.id);
-              const nbPoints = g.labels?.length || 0;
+              const nbPoints = compterPoints(g);
               const prendPleinLargeur = graphiquesGeneres.length === 1 || nbPoints > 20;
 
               return (
@@ -1092,18 +1403,21 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
                     {g.type !== "Carte" && nbPoints > 0 && (
                       <div
                         style={{
-                          minWidth: estCirculaire(g.type) || g.horizontal ? "100%" : calculerLargeurConteneur(nbPoints),
-                          height: g.horizontal ? `${Math.max(280, nbPoints * 28)}px` : "280px",
+                          minWidth: estCirculaire(g.type) || g.horizontal || g.type === "Nuage" ? "100%" : calculerLargeurConteneur(nbPoints),
+                          height: g.horizontal ? `${Math.max(280, nbPoints * 28)}px` : g.type === "Nuage" ? "340px" : "280px",
                         }}
                         className="relative"
                       >
-                        {g.type === "Barres" && <Bar data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />}
-                        {(g.type === "Courbe" || g.type === "Aires") && (
-                          <Line data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                        {(g.type === "Barres" || g.type === "Histogramme" || g.type === "Combine") && (
+                          <Bar data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
                         )}
-                        {g.type === "Camembert" && <Pie data={g} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />}
+                        {g.type === "Nuage" && <Scatter data={donneesNuage(g)} options={creerOptionsNuage(g)} />}
+                        {(g.type === "Courbe" || g.type === "Aires") && (
+                          <Line data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                        )}
+                        {g.type === "Camembert" && <Pie data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />}
                         {g.type === "Anneau" && (
-                          <Doughnut data={g} options={{ ...creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
+                          <Doughnut data={g as any} options={{ ...creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
                         )}
                       </div>
                     )}
@@ -1151,11 +1465,21 @@ function ExplicationDetailleeGraphique({
         return `${lab} (${val})`;
       });
 
+      // Nuage de points : pas d'axe de catégories, on transmet un extrait régulier des points
+      if (graphique.nuage) {
+        const tous = graphique.nuage.series.flatMap((serie) => serie.points.map((pt) => ({ ...pt, serie: serie.nom })));
+        const pas = Math.max(1, Math.floor(tous.length / 40));
+        for (let i = 0; i < tous.length && resumePoints.length < 40; i += pas) {
+          const pt = tous[i];
+          resumePoints.push(`${pt.serie ? `${pt.serie} ` : ""}(${graphique.axes?.x ?? "x"}: ${pt.x}, ${graphique.axes?.y ?? "y"}: ${pt.y})`);
+        }
+      }
+
       const contexteUltraCourt = JSON.stringify({
         fichier: nomFichier || "Données",
         graphique: graphique.titre,
         type: graphique.type,
-        nombre_de_points: labels.length,
+        nombre_de_points: graphique.nuage?.nbPoints ?? labels.length,
         donnees: resumePoints,
         constats_deja_calcules: (analyse?.lignes ?? []).map((l) => `${l.titre} : ${l.texte}`),
       });
