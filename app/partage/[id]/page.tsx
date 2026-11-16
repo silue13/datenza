@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Eye } from "lucide-react";
@@ -15,7 +15,18 @@ function Contenu() {
   return <AnalysePage />;
 }
 
+const ATTENTE = <p className="max-w-xl mx-auto py-16 text-center text-sm text-slate-500">Ouverture du projet partagé…</p>;
+
+/** L'identifiant du lien n'est connu qu'à la visite : la page attend dans un Suspense. */
 export default function PartagePage() {
+  return (
+    <Suspense fallback={ATTENTE}>
+      <ProjetPartageVue />
+    </Suspense>
+  );
+}
+
+function ProjetPartageVue() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const [projet, setProjet] = useState<ProjetPartage | null>(null);
@@ -51,7 +62,7 @@ export default function PartagePage() {
   }
 
   if (!projet) {
-    return <p className="max-w-xl mx-auto py-16 text-center text-sm text-slate-500">Ouverture du projet partagé…</p>;
+    return ATTENTE;
   }
 
   const majLe = projet.majLe ? new Date(projet.majLe) : null;

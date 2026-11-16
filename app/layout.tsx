@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -51,7 +52,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <VerificateurMiseAJour />
         <AuthProvider>
         <DataProvider>
-          <Sidebar />
+          {/* Le menu lit l'adresse en cours, inconnue à la construction pour /partage/… */}
+          <Suspense fallback={null}>
+            <Sidebar />
+          </Suspense>
           <main className="flex-1 w-full min-w-0 overflow-y-auto p-3.5 sm:p-6 md:p-10 pb-24 md:pb-10">
             {children}
           </main>
