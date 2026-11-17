@@ -135,3 +135,12 @@ describe("analyse/graphiquesAvances — combiné", () => {
     expect(lignes.at(-1)?.titre).toBe("Deux échelles");
   });
 });
+
+import { nomFichierImage } from "./imageGraphique";
+describe("analyse/imageGraphique", () => {
+  it("donne un nom de fichier lisible et sûr", () => {
+    expect(nomFichierImage("Somme — Ventes par Région (2024)")).toBe("somme-ventes-par-region-2024.png");
+    expect(nomFichierImage("")).toBe("graphique.png");
+    expect(nomFichierImage("///")).toBe("graphique.png");
+  });
+});

@@ -12,7 +12,20 @@ import VerificateurMiseAJour from "./components/VerificateurMiseAJour";
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
+/** Adresse publique du site, pour les liens absolus des aperçus (image partagée sur LinkedIn…). */
+function adresseSite(): URL {
+  const explicite = process.env.NEXT_PUBLIC_SITE_URL;
+  const vercel =
+    process.env.VERCEL_ENV === "production" ? process.env.VERCEL_PROJECT_PRODUCTION_URL : process.env.VERCEL_BRANCH_URL ?? process.env.VERCEL_URL;
+  try {
+    return new URL(explicite || (vercel ? `https://${vercel}` : "http://localhost:3000"));
+  } catch {
+    return new URL("http://localhost:3000");
+  }
+}
+
 export const metadata: Metadata = {
+  metadataBase: adresseSite(),
   title: "DATENZA - Plateforme d'Analyse et Données Publiques",
   description: "Analyse de données, Open Data et Gestion Agricole MonChamp",
   manifest: "/manifest.webmanifest",

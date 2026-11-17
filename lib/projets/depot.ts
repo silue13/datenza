@@ -10,6 +10,7 @@ import {
   extraireReglages,
   formaterTaille,
 } from "./format";
+import type { ApercuGraphique } from "./apercu";
 
 export interface ProjetResume {
   id: string;
@@ -58,7 +59,7 @@ export async function listerProjets(): Promise<ProjetResume[]> {
  * Enregistre l'état courant : crée un projet, ou met à jour celui dont on passe l'identifiant.
  * Les lignes du fichier partent compressées dans le stockage ; les réglages dans la table.
  */
-export async function enregistrerProjet(etat: EtatPersiste, nom: string, idExistant?: string): Promise<ProjetResume> {
+export async function enregistrerProjet(etat: EtatPersiste, nom: string, idExistant?: string, apercu: ApercuGraphique | null = null): Promise<ProjetResume> {
   const nomPropre = nom.trim().slice(0, 120);
   if (!nomPropre) throw new Error("Donnez un nom au projet.");
   if (!etat.sources.entetes.length || !etat.sources.corps.length) throw new Error("Aucune donnée à enregistrer : importez d'abord un fichier.");
@@ -84,7 +85,7 @@ export async function enregistrerProjet(etat: EtatPersiste, nom: string, idExist
     nb_colonnes: etat.sources.entetes.length,
     taille_octets: blob.size,
     chemin_donnees: chemin,
-    reglages: extraireReglages(etat),
+    reglages: extraireReglages(etat, apercu),
   };
   const requete = idExistant
     ? supabase.from("projets").update(ligne).eq("id", id).select(COLONNES).maybeSingle()
