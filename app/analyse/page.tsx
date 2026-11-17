@@ -11,6 +11,7 @@ import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
 import BandeauSource from "../components/BandeauSource";
 import TestsStatistiques from "../components/TestsStatistiques";
 import PanneauRecette from "../components/PanneauRecette";
+import AnalysesMetier from "../components/AnalysesMetier";
 import { formaterP } from "../../lib/analyse/inference";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
@@ -50,6 +51,7 @@ import {
   Loader2,
   RefreshCw,
   FlaskConical,
+  Briefcase,
 } from "lucide-react";
 
 // Import dynamique sans SSR pour éviter le conflit d'instance DOM de Leaflet
@@ -1159,6 +1161,15 @@ Ne mets ni introduction ni conclusion.`;
 
         <button
           type="button"
+          onClick={() => allerASection("sec-metier")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <Briefcase className="w-3.5 h-3.5 text-amber-500" />
+          <span>Métier</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => allerASection("sec-previsions")}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
         >
@@ -1567,6 +1578,18 @@ Ne mets ni introduction ni conclusion.`;
       >
         <TestsStatistiques tests={resultatActif?.tests ?? []} />
       </Depliant>
+
+      {/* DÉPLIANT 5 : ANALYSES MÉTIER */}
+      {resultatActif && (
+        <Depliant id="sec-metier" titre="Analyses métier" detail="Pareto / ABC · évolution · segments clients · fidélité">
+          <AnalysesMetier
+            entetes={entetes}
+            corps={corps}
+            statistiques={resultatActif.statistiques}
+            mesures={(resultatActif.mesures ?? []).map((m) => m.colonne)}
+          />
+        </Depliant>
+      )}
 
       {/* 5. MODULES D'EXPLORATION VISUELLE & TABLEAUX */}
       <section className="space-y-8">
