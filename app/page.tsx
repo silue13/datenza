@@ -9,6 +9,9 @@ import { type Cellule } from "../lib/analyse/utils";
 import { useRouter } from "next/navigation";
 import BoutonInstallerApp from "./components/BoutonInstallerApp";
 import GuideUtilisation from "./components/GuideUtilisation";
+import BandeauSource from "./components/BandeauSource";
+import { analyserAdresse, type SourceDistante } from "../lib/import/source";
+import { telechargerSource } from "../lib/import/telechargement";
 import {
   UploadCloud,
   FileSpreadsheet,
@@ -23,6 +26,8 @@ import {
   Scale,
   Table,
   LayoutGrid,
+  Link2,
+  Radio,
 } from "lucide-react";
 
 interface FichierImporte {
@@ -32,6 +37,8 @@ interface FichierImporte {
   entetes: string[];
   corps: Cellule[][];
   avertissements?: string[];
+  /** Renseignée quand le fichier vient d'une source en direct (Google Sheets, adresse web). */
+  source?: SourceDistante;
 }
 
 export default function HomePage() {
@@ -44,6 +51,7 @@ export default function HomePage() {
     setChoisies,
     setRapport,
     setResultat,
+    source: sourceActive,
   } = useData();
 
   const [pageIndex, setPageIndex] = useState<number>(0);
@@ -54,6 +62,9 @@ export default function HomePage() {
 
   const [fichiers, setFichiers] = useState<FichierImporte[]>([]);
   const [fichiersSelectionnesPourComparaison, setFichiersSelectionnesPourComparaison] = useState<string[]>([]);
+
+  const [adresseSource, setAdresseSource] = useState<string>("");
+  const [connexionEnCours, setConnexionEnCours] = useState<boolean>(false);
 
   const router = useRouter();
   const lignesParPage = 8;
@@ -102,8 +113,47 @@ export default function HomePage() {
     }
   }
 
+  /** Connecte une feuille Google Sheets ou un fichier en ligne : il devient le fichier actif et pourra être actualisé. */
+  async function connecterSource() {
+    if (connexionEnCours) return;
+    setErreurImport("");
+    setConnexionEnCours(true);
+    try {
+      const adresse = analyserAdresse(adresseSource);
+      const { tableau, nom } = await telechargerSource(adresse.urlTelechargement, adresse.nomPropose);
+      const source: SourceDistante = {
+        type: adresse.type,
+        adresse: adresseSource.trim(),
+        urlTelechargement: adresse.urlTelechargement,
+        derniereMaj: new Date().toISOString(),
+        intervalleMinutes: 0,
+      };
+      const item: FichierImporte = {
+        id: `${nom}-${Date.now()}-${Math.random()}`,
+        nom,
+        nbLignes: tableau.corps.length,
+        entetes: tableau.entetes,
+        corps: tableau.corps,
+        avertissements: tableau.avertissements,
+        source,
+      };
+      // Une même source reconnectée remplace sa version précédente dans la liste
+      setFichiers((anciens) => [...anciens.filter((f) => f.source?.urlTelechargement !== source.urlTelechargement), item]);
+      chargerDonnees(item.nom, item.entetes, item.corps, undefined, undefined, source);
+      setChoisies(item.entetes);
+      setPageIndex(0);
+      setAdresseSource("");
+    } catch (e) {
+      setErreurImport(e instanceof Error ? e.message : "Connexion à la source impossible.");
+    } finally {
+      setConnexionEnCours(false);
+    }
+  }
+
   function selectionnerFichierActif(f: FichierImporte) {
-    chargerDonnees(f.nom, f.entetes, f.corps);
+    // Une source en direct déjà active a pu être actualisée depuis : on ne la remplace pas par sa version d'origine
+    if (f.source && f.nom === nomFichier && sourceActive?.urlTelechargement === f.source.urlTelechargement) return;
+    chargerDonnees(f.nom, f.entetes, f.corps, undefined, undefined, f.source ?? null);
     setChoisies(f.entetes);
     setPageIndex(0);
   }
@@ -285,6 +335,59 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Source en direct : Google Sheets ou fichier en ligne */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void connecterSource();
+        }}
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-sm space-y-3"
+      >
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+            <Radio className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">Ou connectez une source en direct</h3>
+            <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
+              Feuille Google Sheets ou adresse d&apos;un fichier CSV, Excel ou JSON. Les données se rechargent ensuite d&apos;un clic, sans réimporter.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <label htmlFor="adresse-source" className="sr-only">
+            Adresse de la source
+          </label>
+          <div className="relative flex-1">
+            <Link2 className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              id="adresse-source"
+              type="text"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+              value={adresseSource}
+              onChange={(e) => setAdresseSource(e.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/d/…"
+              disabled={connexionEnCours}
+              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={connexionEnCours || !adresseSource.trim()}
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {connexionEnCours && <Loader2 className="w-4 h-4 animate-spin" />}
+            {connexionEnCours ? "Connexion…" : "Connecter"}
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-400 leading-relaxed">
+          Google Sheets : la feuille doit être partagée en « Tous les utilisateurs disposant du lien ». Le fichier est téléchargé par le serveur de
+          DATENZA, qui ne le conserve pas.
+        </p>
+      </form>
+
       {/* Message d'erreur */}
       {erreurImport && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-900/50 p-3.5 sm:p-4 text-xs font-semibold text-rose-800 dark:text-rose-300 flex items-center gap-2.5">
@@ -359,6 +462,11 @@ export default function HomePage() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    {f.source && (
+                      <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold px-2 py-0.5 rounded-md">
+                        En direct
+                      </span>
+                    )}
                     {estActif && (
                       <span className="text-[10px] bg-blue-200/60 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 font-bold px-2 py-0.5 rounded-md">
                         Actif
@@ -401,6 +509,8 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      <BandeauSource />
 
       {/* Section Périmètre de l'Analyse (2 colonnes sur mobile) */}
       {entetes.length > 0 && (

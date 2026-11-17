@@ -6,6 +6,18 @@ import { MapPin, Presentation, Calendar } from "lucide-react";
 import { trouverLieuCI, cleGeo, PAYS_DU_MONDE } from "../../lib/geoci/data";
 import { parseNombre, type Cellule, estValeurVide, arrondir } from "../../lib/analyse/utils";
 import { useData } from "../context/DataContext";
+import {
+  agregerParZone,
+  classerValeurs,
+  couleurPour,
+  detecterNiveau,
+  fichierContours,
+  trouverZone,
+  COULEUR_SANS_DONNEE,
+  type ContoursZones,
+  type LieuAgrege,
+  type NiveauZone,
+} from "../../lib/geoci/zones";
 
 interface Props {
   entetes: string[];
@@ -38,6 +50,16 @@ const MAX_LIEUX = 80;
 const MOTS_CLES_GEO = /(ville|city|commune|region|pays|country|departement|department|district|adresse|lieu|location|zone|secteur|territoire|localite|village|prefecture|province|quartier)/i;
 const MOTS_CLES_EXCLUS = /(categorie|category|statut|status|mois|month|annee|year|commercial|vendeur|client|devise|type|produit|article|id|num|reference|ref|remise|taux)/i;
 
+/** Cadre de la Côte d'Ivoire, pour centrer la carte colorée par zone. */
+const CADRE_CI = [
+  { lat: 4.35, lng: -8.6 },
+  { lat: 10.74, lng: -2.49 },
+];
+const NOMS_NIVEAU: Record<NiveauZone, { un: string; des: string; colorees: string }> = {
+  regions: { un: "région", des: "régions", colorees: "Régions colorées" },
+  districts: { un: "district", des: "districts", colorees: "Districts colorés" },
+};
+
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function estDansFrontieresCI(lat: number, lng: number): boolean {
@@ -55,6 +77,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     CircleMarker: any;
     Popup: any;
     Tooltip: any;
+    GeoJSON: any;
     AjusterVue: any;
   } | null>(null);
 
@@ -74,6 +97,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             CircleMarker: rl.CircleMarker,
             Popup: rl.Popup,
             Tooltip: rl.Tooltip,
+            GeoJSON: rl.GeoJSON,
             AjusterVue: av.default || av,
           });
         }
@@ -326,6 +350,107 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     return points.length >= MAX_LIEUX ? [] : [...manquants.values()];
   }, [estFormatMatriciel, entetes, colonneGeo, corps, points, externes]);
 
+  // 3 bis. CARTE COLORÉE PAR ZONE : les valeurs sont regroupées par région (ou par district)
+  const lieuxAgreges = useMemo<LieuAgrege[]>(() => {
+    if (estFormatMatriciel) {
+      const idxPeriodeCol = entetes.findIndex((h) => !colonnesEnTetesGeographiques.includes(h) && h !== "Fichier Source");
+      const lignes =
+        periodeChoisie === "Toutes" || idxPeriodeCol === -1 ? corps : corps.filter((l) => String(l[idxPeriodeCol] ?? "").trim() === periodeChoisie);
+      return colonnesEnTetesGeographiques.map((nom) => {
+        const idxCol = entetes.indexOf(nom);
+        const valeurs = lignes.map((l) => nombreCellule(l[idxCol])).filter((n): n is number => n !== null);
+        return { nom, somme: valeurs.reduce((a, b) => a + b, 0), n: valeurs.length, compte: valeurs.length };
+      });
+    }
+    const idxGeo = entetes.indexOf(colonneGeo);
+    if (idxGeo === -1) return [];
+    const idxMesure = entetes.indexOf(colonneMesure);
+    const parLieu = new Map<string, LieuAgrege>();
+    for (const ligne of corps) {
+      if (estValeurVide(ligne[idxGeo])) continue;
+      const lieu = String(ligne[idxGeo] ?? "").replace(/["'«»“”]/g, "").trim();
+      if (!lieu || /^\d+$/.test(lieu) || /^(sous[- ]?)?tota(l|ux)\b/i.test(lieu)) continue;
+      const cle = cleGeo(lieu) || lieu;
+      let g = parLieu.get(cle);
+      if (!g) {
+        g = { nom: lieu, somme: 0, n: 0, compte: 0 };
+        parLieu.set(cle, g);
+      }
+      g.compte++;
+      const val = idxMesure >= 0 ? nombreCellule(ligne[idxMesure]) : null;
+      if (val !== null) {
+        g.somme += val;
+        g.n++;
+      }
+    }
+    return [...parLieu.values()];
+  }, [estFormatMatriciel, colonnesEnTetesGeographiques, entetes, corps, periodeChoisie, colonneGeo, colonneMesure]);
+
+  const { niveau, nbDirects } = useMemo(() => detecterNiveau(lieuxAgreges.map((l) => l.nom)), [lieuxAgreges]);
+
+  // Contours des zones : chargés une fois par découpage, seulement si le fichier contient des lieux
+  const [contours, setContours] = useState<Partial<Record<NiveauZone, ContoursZones>>>({});
+  const aDesLieux = lieuxAgreges.length > 0;
+  useEffect(() => {
+    if (!aDesLieux || contours[niveau]) return;
+    let annule = false;
+    fetch(fichierContours(niveau))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data: ContoursZones) => {
+        if (!annule) setContours((prev) => ({ ...prev, [niveau]: data }));
+      })
+      .catch(() => {
+        // Sans contours, la carte reste en cercles
+      });
+    return () => {
+      annule = true;
+    };
+  }, [aDesLieux, niveau, contours]);
+
+  const contoursActifs = contours[niveau] ?? null;
+  const resultatZones = useMemo(() => {
+    if (!contoursActifs) return null;
+    const coordonnees = (nom: string): [number, number] | null => trouverLieuCI(nom) ?? (externes[nom] ? [externes[nom]!.lat, externes[nom]!.lng] : null);
+    return agregerParZone(lieuxAgreges, niveau, contoursActifs, coordonnees, agregation);
+  }, [contoursActifs, lieuxAgreges, niveau, externes, agregation]);
+
+  const zonesDisponibles = !!resultatZones && resultatZones.zones.length >= 2;
+  const [modeChoisi, setModeChoisi] = useState<"cercles" | "zones" | null>(null);
+  // Une colonne qui cite directement des régions s'ouvre en carte colorée ; une colonne de villes reste en cercles
+  const mode: "cercles" | "zones" = !zonesDisponibles ? "cercles" : modeChoisi ?? (nbDirects >= 3 ? "zones" : "cercles");
+  const enZones = mode === "zones" && !!resultatZones && !!contoursActifs;
+
+  const classesZones = useMemo(() => classerValeurs((resultatZones?.zones ?? []).map((z) => z.valeur)), [resultatZones]);
+  const valeursZones = useMemo(() => new Map((resultatZones?.zones ?? []).map((z) => [z.zone, z.valeur])), [resultatZones]);
+  const signatureZones = useMemo(() => (resultatZones?.zones ?? []).map((z) => `${z.zone}:${z.valeur}`).join("|"), [resultatZones]);
+
+  // Lieux qu'aucune zone n'accueille (hors recherches de coordonnées encore en cours)
+  const lieuxNonRattaches = useMemo(
+    () =>
+      (resultatZones?.nonRattaches ?? []).filter(
+        (nom) => trouverLieuCI(nom) || externes[nom] !== undefined || estFormatMatriciel || trouverZone(nom, niveau === "regions" ? "districts" : "regions")
+      ),
+    [resultatZones, externes, estFormatMatriciel, niveau]
+  );
+
+  const lectureZones = useMemo(() => {
+    const zones = resultatZones?.zones ?? [];
+    if (zones.length < 2 || !contoursActifs) return "";
+    const nb = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+    const mots = NOMS_NIVEAU[niveau];
+    const premier = zones[0];
+    const dernier = zones[zones.length - 1];
+    const total = zones.reduce((s, z) => s + z.valeur, 0);
+    const additif = agregation !== "Moyenne" && total > 0 && zones.every((z) => z.valeur >= 0);
+    let texte = `« ${premier.zone} » arrive en tête avec ${nb(premier.valeur)}`;
+    if (additif) texte += `, soit ${nb(Math.round((premier.valeur / total) * 1000) / 10)} % du total des ${zones.length} ${mots.des} renseigné${niveau === "regions" ? "e" : ""}s`;
+    texte += `. La valeur la plus faible est celle de « ${dernier.zone} » (${nb(dernier.valeur)}).`;
+    const sansDonnee = contoursActifs.features.length - zones.length;
+    if (sansDonnee > 0) texte += ` ${sansDonnee} ${sansDonnee > 1 ? mots.des : mots.un} sur ${contoursActifs.features.length} sans donnée (en gris).`;
+    if (agregation === "Moyenne") texte += ` Il s'agit de moyennes par ${mots.un} : elles ne s'additionnent pas.`;
+    return texte;
+  }, [resultatZones, contoursActifs, niveau, agregation]);
+
   // Phrase de lecture : le premier lieu, sa part si les valeurs s'additionnent, et la concentration
   const lectureCarte = useMemo(() => {
     if (points.length < 2) return "";
@@ -412,20 +537,22 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
   const centreCI: [number, number] = [7.54, -5.55];
   const zoomCI = 6.8;
 
-  const idGraphiqueCarte = `carte-geo-${estFormatMatriciel ? "stations-colonnes" : colonneGeo}-${agregation}`;
+  const idGraphiqueCarte = `carte-geo-${estFormatMatriciel ? "stations-colonnes" : colonneGeo}-${agregation}${enZones ? `-${niveau}` : ""}`;
   const estInclusPptx =
     (graphiquesEpingles || []).some((g) => String(g.id) === String(idGraphiqueCarte)) || estDejaInclus;
 
   const preparerExportPptx = () => {
-    if (!points.length || !onAjouterPptx) return;
-    const topPoints = points.slice(0, 10);
+    if (!points.length && !enZones) return;
+    // En carte colorée, ce sont les valeurs par zone qui partent dans le PowerPoint
+    const topPoints = enZones ? (resultatZones?.zones ?? []).slice(0, 15).map((z) => ({ nom: z.zone, totalGlobal: z.valeur })) : points.slice(0, 10);
+    if (!topPoints.length) return;
     const labels = topPoints.map((p) => p.nom);
 
     const objetExport = {
       id: idGraphiqueCarte,
       titre: estFormatMatriciel
         ? `Répartition Spatiale des Stations (${periodeChoisie === "Toutes" ? "Cumul" : periodeChoisie})`
-        : `Synthèse Territoriale : ${agregation} de ${colonneMesure || "volumes"} par ${colonneGeo}`,
+        : `Synthèse Territoriale : ${agregation === "Nombre" ? "nombre de lignes" : `${agregation} de ${colonneMesure || "volumes"}`} par ${enZones ? NOMS_NIVEAU[niveau].un : colonneGeo}`,
       type: "Barres",
       chartType: "bar",
       labels,
@@ -440,7 +567,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       interpretation: `Pôle dominant : « ${topPoints[0]?.nom || ""} » avec ${topPoints[0]?.totalGlobal.toLocaleString("fr-FR")}.`,
     };
 
-    onAjouterPptx(objetExport as any);
+    onAjouterPptx?.(objetExport as any);
     if (epinglerGraphique) epinglerGraphique(objetExport as any);
     setEstDejaInclus(true);
   };
@@ -495,6 +622,8 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             <p className="text-[11px] sm:text-xs text-slate-400">
               {estFormatMatriciel
                 ? "Données matricielles : chaque colonne correspond à une station géographique"
+                : enZones
+                ? `Valeurs regroupées par ${NOMS_NIVEAU[niveau].un}`
                 : "Répartition spatiale et concentration territoriale"}
             </p>
           </div>
@@ -575,6 +704,18 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             </>
           )}
 
+          {zonesDisponibles && (
+            <select
+              value={mode}
+              onChange={(e) => setModeChoisi(e.target.value as "cercles" | "zones")}
+              aria-label="Type de carte"
+              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-xs font-semibold text-slate-700 dark:text-slate-300"
+            >
+              <option value="cercles">Cercles par lieu</option>
+              <option value="zones">{NOMS_NIVEAU[niveau].colorees}</option>
+            </select>
+          )}
+
           <button
             onClick={preparerExportPptx}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
@@ -598,7 +739,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
           </div>
         ) : (
           <leafletReady.MapContainer
-            key={`map-container-${colonneGeo}-${periodeChoisie}`}
+            key={`map-container-${colonneGeo}-${periodeChoisie}-${enZones ? niveau : "cercles"}`}
             ref={mapRef}
             center={centreCI}
             zoom={zoomCI}
@@ -612,9 +753,38 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
-            <leafletReady.AjusterVue points={points} />
+            <leafletReady.AjusterVue points={enZones ? CADRE_CI : points} />
 
-            {points.map((p) => {
+            {enZones && (
+              <leafletReady.GeoJSON
+                key={`zones-${niveau}-${signatureZones}`}
+                data={contoursActifs}
+                style={(zone: any) => ({
+                  fillColor: couleurPour(valeursZones.get(zone?.properties?.nom), classesZones),
+                  fillOpacity: 0.88,
+                  color: "#ffffff",
+                  weight: 1.5,
+                })}
+                onEachFeature={(zone: any, couche: any) => {
+                  const v = valeursZones.get(zone.properties.nom);
+                  const ligne = document.createElement("div");
+                  ligne.className = "text-xs font-sans text-slate-900 leading-tight";
+                  const nom = document.createElement("strong");
+                  nom.textContent = zone.properties.nom;
+                  const valeur = document.createElement("span");
+                  valeur.className = "block mt-0.5";
+                  valeur.textContent = v === undefined ? "Sans donnée" : v.toLocaleString("fr-FR");
+                  ligne.append(nom, valeur);
+                  couche.bindTooltip(ligne, { sticky: true, opacity: 0.95 });
+                  couche.on({
+                    mouseover: () => couche.setStyle({ weight: 3, color: "#0f172a" }),
+                    mouseout: () => couche.setStyle({ weight: 1.5, color: "#ffffff" }),
+                  });
+                }}
+              />
+            )}
+
+            {!enZones && points.map((p) => {
               const r = rayonPoint(p.totalGlobal);
 
               return (
@@ -656,8 +826,55 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
         )}
       </div>
 
+      {/* Carte colorée : légende, lecture et valeurs par zone */}
+      {enZones && resultatZones && (
+        <div className="space-y-2 pt-1 text-xs">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+            <span className="font-bold">
+              {agregation === "Nombre" ? "Nombre de lignes" : `${agregation === "Moyenne" ? "Moyenne" : "Somme"} de ${estFormatMatriciel ? "la valeur" : colonneMesure}`} par{" "}
+              {NOMS_NIVEAU[niveau].un} :
+            </span>
+            {classesZones.map((c) => (
+              <span key={`${c.min}-${c.max}`} className="inline-flex items-center gap-1.5">
+                <span className="w-3.5 h-3.5 rounded-sm border border-slate-300 dark:border-slate-600" style={{ backgroundColor: c.couleur }} />
+                {c.min === c.max ? c.min.toLocaleString("fr-FR") : `${c.min.toLocaleString("fr-FR")} – ${c.max.toLocaleString("fr-FR")}`}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3.5 h-3.5 rounded-sm border border-slate-300 dark:border-slate-600" style={{ backgroundColor: COULEUR_SANS_DONNEE }} />
+              Sans donnée
+            </span>
+          </div>
+          {lectureZones && (
+            <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+              <strong>Ce que montre la carte :</strong> {lectureZones}
+            </p>
+          )}
+          {lieuxNonRattaches.length > 0 && (
+            <p className="text-amber-700 dark:text-amber-400 leading-relaxed">
+              <strong>{lieuxNonRattaches.length} lieu(x) non rattaché(s)</strong> à {niveau === "regions" ? "une région" : "un district"}, absents de la carte et des
+              chiffres ci-dessus : {lieuxNonRattaches.slice(0, 8).join(", ")}
+              {lieuxNonRattaches.length > 8 ? `… (+${lieuxNonRattaches.length - 8})` : ""}.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1 scrollbar-thin">
+            {resultatZones.zones.map((z) => (
+              <span
+                key={z.zone}
+                title={z.lieux.length > 1 || z.lieux[0] !== z.zone ? `Lieux du fichier : ${z.lieux.join(", ")}` : undefined}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px]"
+              >
+                <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: couleurPour(z.valeur, classesZones) }}></span>
+                <strong>{z.zone}</strong> : <span className="font-bold font-mono">{z.valeur.toLocaleString("fr-FR")}</span>
+              </span>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-400">Contours : geoBoundaries, d&apos;après Banque mondiale (2016), licence CC BY 4.0 — tracés simplifiés.</p>
+        </div>
+      )}
+
       {/* Ruban des zones localisées */}
-      {points.length > 0 && (
+      {!enZones && points.length > 0 && (
         <div className="space-y-1.5 pt-1 text-xs">
           {lectureCarte && (
             <p className="text-slate-700 dark:text-slate-300 leading-relaxed">

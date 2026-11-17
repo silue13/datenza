@@ -1,5 +1,6 @@
 "use client";
 
+import { construireApercu } from "../../lib/projets/apercu";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -36,7 +37,8 @@ const message = (e: unknown) => (e instanceof Error ? e.message : "Une erreur es
 export default function ProjetsPage() {
   const router = useRouter();
   const { utilisateur, chargement: sessionEnCours, configure } = useAuth();
-  const { nomFichier, aDesDonnees, projetCourant, definirProjetCourant, obtenirEtat, ouvrirEtat, restaurationTerminee } = useData();
+  const { nomFichier, aDesDonnees, projetCourant, definirProjetCourant, obtenirEtat, ouvrirEtat, restaurationTerminee, graphiquesAffiches, graphiquesExclus } =
+    useData();
 
   const [projets, setProjets] = useState<ProjetResume[]>([]);
   const [listeChargee, setListeChargee] = useState(false);
@@ -80,7 +82,9 @@ export default function ProjetsPage() {
     setRetour(null);
     try {
       const cible = commeNouveau ? undefined : projetCourant?.id;
-      const p = await enregistrerProjet(obtenirEtat(), nom, cible);
+      // Mini graphique de l'aperçu des liens partagés : premier graphique affiché dans l'analyse (hors graphiques retirés du PowerPoint)
+      const apercu = construireApercu((graphiquesAffiches || []).filter((g) => !(graphiquesExclus || []).includes(String(g.id))));
+      const p = await enregistrerProjet(obtenirEtat(), nom, cible, apercu);
       definirProjetCourant({ id: p.id, nom: p.nom });
       setRetour({ type: "ok", texte: cible ? `« ${p.nom} » a été mis à jour.` : `« ${p.nom} » est enregistré dans votre compte.` });
       await rafraichir();

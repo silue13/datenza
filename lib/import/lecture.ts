@@ -1,6 +1,7 @@
 // lib/import/lecture.ts — lecture d'un fichier déposé par l'utilisateur (Excel, CSV, TSV, TXT, JSON).
 import * as XLSX from "xlsx";
 import { decoderTexte, jsonVersLignes, parserCsv, preparerTableau, type TableauImporte } from "./tableau";
+import type { FormatFichier } from "./source";
 
 export const EXTENSIONS_ACCEPTEES = ".xlsx,.xls,.xlsm,.xlsb,.ods,.csv,.tsv,.txt,.json";
 
@@ -82,15 +83,12 @@ export function feuilleVersLignes(feuille: XLSX.WorkSheet): unknown[][] {
   return lignes;
 }
 
-/** Lit un fichier et renvoie un tableau propre, quel que soit son format. */
-export async function lireFichier(fichier: File): Promise<TableauImporte> {
-  const ext = fichier.name.split(".").pop()?.toLowerCase() ?? "";
-  const octets = new Uint8Array(await fichier.arrayBuffer());
+/** Lit un contenu déjà chargé en mémoire (fichier déposé ou téléchargé) et renvoie un tableau propre. */
+export function lireContenu(nom: string, octets: Uint8Array, format: FormatFichier): TableauImporte {
   let lignes: unknown[][];
-
-  if (ext === "json") {
+  if (format === "json") {
     lignes = jsonVersLignes(decoderTexte(octets));
-  } else if (ext === "csv" || ext === "tsv" || ext === "txt") {
+  } else if (format === "csv") {
     lignes = parserCsv(decoderTexte(octets));
   } else {
     const wb = XLSX.read(octets, { type: "array", cellNF: true, cellDates: false });
@@ -98,7 +96,14 @@ export async function lireFichier(fichier: File): Promise<TableauImporte> {
   }
 
   const tableau = preparerTableau(lignes);
-  if (!tableau.entetes.length) throw new Error(`Fichier ${fichier.name} vide : aucune colonne détectée.`);
-  if (!tableau.corps.length) throw new Error(`Le fichier ${fichier.name} contient des en-têtes mais aucune donnée exploitable.`);
+  if (!tableau.entetes.length) throw new Error(`Fichier ${nom} vide : aucune colonne détectée.`);
+  if (!tableau.corps.length) throw new Error(`Le fichier ${nom} contient des en-têtes mais aucune donnée exploitable.`);
   return tableau;
+}
+
+/** Lit un fichier et renvoie un tableau propre, quel que soit son format. */
+export async function lireFichier(fichier: File): Promise<TableauImporte> {
+  const ext = fichier.name.split(".").pop()?.toLowerCase() ?? "";
+  const format: FormatFichier = ext === "json" ? "json" : ext === "csv" || ext === "tsv" || ext === "txt" ? "csv" : "classeur";
+  return lireContenu(fichier.name, new Uint8Array(await fichier.arrayBuffer()), format);
 }

@@ -567,6 +567,8 @@ interface GraphiqueDecrit {
   type?: string;
   labels?: unknown[];
   datasets?: { label?: string; data?: unknown[] }[];
+  /** Constats déjà calculés (nuage, histogramme, combiné) : repris tels quels. */
+  constats?: LigneExplication[];
 }
 
 const versValeur = (v: unknown): number | null =>
@@ -582,6 +584,7 @@ const mediane = (vals: number[]) => percentile([...vals].sort((a, b) => a - b), 
  *  - pas de part du total ni de total pour des moyennes, des médianes, des minimums ou des maximums.
  */
 export function expliquerGraphique(g: GraphiqueDecrit): ExplicationGraphique | null {
+  if (g.constats) return g.constats.length ? { multiSeries: false, nbSeries: (g.datasets ?? []).length || 1, lignes: g.constats } : null;
   const labels = (g.labels ?? []).map((l) => String(l ?? ""));
   const series = (g.datasets ?? []).map((d) => ({ nom: String(d.label ?? "Série"), valeurs: labels.map((_, i) => versValeur(d.data?.[i])) }));
   if (!labels.length || !series.length) return null;

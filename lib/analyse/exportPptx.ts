@@ -40,6 +40,11 @@ export interface GraphiqueExport {
     borderColor?: string;
   }[];
   interpretation?: string;
+  /** Champs des graphiques avancés (voir GraphiqueEpingle) : nuage, titres d'axes, constats et indicateurs calculés. */
+  nuage?: { series: { nom: string; points: { x: number; y: number }[] }[] };
+  axes?: { x?: string; y?: string; y2?: string };
+  constats?: { titre: string; texte: string }[];
+  indicateurs?: { titre: string; valeur: string; detail: string }[];
 }
 
 export interface BlocRapportExport {
@@ -760,7 +765,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
 
   // Une diapositive n'a de sens que s'il y a quelque chose à montrer (une carte épinglée sans image n'a pas de données)
   listeGraphiques = listeGraphiques.filter(
-    (g) => g?.image || g?.donneesTableau?.entetes?.length || ((g?.labels || []).length > 0 && (g?.datasets || []).length > 0)
+    (g) => g?.image || g?.donneesTableau?.entetes?.length || g?.nuage?.series?.length || ((g?.labels || []).length > 0 && (g?.datasets || []).length > 0)
   );
 
   if (listeGraphiques.length > 0) {
@@ -827,10 +832,13 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       const estLigne = typeStr.includes("courbe") || typeStr === "line" || estAire;
       const estCirculaire = typeStr.includes("camembert") || typeStr === "pie" || typeStr.includes("anneau") || typeStr === "doughnut";
       const multiSeries = (graphique.datasets || []).length > 1;
+      const estNuage = typeStr === "nuage" && !!graphique.nuage;
+      const estCombine = typeStr === "combine" && (graphique.datasets || []).length === 2;
+      const estHistogramme = typeStr === "histogramme";
 
       const tousLabels: string[] = (graphique.labels || []).map((l: unknown) => nettoyerNomMetier(String(l ?? "")));
       // Une série dans le temps garde ses périodes les plus récentes ; un classement garde ses premiers
-      const maxPoints = estLigne ? 36 : estCirculaire ? 8 : 15;
+      const maxPoints = estLigne ? 36 : estCirculaire ? 8 : estHistogramme || estCombine ? 24 : 15;
       const debut = estLigne ? Math.max(0, tousLabels.length - maxPoints) : 0;
       const chartLabels = tousLabels.slice(debut, debut + maxPoints);
       // PowerPoint dessine les barres horizontales de bas en haut : on inverse l'ordre pour garder le premier en haut
@@ -872,6 +880,66 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
           h: 5.3,
           sizing: { type: "contain", w: 7.7, h: 5.3 },
         });
+      } else if (estNuage) {
+        // Nuage de points : un échantillon régulier de 400 points au plus, pour un fichier PowerPoint léger
+        const tous = graphique.nuage.series.flatMap((s: any) => s.points) as { x: number; y: number }[];
+        const pasNuage = Math.max(1, Math.ceil(tous.length / 400));
+        const pts = tous.filter((_, i) => i % pasNuage === 0);
+        slideGraph.addChart(
+          pptx.ChartType.scatter,
+          [
+            { name: nettoyerNomMetier(graphique.axes?.x || "X"), values: pts.map((pt) => pt.x) },
+            { name: nettoyerNomMetier(graphique.axes?.y || "Y"), values: pts.map((pt) => pt.y) },
+          ],
+          {
+            x: 0.8, y: 1.45, w: 7.7, h: 5.3,
+            showLegend: false,
+            showTitle: false,
+            chartColors: [PALETTE_CHARTS[0]],
+            lineSize: 0,
+            lineDataSymbolSize: 5,
+            showCatAxisTitle: true,
+            catAxisTitle: nettoyerNomMetier(graphique.axes?.x || "X"),
+            catAxisTitleFontSize: 10,
+            showValAxisTitle: true,
+            valAxisTitle: nettoyerNomMetier(graphique.axes?.y || "Y"),
+            valAxisTitleFontSize: 10,
+            catAxisLabelFontSize: 10,
+            valAxisLabelFontSize: 10,
+          } as any
+        );
+      } else if (estCombine && chartLabels.length > 0) {
+        // Barres + courbe ; la courbe prend l'axe de droite quand elle a sa propre échelle à l'écran
+        const deuxAxes = graphique.datasets[1]?.yAxisID === "y1";
+        slideGraph.addChart(
+          [
+            { type: pptx.ChartType.bar, data: [chartData[0]], options: { chartColors: [PALETTE_CHARTS[0]], barDir: "col" } },
+            {
+              type: pptx.ChartType.line,
+              data: [chartData[1]],
+              options: { chartColors: ["D97706"], lineSize: 2.5, lineDataSymbolSize: 6, ...(deuxAxes ? { secondaryValAxis: true, secondaryCatAxis: true } : {}) },
+            },
+          ] as any,
+          {
+            x: 0.8, y: 1.45, w: 7.7, h: 5.3,
+            showLegend: true,
+            legendPos: "b",
+            legendFontSize: 10,
+            showTitle: false,
+            catAxisLabelFontSize: chartLabels.length > 15 ? 8 : 10,
+            valAxisLabelFontSize: 10,
+            ...(libellesLongs || chartLabels.length > 12 ? { catAxisLabelRotate: 45 } : {}),
+            ...(deuxAxes
+              ? {
+                  valAxes: [
+                    { showValAxisTitle: true, valAxisTitle: chartData[0].name, valAxisTitleFontSize: 9, valAxisLabelFontSize: 10 },
+                    { showValAxisTitle: true, valAxisTitle: chartData[1].name, valAxisTitleFontSize: 9, valAxisLabelFontSize: 10, valGridLine: { style: "none" } },
+                  ],
+                  catAxes: [{ catAxisLabelFontSize: chartLabels.length > 15 ? 8 : 10 }, { catAxisHidden: true }],
+                }
+              : {}),
+          } as any
+        );
       } else if (chartData.length > 0 && chartLabels.length > 0) {
         let typePptx = pptx.ChartType.bar;
         if (estLigne) typePptx = estAire ? pptx.ChartType.area : pptx.ChartType.line;
@@ -909,6 +977,19 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
                 barGrouping: graphique.empile && multiSeries ? "stacked" : "clustered",
               }
             : {}),
+          // Histogramme : barres presque jointives et axes nommés
+          ...(estHistogramme
+            ? {
+                barGapWidthPct: 8,
+                showCatAxisTitle: true,
+                catAxisTitle: nettoyerNomMetier(graphique.axes?.x || ""),
+                catAxisTitleFontSize: 10,
+                showValAxisTitle: true,
+                valAxisTitle: "Nombre de lignes",
+                valAxisTitleFontSize: 10,
+                catAxisLabelRotate: chartLabels.length > 8 ? 45 : 0,
+              }
+            : {}),
         } as any);
       }
 
@@ -942,6 +1023,10 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       const partLeader = partsValides ? Math.round((maxVolume / totalVolume) * 100) : 0;
       const fr = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: Math.abs(v) < 100 ? 2 : 0 });
 
+      // Indicateurs propres au graphique (nuage, histogramme, combiné), sinon premier rang et total
+      const ind: { titre: string; valeur: string; detail: string }[] | null =
+        Array.isArray(graphique.indicateurs) && graphique.indicateurs.length >= 2 ? graphique.indicateurs : null;
+
       // Micro-KPIs
       const kpiW = (cardW - 0.4 - 0.15) / 2;
       const kpi1X = cardX + 0.2;
@@ -950,26 +1035,26 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       slideGraph.addShape(pptx.ShapeType.roundRect, {
         x: kpi1X, y: cardY + 0.68, w: kpiW, h: 0.95, rectRadius: 0.06, fill: { color: COULEURS.fondSubtil }, line: { color: COULEURS.bordure, width: 1 },
       });
-      slideGraph.addText(estTemporel ? "POINT HAUT" : "PREMIER RANG", {
+      slideGraph.addText(ind ? ind[0].titre : estTemporel ? "POINT HAUT" : "PREMIER RANG", {
         x: kpi1X + 0.1, y: cardY + 0.76, w: kpiW - 0.2, h: 0.18, fontFace: "Calibri", fontSize: 7.5, bold: true, color: COULEURS.texteDiscret, charSpacing: 0.5,
       });
-      slideGraph.addText(String(nomLeader), {
+      slideGraph.addText(ind ? ind[0].valeur : String(nomLeader), {
         x: kpi1X + 0.1, y: cardY + 0.94, w: kpiW - 0.2, h: 0.32, fontFace: "Calibri", fontSize: 11.5, bold: true, color: COULEURS.bleuCobalt,
       });
-      slideGraph.addText(partsValides && !estTemporel ? `${fr(maxVolume)} (${partLeader} % du total)` : fr(maxVolume), {
+      slideGraph.addText(ind ? nettoyerNomMetier(ind[0].detail) : partsValides && !estTemporel ? `${fr(maxVolume)} (${partLeader} % du total)` : fr(maxVolume), {
         x: kpi1X + 0.1, y: cardY + 1.28, w: kpiW - 0.2, h: 0.25, fontFace: "Calibri", fontSize: 8.5, color: COULEURS.texteSecondaire,
       });
 
       slideGraph.addShape(pptx.ShapeType.roundRect, {
         x: kpi2X, y: cardY + 0.68, w: kpiW, h: 0.95, rectRadius: 0.06, fill: { color: COULEURS.fondSubtil }, line: { color: COULEURS.bordure, width: 1 },
       });
-      slideGraph.addText(nonAdditif ? "NIVEAU MOYEN" : "TOTAL", {
+      slideGraph.addText(ind ? ind[1].titre : nonAdditif ? "NIVEAU MOYEN" : "TOTAL", {
         x: kpi2X + 0.1, y: cardY + 0.76, w: kpiW - 0.2, h: 0.18, fontFace: "Calibri", fontSize: 7.5, bold: true, color: COULEURS.texteDiscret, charSpacing: 0.5,
       });
-      slideGraph.addText(fr(nonAdditif ? moyenneVolume : totalVolume), {
+      slideGraph.addText(ind ? ind[1].valeur : fr(nonAdditif ? moyenneVolume : totalVolume), {
         x: kpi2X + 0.1, y: cardY + 0.94, w: kpiW - 0.2, h: 0.32, fontFace: "Calibri", fontSize: 11.5, bold: true, color: COULEURS.textePrincipal,
       });
-      slideGraph.addText(nonAdditif ? `${datasetPremier.length} valeurs comparées` : `Moyenne : ${fr(moyenneVolume)}`, {
+      slideGraph.addText(ind ? nettoyerNomMetier(ind[1].detail) : nonAdditif ? `${datasetPremier.length} valeurs comparées` : `Moyenne : ${fr(moyenneVolume)}`, {
         x: kpi2X + 0.1, y: cardY + 1.28, w: kpiW - 0.2, h: 0.25, fontFace: "Calibri", fontSize: 8.5, color: COULEURS.texteSecondaire,
       });
 
@@ -980,7 +1065,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       // Synthèse textuelle managériale et adaptée
       const explicationEcran = graphique.image
         ? null
-        : expliquerGraphique({ titre: graphique.titre, type: typeStr, labels: graphique.labels, datasets: graphique.datasets });
+        : expliquerGraphique({ titre: graphique.titre, type: typeStr, labels: graphique.labels, datasets: graphique.datasets, constats: graphique.constats });
       let texteFinal = "";
       if (graphique.interpretation && graphique.interpretation.length > 50) {
         texteFinal = nettoyerTexteProfessionnel(graphique.interpretation);

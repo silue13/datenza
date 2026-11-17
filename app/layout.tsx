@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -11,7 +12,20 @@ import VerificateurMiseAJour from "./components/VerificateurMiseAJour";
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
+/** Adresse publique du site, pour les liens absolus des aperçus (image partagée sur LinkedIn…). */
+function adresseSite(): URL {
+  const explicite = process.env.NEXT_PUBLIC_SITE_URL;
+  const vercel =
+    process.env.VERCEL_ENV === "production" ? process.env.VERCEL_PROJECT_PRODUCTION_URL : process.env.VERCEL_BRANCH_URL ?? process.env.VERCEL_URL;
+  try {
+    return new URL(explicite || (vercel ? `https://${vercel}` : "http://localhost:3000"));
+  } catch {
+    return new URL("http://localhost:3000");
+  }
+}
+
 export const metadata: Metadata = {
+  metadataBase: adresseSite(),
   title: "DATENZA - Plateforme d'Analyse et Données Publiques",
   description: "Analyse de données, Open Data et Gestion Agricole MonChamp",
   manifest: "/manifest.webmanifest",
@@ -51,7 +65,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <VerificateurMiseAJour />
         <AuthProvider>
         <DataProvider>
-          <Sidebar />
+          {/* Le menu lit l'adresse en cours, inconnue à la construction pour /partage/… */}
+          <Suspense fallback={null}>
+            <Sidebar />
+          </Suspense>
           <main className="flex-1 w-full min-w-0 overflow-y-auto p-3.5 sm:p-6 md:p-10 pb-24 md:pb-10">
             {children}
           </main>

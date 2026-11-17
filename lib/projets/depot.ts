@@ -10,6 +10,7 @@ import {
   extraireReglages,
   formaterTaille,
 } from "./format";
+import type { ApercuGraphique } from "./apercu";
 
 export interface ProjetResume {
   id: string;
@@ -32,7 +33,11 @@ function expliquer(e: unknown, action: string): Error {
   if (/bucket not found|relation .*projets.* does not exist|could not find the table/i.test(brut)) {
     return new Error("La base n'est pas encore prête : exécutez le fichier supabase/schema.sql dans l'éditeur SQL de Supabase.");
   }
-  if (/row-level security|not authorized|jwt|unauthorized/i.test(brut)) return new Error("Votre session a expiré. Reconnectez-vous puis réessayez.");
+  // Un refus des règles d'accès n'est pas une session expirée : on le dit, avec le détail technique pour le diagnostic
+  if (/row-level security/i.test(brut)) {
+    return new Error(`${action} : la base a refusé l'opération (règles d'accès). Relancez supabase/schema.sql dans Supabase, puis réessayez. Détail : ${brut}`);
+  }
+  if (/jwt|not authenticated|invalid claim|session.*(expired|missing)/i.test(brut)) return new Error("Votre session a expiré. Reconnectez-vous puis réessayez.");
   if (/failed to fetch|network/i.test(brut)) return new Error("Connexion Internet indisponible. Réessayez dans un instant.");
   if (/too large|exceeded the maximum/i.test(brut)) return new Error("Ce fichier est trop volumineux pour être enregistré en ligne.");
   return new Error(`${action} : ${brut}`);
@@ -54,7 +59,7 @@ export async function listerProjets(): Promise<ProjetResume[]> {
  * Enregistre l'état courant : crée un projet, ou met à jour celui dont on passe l'identifiant.
  * Les lignes du fichier partent compressées dans le stockage ; les réglages dans la table.
  */
-export async function enregistrerProjet(etat: EtatPersiste, nom: string, idExistant?: string): Promise<ProjetResume> {
+export async function enregistrerProjet(etat: EtatPersiste, nom: string, idExistant?: string, apercu: ApercuGraphique | null = null): Promise<ProjetResume> {
   const nomPropre = nom.trim().slice(0, 120);
   if (!nomPropre) throw new Error("Donnez un nom au projet.");
   if (!etat.sources.entetes.length || !etat.sources.corps.length) throw new Error("Aucune donnée à enregistrer : importez d'abord un fichier.");
@@ -72,13 +77,15 @@ export async function enregistrerProjet(etat: EtatPersiste, nom: string, idExist
   if (envoi.error) throw expliquer(envoi.error, "Envoi des données impossible");
 
   const ligne = {
+    // Renseigné explicitement : une table « projets » créée avant DATENZA peut ne pas le remplir d'elle-même
+    user_id: userId,
     nom: nomPropre,
     nom_fichier: etat.nomFichier,
     nb_lignes: etat.sources.corps.length,
     nb_colonnes: etat.sources.entetes.length,
     taille_octets: blob.size,
     chemin_donnees: chemin,
-    reglages: extraireReglages(etat),
+    reglages: extraireReglages(etat, apercu),
   };
   const requete = idExistant
     ? supabase.from("projets").update(ligne).eq("id", id).select(COLONNES).maybeSingle()

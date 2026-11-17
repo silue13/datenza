@@ -2,9 +2,14 @@
 // Aucun appel réseau ici : ce fichier se teste seul.
 import type { Cellule } from "../analyse/utils";
 import type { EtatPersiste } from "../persistance";
+import { normaliserSource } from "../import/source";
+import type { ApercuGraphique } from "./apercu";
 
 /** Tout ce qui décrit un projet, hors lignes du fichier et hors analyse (recalculée à l'ouverture). */
-export type ReglagesProjet = Pick<EtatPersiste, "choisies" | "rapport" | "graphiquesEpingles" | "filtresActifs" | "definitionsCalculs">;
+export type ReglagesProjet = Pick<EtatPersiste, "choisies" | "rapport" | "graphiquesEpingles" | "filtresActifs" | "definitionsCalculs" | "source"> & {
+  /** Mini graphique repris dans l'image d'aperçu du lien partagé (valeurs agrégées uniquement). */
+  apercu?: ApercuGraphique | null;
+};
 
 export interface DonneesProjet {
   v: 1;
@@ -14,13 +19,15 @@ export interface DonneesProjet {
 /** Limite d'envoi d'un fichier sur l'offre gratuite de Supabase (50 Mo), avec une marge. */
 export const TAILLE_MAX_OCTETS = 45 * 1024 * 1024;
 
-export function extraireReglages(etat: EtatPersiste): ReglagesProjet {
+export function extraireReglages(etat: EtatPersiste, apercu: ApercuGraphique | null = null): ReglagesProjet {
   const reglages: ReglagesProjet = {
     choisies: etat.choisies,
     rapport: etat.rapport,
     graphiquesEpingles: etat.graphiquesEpingles,
     filtresActifs: etat.filtresActifs,
     definitionsCalculs: etat.definitionsCalculs,
+    source: etat.source ?? null,
+    apercu,
   };
   // Passage par JSON : on n'envoie que ce qui se relira à l'identique
   return JSON.parse(JSON.stringify(reglages)) as ReglagesProjet;
@@ -44,6 +51,7 @@ export function assemblerEtat(nomFichier: string, donnees: unknown, reglages: un
     graphiquesEpingles: liste(r.graphiquesEpingles),
     filtresActifs: liste(r.filtresActifs),
     definitionsCalculs: liste(r.definitionsCalculs),
+    source: normaliserSource(r.source),
   };
 }
 

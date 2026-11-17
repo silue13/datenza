@@ -8,6 +8,7 @@ import ModulePrevisions from "../components/ModulePrevisions";
 import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
 import TableauCroiseDynamique from "../components/TableauCroiseDynamique";
 import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
+import BandeauSource from "../components/BandeauSource";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
 import { useData } from "../context/DataContext";
@@ -1100,6 +1101,8 @@ Ne mets ni introduction ni conclusion.`;
       </section>
 
       {/* 3. BARRE D'OUTILS */}
+      <BandeauSource />
+
       <div className="print:hidden">
         <BarreOutilsDonnees />
       </div>

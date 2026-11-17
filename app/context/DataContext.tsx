@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import type { BlocRapport } from "../../lib/analyse/rapport";
 import type { analyserColonnes } from "../../lib/analyse/analyse";
 import {
@@ -16,6 +16,16 @@ import {
   type DefinitionColonneCalculee,
 } from "../../lib/analyse/filtres";
 import { chargerEtat, sauvegarderEtat, effacerEtat, type EtatPersiste } from "../../lib/persistance";
+import { normaliserSource, type SourceDistante } from "../../lib/import/source";
+import { telechargerSource } from "../../lib/import/telechargement";
+
+/** État de la dernière actualisation d'une source en direct. */
+export interface EtatActualisation {
+  enCours: boolean;
+  /** Ce qui a changé à la dernière actualisation réussie. */
+  message: string | null;
+  erreur: string | null;
+}
 
 export interface ProjetCourant {
   id: string;
@@ -23,7 +33,17 @@ export interface ProjetCourant {
 }
 
 export type ResultatAnalyse = ReturnType<typeof analyserColonnes>;
-export type TypeGraphique = "Barres" | "Courbe" | "Camembert" | "Anneau" | "Radar" | "Aires" | "Carte";
+export type TypeGraphique =
+  | "Barres"
+  | "Courbe"
+  | "Camembert"
+  | "Anneau"
+  | "Radar"
+  | "Aires"
+  | "Carte"
+  | "Nuage"
+  | "Histogramme"
+  | "Combine";
 
 export interface GraphiqueEpingle {
   id: number | string;
@@ -40,6 +60,10 @@ export interface GraphiqueEpingle {
     fill?: boolean;
     borderDash?: number[];
     pointRadius?: number;
+    /** Graphique combiné : nature de la série (barres ou courbe) et axe des valeurs utilisé. */
+    type?: "bar" | "line";
+    yAxisID?: "y" | "y1";
+    order?: number;
   }[];
   chartType?: string;
   interpretation?: string;
@@ -47,6 +71,19 @@ export interface GraphiqueEpingle {
   horizontal?: boolean;
   /** Séries empilées plutôt que côte à côte. */
   empile?: boolean;
+  /** Nuage de points : une ligne du fichier par point, et la droite de tendance si elle a un sens. */
+  nuage?: {
+    series: { nom: string; points: { x: number; y: number }[] }[];
+    droite: { x1: number; y1: number; x2: number; y2: number } | null;
+    r: number | null;
+    nbPoints: number;
+  };
+  /** Titres des axes (nuage, histogramme, combiné). */
+  axes?: { x?: string; y?: string; y2?: string };
+  /** Constats calculés propres à ce type de graphique : remplacent la lecture générique sous le graphique. */
+  constats?: { titre: string; texte: string }[];
+  /** Deux indicateurs pour la fiche du PowerPoint, quand « premier rang » et « total » n'ont pas de sens. */
+  indicateurs?: { titre: string; valeur: string; detail: string }[];
   /** Filtre appliqué quand on clique sur le point n° i (filtrage croisé) ; null si le point n'est pas filtrable. */
   filtresClic?: (ConditionFiltre | null)[];
 }
@@ -65,8 +102,16 @@ interface DataContextType {
     entetes: string[],
     corps: Cellule[][],
     nouveauResultat?: ResultatAnalyse | null,
-    nouveauRapport?: BlocRapport[]
+    nouveauRapport?: BlocRapport[],
+    source?: SourceDistante | null
   ) => void;
+  /** Source en direct du fichier actif (Google Sheets, adresse web) ; null pour un fichier déposé. */
+  source: SourceDistante | null;
+  actualisation: EtatActualisation;
+  /** Retélécharge la source et remplace les données en gardant filtres, colonnes calculées et colonnes choisies. */
+  actualiserSource: () => Promise<void>;
+  /** Actualisation automatique toutes les n minutes tant que l'application est ouverte ; 0 pour l'arrêter. */
+  definirIntervalleSource: (minutes: number) => void;
   setChoisies: React.Dispatch<React.SetStateAction<string[]>>;
   setRapport: React.Dispatch<React.SetStateAction<BlocRapport[]>>;
   setResultat: React.Dispatch<React.SetStateAction<ResultatAnalyse | null>>;
@@ -120,6 +165,9 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
   const [filtresActifs, setFiltresActifs] = useState<ConditionFiltre[]>([]);
   const [definitionsCalculs, setDefinitionsCalculs] = useState<DefinitionColonneCalculee[]>([]);
   const [restaurationTerminee, setRestaurationTerminee] = useState(false);
+  const [source, setSource] = useState<SourceDistante | null>(null);
+  const [actualisation, setActualisation] = useState<EtatActualisation>({ enCours: false, message: null, erreur: null });
+  const actualisationEnCours = useRef(false);
 
   // Recalcule le jeu de données affiché à partir des sources, calculs et filtres
   function regenererDonnees(
@@ -156,13 +204,8 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     setChoisies((prev) => Array.from(new Set([...prev, ...calculs.map((c) => c.nomNouvelleColonne)])));
   }
 
-  function chargerDonnees(
-    nom: string,
-    entetesData: string[],
-    corpsData: Cellule[][],
-    nouveauResultat?: ResultatAnalyse | null,
-    nouveauRapport?: BlocRapport[]
-  ) {
+  /** Prépare un tableau importé : en-têtes propres, lignes vides et lignes de totaux retirées, corrections de saisie évidentes. */
+  function nettoyerImport(entetesData: string[], corpsData: Cellule[][]): { entetes: string[]; corps: Cellule[][] } {
     // 1. Purge immédiate du BOM UTF-8 et des guillemets sur les en-têtes
     const entetesPropres = nettoyerEntetes(entetesData);
 
@@ -212,7 +255,21 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
       const donneesPropres = appliquerCorrections(donneesCompletesObjets, corrections);
       corpsNettoye = donneesPropres.map((obj) => entetesPropres.map((h) => obj[h]));
     }
+    return { entetes: entetesPropres, corps: corpsNettoye };
+  }
 
+  function chargerDonnees(
+    nom: string,
+    entetesData: string[],
+    corpsData: Cellule[][],
+    nouveauResultat?: ResultatAnalyse | null,
+    nouveauRapport?: BlocRapport[],
+    nouvelleSource?: SourceDistante | null
+  ) {
+    const { entetes: entetesPropres, corps: corpsNettoye } = nettoyerImport(entetesData, corpsData);
+
+    setSource(nouvelleSource ?? null);
+    setActualisation({ enCours: false, message: null, erreur: null });
     setProjetCourant(null);
     setNomFichier(nom);
     setSources({ entetes: entetesPropres, corps: corpsNettoye });
@@ -226,6 +283,83 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     setResultat(nouveauResultat ?? null);
     setGraphiquesEpingles([]);
   }
+
+  /**
+   * Retélécharge la source en direct et remplace les données.
+   * Les réglages sont conservés tant que leurs colonnes existent encore ; l'analyse est recalculée.
+   */
+  async function actualiserSource() {
+    if (!source || lectureSeule || actualisationEnCours.current) return;
+    actualisationEnCours.current = true;
+    setActualisation((a) => ({ ...a, enCours: true, erreur: null }));
+    const origine = source;
+    try {
+      const { tableau } = await telechargerSource(origine.urlTelechargement, nomFichier);
+      const propre = nettoyerImport(tableau.entetes, tableau.corps);
+
+      // Colonnes calculées puis filtres : on garde ceux dont les colonnes existent toujours
+      const disponibles = new Set(propre.entetes);
+      const calculs: DefinitionColonneCalculee[] = [];
+      for (const def of definitionsCalculs) {
+        if (disponibles.has(def.colonneA) && (!def.colonneB || disponibles.has(def.colonneB))) {
+          calculs.push(def);
+          disponibles.add(def.nomNouvelleColonne);
+        }
+      }
+      const filtres = filtresActifs.filter((f) => disponibles.has(f.colonne));
+
+      const ajoutees = propre.entetes.filter((h) => !sources.entetes.includes(h));
+      const retirees = sources.entetes.filter((h) => !propre.entetes.includes(h));
+      const ecart = propre.corps.length - sources.corps.length;
+      const notes = [`${propre.corps.length.toLocaleString("fr-FR")} lignes${ecart ? ` (${ecart > 0 ? "+" : "−"}${Math.abs(ecart).toLocaleString("fr-FR")})` : ", nombre inchangé"}`];
+      if (ajoutees.length) notes.push(`${ajoutees.length} colonne(s) ajoutée(s) : ${ajoutees.slice(0, 4).join(", ")}${ajoutees.length > 4 ? "…" : ""}`);
+      if (retirees.length) notes.push(`${retirees.length} colonne(s) disparue(s) : ${retirees.slice(0, 4).join(", ")}${retirees.length > 4 ? "…" : ""}`);
+      const reglagesPerdus = definitionsCalculs.length - calculs.length + (filtresActifs.length - filtres.length);
+      if (reglagesPerdus) notes.push(`${reglagesPerdus} filtre(s) ou colonne(s) calculée(s) retiré(s), faute de colonne`);
+
+      setSources(propre);
+      setDefinitionsCalculs(calculs);
+      setFiltresActifs(filtres);
+      setChoisies((prev) => [...prev.filter((c) => disponibles.has(c)), ...ajoutees.filter((c) => !prev.includes(c))]);
+      regenererDonnees(propre.entetes, propre.corps, calculs, filtres);
+      // L'analyse et le rapport décrivaient les anciennes données : ils sont recalculés à l'affichage
+      setResultat(null);
+      setRapport([]);
+      setSource((actuelle) => (actuelle && actuelle.urlTelechargement === origine.urlTelechargement ? { ...actuelle, derniereMaj: new Date().toISOString() } : actuelle));
+      setActualisation({ enCours: false, message: `${notes.join(" · ")}.`, erreur: null });
+    } catch (e) {
+      setActualisation((a) => ({ ...a, enCours: false, erreur: e instanceof Error ? e.message : "L'actualisation a échoué." }));
+    } finally {
+      actualisationEnCours.current = false;
+    }
+  }
+
+  function definirIntervalleSource(minutes: number) {
+    setSource((actuelle) => (actuelle ? normaliserSource({ ...actuelle, intervalleMinutes: minutes }) : actuelle));
+  }
+
+  // Actualisation automatique : à intervalle régulier tant que l'onglet est visible, et au retour sur l'onglet si le délai est dépassé
+  const actualiserRef = useRef(actualiserSource);
+  actualiserRef.current = actualiserSource;
+  const intervalleMinutes = source?.intervalleMinutes ?? 0;
+  const adresseSource = source?.urlTelechargement ?? "";
+  const derniereMajRef = useRef<string>("");
+  derniereMajRef.current = source?.derniereMaj ?? "";
+  useEffect(() => {
+    if (lectureSeule || !adresseSource || !intervalleMinutes) return;
+    const delai = intervalleMinutes * 60_000;
+    const siPerimee = () => {
+      if (document.visibilityState !== "visible") return;
+      const age = Date.now() - Date.parse(derniereMajRef.current || "");
+      if (Number.isNaN(age) || age >= delai - 5000) void actualiserRef.current();
+    };
+    const minuteur = setInterval(siPerimee, Math.min(delai, 60_000));
+    document.addEventListener("visibilitychange", siPerimee);
+    return () => {
+      clearInterval(minuteur);
+      document.removeEventListener("visibilitychange", siPerimee);
+    };
+  }, [lectureSeule, adresseSource, intervalleMinutes]);
 
   function ajouterFiltre(filtre: ConditionFiltre) {
     const maj = [...filtresActifs, filtre];
@@ -276,6 +410,8 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     setResultat(etat.resultat);
     setGraphiquesEpingles(etat.graphiquesEpingles || []);
     setProjetCourant(etat.projet ?? null);
+    setSource(normaliserSource(etat.source));
+    setActualisation({ enCours: false, message: null, erreur: null });
   }
 
   function ouvrirEtat(etat: EtatPersiste, projet: ProjetCourant | null = null) {
@@ -283,7 +419,7 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
   }
 
   function obtenirEtat(): EtatPersiste {
-    return { nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projet: projetCourant };
+    return { nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projet: projetCourant, source };
   }
 
   // Restauration de l'état persisté (ou affichage direct d'un projet partagé)
@@ -323,10 +459,11 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
         filtresActifs,
         definitionsCalculs,
         projet: projetCourant,
+        source,
       });
     }, 600);
     return () => clearTimeout(minuteur);
-  }, [restaurationTerminee, lectureSeule, nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projetCourant]);
+  }, [restaurationTerminee, lectureSeule, nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projetCourant, source]);
 
   function supprimerDonnees() {
     setNomFichier("");
@@ -340,6 +477,8 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     setFiltresActifs([]);
     setDefinitionsCalculs([]);
     setProjetCourant(null);
+    setSource(null);
+    setActualisation({ enCours: false, message: null, erreur: null });
     if (!lectureSeule) void effacerEtat();
   }
 
@@ -381,6 +520,10 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
         basculerExclusionGraphique,
         filtresActifs,
         chargerDonnees,
+        source,
+        actualisation,
+        actualiserSource,
+        definirIntervalleSource,
         setChoisies,
         setRapport,
         setResultat,
