@@ -10,6 +10,7 @@ import TableauCroiseDynamique from "../components/TableauCroiseDynamique";
 import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
 import BandeauSource from "../components/BandeauSource";
 import TestsStatistiques from "../components/TestsStatistiques";
+import PanneauRecette from "../components/PanneauRecette";
 import { formaterP } from "../../lib/analyse/inference";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
@@ -1108,6 +1109,7 @@ Ne mets ni introduction ni conclusion.`;
 
       <div className="print:hidden">
         <BarreOutilsDonnees />
+        <PanneauRecette />
       </div>
 
       {/* BARRE D'ACCÈS RAPIDE */}
