@@ -1,8 +1,25 @@
 "use client";
 
 import { useEffect } from "react";
+import { estVersionPerimee, rechargerPourNouvelleVersion } from "../../lib/erreurs";
 
 export default function PwaUpdater() {
+  // Code chargé à la demande (export Word, carte…) introuvable après une mise en ligne : on recharge la nouvelle version
+  useEffect(() => {
+    const surRejet = (e: PromiseRejectionEvent) => {
+      if (estVersionPerimee(e.reason)) rechargerPourNouvelleVersion();
+    };
+    const surErreur = (e: ErrorEvent) => {
+      if (estVersionPerimee(e.error ?? e.message)) rechargerPourNouvelleVersion();
+    };
+    window.addEventListener("unhandledrejection", surRejet);
+    window.addEventListener("error", surErreur);
+    return () => {
+      window.removeEventListener("unhandledrejection", surRejet);
+      window.removeEventListener("error", surErreur);
+    };
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
       return;

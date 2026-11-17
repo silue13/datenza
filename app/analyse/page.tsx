@@ -12,6 +12,8 @@ import BandeauSource from "../components/BandeauSource";
 import TestsStatistiques from "../components/TestsStatistiques";
 import PanneauRecette from "../components/PanneauRecette";
 import AnalysesMetier from "../components/AnalysesMetier";
+import BlocSecurise from "../components/BlocSecurise";
+import { estVersionPerimee, rechargerPourNouvelleVersion } from "../../lib/erreurs";
 import { formaterP } from "../../lib/analyse/inference";
 import ModeleDonnees from "../components/ModeleDonnees";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
@@ -662,6 +664,8 @@ export default function AnalysePage() {
       });
     } catch (error) {
       console.error("Erreur lors de l'export Word :", error);
+      // Module d'export introuvable après une mise en ligne : la nouvelle version est rechargée
+      if (estVersionPerimee(error)) rechargerPourNouvelleVersion();
     } finally {
       setExportWordEnCours(false);
     }
@@ -1148,11 +1152,11 @@ Ne mets ni introduction ni conclusion.`;
       <BandeauSource />
 
       <div className="print:hidden">
-        <BarreOutilsDonnees />
-        <PanneauRecette />
+        <BlocSecurise nom="Filtres et colonnes calculées"><BarreOutilsDonnees /></BlocSecurise>
+        <BlocSecurise nom="Étapes de préparation"><PanneauRecette /></BlocSecurise>
       </div>
 
-      <ModeleDonnees />
+      <BlocSecurise nom="Modèle de données"><ModeleDonnees /></BlocSecurise>
 
       {/* BARRE D'ACCÈS RAPIDE */}
       <nav
@@ -1246,6 +1250,7 @@ Ne mets ni introduction ni conclusion.`;
       </nav>
 
       {/* 4. DÉPLIANT 1 : SYNTHÈSE EXÉCUTIVE (2 COLONNES SUR MOBILE) */}
+      <BlocSecurise nom="Synthèse">
       <Depliant
         id="sec-synthese"
         titre={estBenchmarkActif ? `Synthèse exécutive (${sourcesFichiers.length} fichiers)` : "Synthèse exécutive & Faits marquants"}
@@ -1308,8 +1313,10 @@ Ne mets ni introduction ni conclusion.`;
           </div>
         </div>
       </Depliant>
+      </BlocSecurise>
 
       {/* DÉPLIANT 2 : STATISTIQUES PAR COLONNE (2 COLONNES SUR MOBILE) */}
+      <BlocSecurise nom="Statistiques">
       <Depliant
         id="sec-stats"
         titre={estBenchmarkActif ? `Statistiques par colonne (vs ${nettoyerNomAffichage(refSource)})` : "Statistiques par colonne"}
@@ -1441,8 +1448,10 @@ Ne mets ni introduction ni conclusion.`;
           })}
         </div>
       </Depliant>
+      </BlocSecurise>
 
       {/* DÉPLIANT 3 : CORRÉLATIONS (2 COLONNES SUR MOBILE) */}
+      <BlocSecurise nom="Corrélations">
       <Depliant
         id="sec-correlations"
         titre={estBenchmarkActif ? `Corrélations (${sourcesFichiers.length} fichiers)` : "Corrélations significatives"}
@@ -1605,8 +1614,10 @@ Ne mets ni introduction ni conclusion.`;
           )}
         </div>
       </Depliant>
+      </BlocSecurise>
 
       {/* DÉPLIANT 4 : TESTS STATISTIQUES */}
+      <BlocSecurise nom="Tests statistiques">
       <Depliant
         id="sec-tests"
         titre="Tests statistiques"
@@ -1618,9 +1629,11 @@ Ne mets ni introduction ni conclusion.`;
       >
         <TestsStatistiques tests={resultatActif?.tests ?? []} />
       </Depliant>
+      </BlocSecurise>
 
       {/* DÉPLIANT 5 : ANALYSES MÉTIER */}
       {resultatActif && (
+        <BlocSecurise nom="Analyses métier">
         <Depliant id="sec-metier" titre="Analyses métier" detail="Pareto / ABC · évolution · segments clients · fidélité">
           <AnalysesMetier
             entetes={entetes}
@@ -1629,21 +1642,22 @@ Ne mets ni introduction ni conclusion.`;
             mesures={(resultatActif.mesures ?? []).map((m) => m.colonne)}
           />
         </Depliant>
+        </BlocSecurise>
       )}
 
       {/* 5. MODULES D'EXPLORATION VISUELLE & TABLEAUX */}
       <section className="space-y-8">
         <div id="sec-previsions" className="scroll-mt-24">
-          <ModulePrevisions entetes={entetes} corps={corps} />
+          <BlocSecurise nom="Prévisions"><ModulePrevisions entetes={entetes} corps={corps} /></BlocSecurise>
         </div>
         <div id="sec-graphiques" className="scroll-mt-24">
-          <GraphiqueGenerateur key={`g-${nomFichier}`} entetes={entetes} corps={corps} onEpingler={epinglerGraphique} />
+          <BlocSecurise nom="Graphiques"><GraphiqueGenerateur key={`g-${nomFichier}`} entetes={entetes} corps={corps} onEpingler={epinglerGraphique} /></BlocSecurise>
         </div>
         <div id="sec-carte" className="scroll-mt-24">
-          <CarteGeographique key={`c-${nomFichier}`} entetes={entetes} corps={corps} />
+          <BlocSecurise nom="Carte"><CarteGeographique key={`c-${nomFichier}`} entetes={entetes} corps={corps} /></BlocSecurise>
         </div>
         <div id="sec-tdc" className="scroll-mt-24">
-          <TableauCroiseDynamique key={`t-${nomFichier}`} entetes={entetes} corps={corps} />
+          <BlocSecurise nom="Tableau croisé"><TableauCroiseDynamique key={`t-${nomFichier}`} entetes={entetes} corps={corps} /></BlocSecurise>
         </div>
       </section>
     </div>
