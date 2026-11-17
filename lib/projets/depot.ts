@@ -32,7 +32,11 @@ function expliquer(e: unknown, action: string): Error {
   if (/bucket not found|relation .*projets.* does not exist|could not find the table/i.test(brut)) {
     return new Error("La base n'est pas encore prête : exécutez le fichier supabase/schema.sql dans l'éditeur SQL de Supabase.");
   }
-  if (/row-level security|not authorized|jwt|unauthorized/i.test(brut)) return new Error("Votre session a expiré. Reconnectez-vous puis réessayez.");
+  // Un refus des règles d'accès n'est pas une session expirée : on le dit, avec le détail technique pour le diagnostic
+  if (/row-level security/i.test(brut)) {
+    return new Error(`${action} : la base a refusé l'opération (règles d'accès). Relancez supabase/schema.sql dans Supabase, puis réessayez. Détail : ${brut}`);
+  }
+  if (/jwt|not authenticated|invalid claim|session.*(expired|missing)/i.test(brut)) return new Error("Votre session a expiré. Reconnectez-vous puis réessayez.");
   if (/failed to fetch|network/i.test(brut)) return new Error("Connexion Internet indisponible. Réessayez dans un instant.");
   if (/too large|exceeded the maximum/i.test(brut)) return new Error("Ce fichier est trop volumineux pour être enregistré en ligne.");
   return new Error(`${action} : ${brut}`);
@@ -72,6 +76,8 @@ export async function enregistrerProjet(etat: EtatPersiste, nom: string, idExist
   if (envoi.error) throw expliquer(envoi.error, "Envoi des données impossible");
 
   const ligne = {
+    // Renseigné explicitement : une table « projets » créée avant DATENZA peut ne pas le remplir d'elle-même
+    user_id: userId,
     nom: nomPropre,
     nom_fichier: etat.nomFichier,
     nb_lignes: etat.sources.corps.length,
