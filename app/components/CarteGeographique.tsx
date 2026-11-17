@@ -5,7 +5,20 @@ import "leaflet/dist/leaflet.css";
 import { MapPin, Presentation, Calendar } from "lucide-react";
 import { trouverLieuCI, cleGeo, PAYS_DU_MONDE } from "../../lib/geoci/data";
 import { parseNombre, type Cellule, estValeurVide, arrondir } from "../../lib/analyse/utils";
-import { useData } from "../context/DataContext";
+import { useData, type GraphiqueEpingle } from "../context/DataContext";
+import type { Feature } from "geojson";
+import type { Layer, Path } from "leaflet";
+
+/** Composants Leaflet chargés à la demande (types seulement : le chargement reste différé). */
+interface ModulesCarte {
+  MapContainer: typeof import("react-leaflet")["MapContainer"];
+  TileLayer: typeof import("react-leaflet")["TileLayer"];
+  CircleMarker: typeof import("react-leaflet")["CircleMarker"];
+  Popup: typeof import("react-leaflet")["Popup"];
+  Tooltip: typeof import("react-leaflet")["Tooltip"];
+  GeoJSON: typeof import("react-leaflet")["GeoJSON"];
+  AjusterVue: typeof import("./AjusterVue")["default"];
+}
 import {
   agregerParZone,
   classerValeurs,
@@ -22,7 +35,7 @@ import {
 interface Props {
   entetes: string[];
   corps: Cellule[][];
-  onAjouterPptx?: (element: any) => void;
+  onAjouterPptx?: (element: GraphiqueEpingle) => void;
 }
 
 interface PointComparatif {
@@ -70,15 +83,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
   const { graphiquesEpingles, epinglerGraphique } = useData();
 
   // État stockant les composants Leaflet une fois le navigateur prêt
-  const [leafletReady, setLeafletReady] = useState<{
-    MapContainer: any;
-    TileLayer: any;
-    CircleMarker: any;
-    Popup: any;
-    Tooltip: any;
-    GeoJSON: any;
-    AjusterVue: any;
-  } | null>(null);
+  const [leafletReady, setLeafletReady] = useState<ModulesCarte | null>(null);
 
   // Chargement synchronisé unique de Leaflet côté client
   useEffect(() => {
@@ -97,7 +102,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             Popup: rl.Popup,
             Tooltip: rl.Tooltip,
             GeoJSON: rl.GeoJSON,
-            AjusterVue: av.default || av,
+            AjusterVue: av.default,
           });
         }
       })
@@ -525,7 +530,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     if (!topPoints.length) return;
     const labels = topPoints.map((p) => p.nom);
 
-    const objetExport = {
+    const objetExport: GraphiqueEpingle = {
       id: idGraphiqueCarte,
       titre: estFormatMatriciel
         ? `Répartition Spatiale des Stations (${periodeChoisie === "Toutes" ? "Cumul" : periodeChoisie})`
@@ -544,8 +549,8 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       interpretation: `Pôle dominant : « ${topPoints[0]?.nom || ""} » avec ${topPoints[0]?.totalGlobal.toLocaleString("fr-FR")}.`,
     };
 
-    onAjouterPptx?.(objetExport as any);
-    if (epinglerGraphique) epinglerGraphique(objetExport as any);
+    onAjouterPptx?.(objetExport);
+    if (epinglerGraphique) epinglerGraphique(objetExport);
     setEstDejaInclus(true);
   };
 
@@ -735,18 +740,21 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
               <leafletReady.GeoJSON
                 key={`zones-${niveau}-${signatureZones}`}
                 data={contoursActifs}
-                style={(zone: any) => ({
-                  fillColor: couleurPour(valeursZones.get(zone?.properties?.nom), classesZones),
+                style={(zone?: Feature) => ({
+                  fillColor: couleurPour(valeursZones.get(String(zone?.properties?.nom ?? "")), classesZones),
                   fillOpacity: 0.88,
                   color: "#ffffff",
                   weight: 1.5,
                 })}
-                onEachFeature={(zone: any, couche: any) => {
-                  const v = valeursZones.get(zone.properties.nom);
+                onEachFeature={(zone: Feature, calque: Layer) => {
+                  // Chaque zone d'un contour GeoJSON est dessinée comme un tracé Leaflet
+                  const couche = calque as Path;
+                  const nomZone = String(zone.properties?.nom ?? "");
+                  const v = valeursZones.get(nomZone);
                   const ligne = document.createElement("div");
                   ligne.className = "text-xs font-sans text-slate-900 leading-tight";
                   const nom = document.createElement("strong");
-                  nom.textContent = zone.properties.nom;
+                  nom.textContent = nomZone;
                   const valeur = document.createElement("span");
                   valeur.className = "block mt-0.5";
                   valeur.textContent = v === undefined ? "Sans donnée" : v.toLocaleString("fr-FR");

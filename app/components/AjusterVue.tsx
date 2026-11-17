@@ -18,7 +18,7 @@ export default function AjusterVue({ points }: { points: { lat: number; lng: num
 
     map.whenReady(() => {
       // Carte démontée, ou conteneur détaché du DOM, avant que le recadrage ne s'exécute
-      if (!actif || !(map as any)._mapPane || !map.getContainer()?.isConnected) return;
+      if (!actif || !(map as unknown as { _mapPane?: HTMLElement })._mapPane || !map.getContainer()?.isConnected) return;
       if (points.length === 1) {
         map.setView([points[0].lat, points[0].lng], 6, { animate: false });
         return;

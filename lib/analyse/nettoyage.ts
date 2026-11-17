@@ -1,8 +1,17 @@
+import type { Cellule, LigneObjet } from "./utils";
+
+/** Remplacement d'une valeur saisie par sa forme corrigée, dans une colonne. */
+export interface CorrectionSaisie {
+  colonne: string;
+  valeurOriginale: Cellule;
+  valeurSuggeree: Cellule;
+}
+
 export interface SuggestionNettoyage {
   type: 'casse_variante' | 'espaces_inutiles' | 'doublon_ligne';
   colonne?: string;
-  valeurOriginale?: any;
-  valeurSuggeree?: any;
+  valeurOriginale?: Cellule;
+  valeurSuggeree?: Cellule;
   occurrences?: number;
   indicesLignes?: number[];
   description: string;
@@ -29,7 +38,7 @@ function normaliserTexteInterne(val: string): string {
 /**
  * Analyse un tableau d'objets (données brutes) et détecte les opportunités de nettoyage
  */
-export function analyserNettoyage(donnees: Record<string, any>[]): RapportNettoyage {
+export function analyserNettoyage(donnees: LigneObjet[]): RapportNettoyage {
   if (!donnees || donnees.length === 0) {
     return { totalDoublonsLignes: 0, suggestionsParColonne: {} };
   }
@@ -113,9 +122,9 @@ export function analyserNettoyage(donnees: Record<string, any>[]): RapportNettoy
  * Applique une liste de corrections validées par l'utilisateur sur les données
  */
 export function appliquerCorrections(
-  donnees: Record<string, any>[],
-  corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]
-): Record<string, any>[] {
+  donnees: LigneObjet[],
+  corrections: CorrectionSaisie[]
+): LigneObjet[] {
   return donnees.map((ligne) => {
     const nouvelleLigne = { ...ligne };
     for (const corr of corrections) {

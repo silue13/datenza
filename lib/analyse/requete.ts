@@ -214,7 +214,8 @@ export function executerRequete(
   // Un filtre mal formé est refusé, jamais ignoré : l'ignorer donnerait un chiffre faux présenté comme exact.
   const filtres: FiltrePret[] = [];
   for (const brut of enListe(spec.filtres).slice(0, 8)) {
-    const f = (brut && typeof brut === "object" ? brut : {}) as Partial<ConditionFiltre> & { operateur?: unknown };
+    // Filtre rédigé par l'assistant IA : donnée non fiable, chaque champ est vérifié ci-dessous
+    const f = (brut && typeof brut === "object" ? brut : {}) as { colonne?: unknown; operateur?: unknown; valeur?: unknown; valeurFin?: unknown };
     const colonne = trouverColonne(entetes, f.colonne);
     if (!colonne) return echec(`Filtre : colonne « ${String(f.colonne)} » introuvable. ${disponibles}`);
     if (colonnesInterdites(colonne)) return echec(`La colonne « ${colonne} » contient des données personnelles : elle ne peut pas servir de filtre.`);

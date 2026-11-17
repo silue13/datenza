@@ -1,11 +1,11 @@
-import { parseNombre } from './utils';
+import { parseNombre, type Cellule, type LigneObjet } from './utils';
 import { convertirDate } from './detection';
 
 export interface ConditionFiltre {
   colonne: string;
   operateur: 'egal' | 'different' | 'contient' | 'superieur' | 'inferieur' | 'entre';
-  valeur: any;
-  valeurFin?: any;
+  valeur: Cellule;
+  valeurFin?: Cellule;
 }
 
 export interface DefinitionColonneCalculee {
@@ -19,17 +19,17 @@ export interface DefinitionColonneCalculee {
 }
 
 /** Valeur comparable : nombre, sinon date (en millisecondes). Permet de filtrer « après le 01/03/2024 ». */
-function comparable(v: any): number | null {
+function comparable(v: Cellule): number | null {
   const n = parseNombre(v);
   if (n !== null) return n;
   const d = convertirDate(v);
   return d ? d.getTime() : null;
 }
 
-const texte = (v: any) => String(v ?? '').trim().toLowerCase();
+const texte = (v: Cellule) => String(v ?? '').trim().toLowerCase();
 
 /** Égalité tolérante : « 10 », « 10,0 » et 10 sont égaux ; le texte est comparé sans tenir compte de la casse. */
-function egal(a: any, b: any): boolean {
+function egal(a: Cellule, b: Cellule): boolean {
   if (texte(a) === texte(b)) return true;
   const na = parseNombre(a);
   const nb = parseNombre(b);
@@ -37,9 +37,9 @@ function egal(a: any, b: any): boolean {
 }
 
 export function appliquerFiltres(
-  donnees: Record<string, any>[],
+  donnees: LigneObjet[],
   filtres: ConditionFiltre[]
-): Record<string, any>[] {
+): LigneObjet[] {
   if (!filtres || filtres.length === 0) return donnees;
 
   return donnees.filter((ligne) => {
@@ -75,9 +75,9 @@ export function appliquerFiltres(
 }
 
 export function ajouterColonneCalculee(
-  donnees: Record<string, any>[],
+  donnees: LigneObjet[],
   definition: DefinitionColonneCalculee
-): Record<string, any>[] {
+): LigneObjet[] {
   return donnees.map((ligne) => {
     const nouvelleLigne = { ...ligne };
     const valA = parseNombre(ligne[definition.colonneA]);
@@ -96,8 +96,11 @@ export function ajouterColonneCalculee(
         }
       }
     } else if (definition.type === 'extraction_date' && definition.uniteDate) {
-      const rawDate = ligne[definition.colonneA];
-      const dateVal = convertirDate(rawDate) ?? (rawDate instanceof Date ? rawDate : new Date(rawDate));
+      // Une cellule lue d'un classeur peut être un objet Date, même si le type des cellules ne le prévoit pas
+      const rawDate: unknown = ligne[definition.colonneA];
+      const dateVal =
+        convertirDate(rawDate) ??
+        (rawDate instanceof Date ? rawDate : typeof rawDate === "string" || typeof rawDate === "number" ? new Date(rawDate) : null);
       if (!dateVal || isNaN(dateVal.getTime())) {
         nouvelleLigne[definition.nomNouvelleColonne] = null;
       } else {

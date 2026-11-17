@@ -4,11 +4,12 @@ import type { BlocRapport } from "../../lib/analyse/rapport";
 import type { analyserColonnes } from "../../lib/analyse/analyse";
 import {
   type Cellule,
+  type LigneObjet,
   nettoyerEntetes,
   estLigneTotal,
   estValeurVide,
 } from "../../lib/analyse/utils";
-import { analyserNettoyage, appliquerCorrections } from "../../lib/analyse/nettoyage";
+import { analyserNettoyage, appliquerCorrections, type CorrectionSaisie } from "../../lib/analyse/nettoyage";
 import type { ConditionFiltre, DefinitionColonneCalculee } from "../../lib/analyse/filtres";
 import {
   adapterRecette,
@@ -149,7 +150,7 @@ interface DataContextType {
   appliquerRecette: (recette: Recette) => RapportRecette;
   /** Charge un autre fichier en rejouant une recette (par défaut, les étapes actuelles). */
   rejouerSurFichier: (nom: string, entetes: string[], corps: Cellule[][], recette?: Recette) => RapportRecette;
-  nettoyerDonnees: (corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) => void;
+  nettoyerDonnees: (corrections: CorrectionSaisie[]) => void;
   supprimerDonnees: () => void;
   restaurationTerminee: boolean;
   /** Vrai dès qu'un fichier est chargé, même si les filtres actifs ne laissent aucune ligne. */
@@ -250,7 +251,7 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     // 3. Conversion en objets avec protection mémoire pour grands volumes
     const echantillon = corpsFiltre.slice(0, 2500);
     const echantillonObjets = echantillon.map((ligne) => {
-      const obj: Record<string, any> = {};
+      const obj: LigneObjet = {};
       entetesPropres.forEach((h, idx) => {
         obj[h] = ligne[idx];
       });
@@ -258,7 +259,7 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     });
 
     const rapportNettoyage = analyserNettoyage(echantillonObjets);
-    const corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[] = [];
+    const corrections: CorrectionSaisie[] = [];
 
     Object.values(rapportNettoyage.suggestionsParColonne).forEach((suggestions) => {
       suggestions.forEach((s) => {
@@ -275,7 +276,7 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     let corpsNettoye = corpsFiltre;
     if (corrections.length > 0) {
       const donneesCompletesObjets = corpsFiltre.map((ligne) => {
-        const obj: Record<string, any> = {};
+        const obj: LigneObjet = {};
         entetesPropres.forEach((h, idx) => {
           obj[h] = ligne[idx];
         });
@@ -475,10 +476,10 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     return r;
   }
 
-  function nettoyerDonnees(corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) {
+  function nettoyerDonnees(corrections: CorrectionSaisie[]) {
     if (!corrections.length) return;
     const objs = sources.corps.map((ligne) => {
-      const obj: Record<string, any> = {};
+      const obj: LigneObjet = {};
       sources.entetes.forEach((h, idx) => {
         obj[h] = ligne[idx];
       });

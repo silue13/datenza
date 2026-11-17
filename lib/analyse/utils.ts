@@ -3,6 +3,9 @@ import { convertirDate, estAnnee, estPeriode } from "./dates";
 
 export type Cellule = string | number | boolean | null | undefined;
 
+/** Une ligne de données indexée par nom de colonne. */
+export type LigneObjet = Record<string, Cellule>;
+
 export interface StatsNumeriques {
   n: number;
   somme: number | null;

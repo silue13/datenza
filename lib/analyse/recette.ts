@@ -239,7 +239,7 @@ export function creerRecette(
 const MAX_ETAPES = 200;
 const MAX_COLONNES = 2000;
 const texte = (v: unknown, max = 300): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
-const valeurSimple = (v: unknown) => v === undefined || v === null || typeof v === "number" || (typeof v === "string" && v.length <= 300);
+const valeurSimple = (v: unknown): v is Cellule => v === undefined || v === null || typeof v === "number" || (typeof v === "string" && v.length <= 300);
 
 function lireCalcul(c: unknown): DefinitionColonneCalculee | null {
   if (!c || typeof c !== "object") return null;

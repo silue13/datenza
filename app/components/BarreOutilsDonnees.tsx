@@ -258,7 +258,7 @@ export default function BarreOutilsDonnees() {
                 <label className="block text-[11px] font-semibold text-slate-500 mb-1">Opération</label>
                 <select
                   value={operateurCalcul}
-                  onChange={(e) => setOperateurCalcul(e.target.value as any)}
+                  onChange={(e) => setOperateurCalcul(e.target.value as typeof operateurCalcul)}
                   className="w-full text-xs p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-medium"
                 >
                   <option value="/">Division (A ÷ B)</option>

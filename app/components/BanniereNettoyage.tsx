@@ -2,7 +2,8 @@
 
 import React, { useMemo, useState } from "react";
 import { useData } from "@/app/context/DataContext";
-import { analyserNettoyage } from "@/lib/analyse/nettoyage";
+import { analyserNettoyage, type CorrectionSaisie } from "@/lib/analyse/nettoyage";
+import type { LigneObjet } from "@/lib/analyse/utils";
 
 export default function BanniereNettoyage() {
   const { entetes, corps, nettoyerDonnees } = useData();
@@ -12,7 +13,7 @@ export default function BanniereNettoyage() {
   const donneesObjets = useMemo(() => {
     if (!entetes.length || !corps.length) return [];
     return corps.map((ligne) => {
-      const obj: Record<string, any> = {};
+      const obj: LigneObjet = {};
       entetes.forEach((h, idx) => {
         obj[h] = ligne[idx];
       });
@@ -27,7 +28,7 @@ export default function BanniereNettoyage() {
 
   if (masque || !rapport) return null;
 
-  const toutesLesCorrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[] = [];
+  const toutesLesCorrections: CorrectionSaisie[] = [];
   Object.values(rapport.suggestionsParColonne).forEach((suggestions) => {
     suggestions.forEach((s) => {
       if (s.colonne && s.valeurOriginale && s.valeurSuggeree) {

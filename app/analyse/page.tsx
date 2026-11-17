@@ -16,7 +16,7 @@ import BlocSecurise from "../components/BlocSecurise";
 import { estVersionPerimee, rechargerPourNouvelleVersion } from "../../lib/erreurs";
 import { formaterP } from "../../lib/analyse/inference";
 import ModeleDonnees from "../components/ModeleDonnees";
-import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
+import { exporterRapportPowerPoint, type BlocRapportExport, type DonneesExportPptx, type GraphiqueExport } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
 import { useData } from "../context/DataContext";
 import {
@@ -340,7 +340,7 @@ export default function AnalysePage() {
     return Object.entries(resultatActif.statistiques)
       .filter(([h]) => h !== "Fichier Source")
       .slice(0, 8)
-      .map(([col, info]: [string, any]) => ({
+      .map(([col, info]) => ({
         type: info.type === "numerique" ? "numerique" : "categorie",
         texte: `Indicateur « ${col} » : profilé avec succès (${info.type}).`,
       }));
@@ -709,14 +709,14 @@ export default function AnalysePage() {
     await new Promise((r) => setTimeout(r, 50));
 
     try {
-      const rapportFinal = estBenchmarkActif
+      const rapportFinal: BlocRapportExport[] = estBenchmarkActif
         ? syntheseComparativeCards.map((c) => ({
             type: c.type,
             texte: `${c.titre} : ${c.detail}`,
           }))
-        : (rapportActif as any);
+        : rapportActif;
 
-      let tdcManuelExport: any = undefined;
+      let tdcManuelExport: DonneesExportPptx["tdcManuel"] = undefined;
       if (estBenchmarkActif && colonnesMesurables.length > 0) {
         const colCat = noms.find((n) => {
           const idx = entetes.indexOf(n);
@@ -786,7 +786,7 @@ export default function AnalysePage() {
 
       // Le PowerPoint reprend les graphiques de l'écran (automatiques puis créés à la main, sauf ceux retirés),
       // suivis des éléments ajoutés depuis les autres modules (prévision, carte, tableau croisé).
-      const graphiquesExport: any[] = [...graphiquesPourPptx] as any;
+      const graphiquesExport: GraphiqueExport[] = [...graphiquesPourPptx];
       if (graphiquesExport.length === 0 && estBenchmarkActif) {
         const colCat = noms.find((n) => {
           const idx = entetes.indexOf(n);
@@ -829,12 +829,12 @@ export default function AnalysePage() {
         nomProjet: nomFichier || "Analyse Datenza",
         entetes: entetes,
         corps: corps,
-        analyse: resultatActif as any,
+        analyse: resultatActif,
         rapport: rapportFinal,
         graphiquesEpingles: graphiquesExport,
         tdcManuel: tdcManuelExport,
         syntheseCorrelationsIA: syntheseCorrIA ?? undefined,
-      } as any);
+      });
     } catch (error) {
       console.error("Erreur lors de l'export PowerPoint :", error);
     } finally {
@@ -865,24 +865,20 @@ export default function AnalysePage() {
     setChargementCorrIA(true);
     setErreurCorrIA(null);
     try {
-      const topRelations = (estBenchmarkActif ? correlationsBenchmark.slice(0, 5) : correlationsStandard.slice(0, 6)).map(
-        (c: any) => {
-          if (estBenchmarkActif) {
-            return {
-              relation: `${c.colA} ↔ ${c.colB}`,
-              reference: `${nettoyerNomAffichage(refSource)} (r = ${c.rRef})`,
-              comparaisons: c.comparaisons.map(
-                (comp: any) => `${nettoyerNomAffichage(comp.source)}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`
-              ),
-            };
-          }
-          return {
+      // Deux formes de corrélation selon le mode : comparaison de fichiers ou fichier unique
+      const topRelations = estBenchmarkActif
+        ? correlationsBenchmark.slice(0, 5).map((c) => ({
+            relation: `${c.colA} ↔ ${c.colB}`,
+            reference: `${nettoyerNomAffichage(refSource)} (r = ${c.rRef})`,
+            comparaisons: c.comparaisons.map(
+              (comp) => `${nettoyerNomAffichage(comp.source)}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`
+            ),
+          }))
+        : correlationsStandard.slice(0, 6).map((c) => ({
             relation: `${c.colonneA} ↔ ${c.colonneB}`,
             coefficient_r: c.coefficient,
             intensite: c.interpretation,
-          };
-        }
-      );
+          }));
 
       const question = `Interprète de façon managériale et opérationnelle ces corrélations statistiques dominantes :
 ${JSON.stringify(topRelations)}
