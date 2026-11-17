@@ -1,4 +1,5 @@
 // lib/ia/explication-ia.ts
+import { appelerIA } from "./appelIA";
 export type TypeElement = "graphique" | "prevision" | "correlation" | "carte";
 
 export async function genererExplicationIA(
@@ -15,17 +16,13 @@ export async function genererExplicationIA(
 
   const question = `${invites[type]}\n\nDONNÉES DU MODULE :\n${JSON.stringify(donneesResumees)}`;
 
-  const rep = await fetch("/api/ai", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  const rep = await appelerIA({
       question,
       contexte: contexteFichier,
       fournisseur: "auto",
       langueConversation: "fr",
       langueApp: "fr",
-    }),
-  });
+    });
 
   const data = await rep.json();
   if (!rep.ok || !data.reponse) {

@@ -55,6 +55,7 @@ import { operationPour, estPseudoMesure } from "../../lib/analyse/mesures";
 import type { ConditionFiltre } from "../../lib/analyse/filtres";
 import { useData, type GraphiqueEpingle, type TypeGraphique } from "../context/DataContext";
 import { lireFournisseur } from "../../lib/prefs";
+import { appelerIA } from "../../lib/ia/appelIA";
 
 type Agregation = AgregationGraphique;
 
@@ -1611,17 +1612,13 @@ N'invente aucun chiffre, aucune cause et aucun contexte absents des données ; n
 
       const moteurPref = typeof window !== "undefined" ? lireFournisseur() : "auto";
 
-      const rep = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const rep = await appelerIA({
           question,
           contexte: contexteUltraCourt,
           fournisseur: moteurPref || "auto",
           langueConversation: "fr",
           langueApp: "fr",
-        }),
-      });
+        });
 
       const data = (await rep.json().catch(() => ({}))) as {
         reponse?: string;

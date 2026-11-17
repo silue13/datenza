@@ -56,6 +56,7 @@ import {
   FlaskConical,
   Briefcase,
 } from "lucide-react";
+import { appelerIA } from "../../lib/ia/appelIA";
 
 // Import dynamique sans SSR pour éviter le conflit d'instance DOM de Leaflet
 const CarteGeographique = dynamic(
@@ -893,17 +894,13 @@ Ne mets ni introduction ni conclusion.`;
 
       const moteurPref = typeof window !== "undefined" ? lireFournisseur() : "auto";
 
-      const rep = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const rep = await appelerIA({
           question,
           contexte: JSON.stringify({ fichier: nomFichier, nbLignes: corps.length, topRelations }),
           fournisseur: moteurPref || "auto",
           langueConversation: "fr",
           langueApp: "fr",
-        }),
-      });
+        });
 
       const data = (await rep.json().catch(() => ({}))) as { reponse?: string; error?: string };
       if (!rep.ok || !data.reponse) {

@@ -1,0 +1,47 @@
+name: Vérifications
+
+# À chaque envoi sur une branche et à chaque pull request vers main : le code doit compiler,
+# passer les tests et se construire comme sur Vercel. Une PR au rouge ne doit pas être fusionnée.
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+
+# Un nouvel envoi sur la même branche annule la vérification précédente, devenue inutile
+concurrency:
+  group: verifications-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verifier:
+    name: Typage, tests et build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Vérifier le typage
+        run: npx tsc --noEmit -p .
+
+      - name: Lancer les tests
+        run: npx vitest run
+
+      - name: Construire l'application
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
