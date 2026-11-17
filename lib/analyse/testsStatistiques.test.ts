@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyserColonnes } from "./analyse";
 import { genererRapport } from "./rapport";
-import { interpreterTest, type ComparaisonGroupes, type LienCategories } from "./testsStatistiques";
+import { interpreterTest, libelleEffet, questionTest, trierTests, verdictTest, type ComparaisonGroupes, type LienCategories } from "./testsStatistiques";
 
 // Générateur déterministe : les tests ne doivent pas dépendre du hasard
 function alea(graine: number) {
@@ -71,5 +71,26 @@ describe("tests statistiques sur un fichier", () => {
     const forte = r.correlations.find((x) => x.colonneA === "Prix" && x.colonneB === "Montant")!;
     expect(forte.significative).toBe(true);
     expect(forte.pValeur).toBeLessThan(0.001);
+  });
+});
+
+describe("présentation commune des tests", () => {
+  const { entetes, corps } = fichierVentes();
+  const tests = analyserColonnes(entetes, corps, entetes).tests;
+
+  it("classe les résultats démontrés en premier", () => {
+    const tries = trierTests(tests);
+    expect(verdictTest(tries[0])).toBe("demontre");
+    expect(questionTest(tries[0])).toBe("Montant selon Region");
+    expect(tries.map(verdictTest).slice(1).every((v) => v !== "demontre")).toBe(true);
+  });
+});
+
+describe("libellé de la taille d'effet", () => {
+  it("n'affiche pas « 0 » pour un effet minuscule", () => {
+    const { entetes, corps } = fichierVentes();
+    const t = analyserColonnes(entetes, corps, entetes).tests[0];
+    expect(libelleEffet({ ...t, test: { ...t.test, effet: 0.0004 } })).toMatch(/^(η²|d|V de Cramér) < 0,01$/);
+    expect(libelleEffet({ ...t, test: { ...t.test, effet: 0.48 } })).toMatch(/= 0,48$/);
   });
 });

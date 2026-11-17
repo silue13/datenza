@@ -225,9 +225,10 @@ export function nomMethode(t: TestStatistique, langue: Langue = "fr"): string {
 }
 
 export function libelleEffet(t: TestStatistique, langue: Langue = "fr"): string {
-  const v = nombre(t.test.effet, langue);
-  if (t.type === "lien") return `${langue === "en" ? "Cramér's V" : "V de Cramér"} = ${v}`;
-  return t.methode === "t-welch" ? `d = ${v}` : `η² = ${v}`;
+  const nom = t.type === "lien" ? (langue === "en" ? "Cramér's V" : "V de Cramér") : t.methode === "t-welch" ? "d" : "η²";
+  // Un effet minuscule mais non nul ne doit pas s'afficher « 0 »
+  const minuscule = t.test.effet !== 0 && Math.abs(t.test.effet) < 0.005;
+  return minuscule ? `${nom} < ${nombre(0.01, langue)}` : `${nom} = ${nombre(t.test.effet, langue)}`;
 }
 
 /** Phrase qui dit ce que le test permet de conclure, et ce qu'il ne permet pas. */
@@ -294,3 +295,33 @@ export const AVERTISSEMENT_TESTS = {
   fr: "Un résultat significatif indique qu'un écart ne s'explique probablement pas par le hasard ; il ne prouve pas que l'un cause l'autre. Les p-valeurs sont corrigées (méthode de Holm) parce que plusieurs tests sont menés en même temps.",
   en: "A significant result means a gap is unlikely to be due to chance; it does not prove that one causes the other. P-values are adjusted (Holm method) because several tests are run at once.",
 };
+
+// ---------------------------------------------------------------------------
+// Présentation commune (page Analyse, PowerPoint, Excel)
+// ---------------------------------------------------------------------------
+
+export type Verdict = "demontre" | "faible" | "nonDemontre" | "redondant";
+
+export const LIBELLES_VERDICT: Record<Verdict, string> = {
+  demontre: "Démontré",
+  faible: "Réel mais faible",
+  nonDemontre: "Non démontré",
+  redondant: "Redondant",
+};
+
+export function verdictTest(t: TestStatistique): Verdict {
+  if (t.prudences.includes("redondant")) return "redondant";
+  if (!t.significatif) return "nonDemontre";
+  return t.test.ampleur === "negligeable" ? "faible" : "demontre";
+}
+
+/** La question posée, en une ligne : « Montant selon Region » ou « Statut ↔ Canal ». */
+export function questionTest(t: TestStatistique): string {
+  return t.type === "comparaison" ? `${t.mesure} selon ${t.dimension}` : `${t.colonneA} ↔ ${t.colonneB}`;
+}
+
+/** Les résultats démontrés d'abord, du plus net au moins net ; les liens redondants à la fin. */
+export function trierTests<T extends TestStatistique>(tests: T[]): T[] {
+  const rang: Record<Verdict, number> = { demontre: 0, faible: 1, nonDemontre: 2, redondant: 3 };
+  return [...tests].sort((a, b) => rang[verdictTest(a)] - rang[verdictTest(b)] || a.pAjustee - b.pAjustee);
+}

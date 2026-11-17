@@ -2,6 +2,21 @@ import ExcelJS from "exceljs";
 import { type Cellule, parseNombre, estValeurVide, estColonneIdentifiant, estColonneTemporelle } from "./utils";
 import { convertirDate, detecterOrdreDate } from "./dates";
 import { operationPour } from "./mesures";
+import { LIBELLES_AMPLEUR } from "./inference";
+import {
+  AVERTISSEMENT_TESTS,
+  interpreterTest,
+  LIBELLES_VERDICT,
+  nomMethode,
+  questionTest,
+  trierTests,
+  verdictTest,
+  type TestStatistique,
+} from "./testsStatistiques";
+
+// p-valeur lisible : notation scientifique sous 0,001, sinon trois décimales
+const FORMAT_P = "[<0.001]0.0E+00;0.000";
+const COULEUR_VERDICT = { demontre: "FF16A34A", faible: "FFD97706", nonDemontre: "FF64748B", redondant: "FF64748B" } as const;
 // Style d'en-tête Cobalt Executive
 function styliserEnTete(worksheet: ExcelJS.Worksheet) {
   const headerRow = worksheet.getRow(1);
@@ -201,14 +216,24 @@ export async function exporterExcelExecutive(
     const wsCorr = workbook.addWorksheet("Corrélations", {
       views: [{ state: "frozen", ySplit: 1, showGridLines: true }],
     });
-    wsCorr.addRow(["Variable A", "Variable B", "Coefficient (r)", "Diagnostic / Impact"]);
+    wsCorr.addRow(["Variable A", "Variable B", "Coefficient (r)", "Diagnostic / Impact", "p-valeur (corrigée)", "Significative"]);
     styliserEnTete(wsCorr);
 
     [...analyse.correlations]
       .filter((c: any) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
       .sort((a: any, b: any) => Math.abs(b.coefficient) - Math.abs(a.coefficient))
       .forEach((c: any, i) => {
-        const row = wsCorr.addRow([c.colonneA, c.colonneB, c.coefficient, c.interpretation]);
+        const testee = typeof c.pValeur === "number";
+        const row = wsCorr.addRow([
+          c.colonneA,
+          c.colonneB,
+          c.coefficient,
+          c.interpretation,
+          testee ? c.pValeur : "—",
+          testee ? (c.significative ? "Oui" : "Non (peut venir du hasard)") : "—",
+        ]);
+        row.getCell(5).numFmt = FORMAT_P;
+        row.getCell(5).alignment = { horizontal: "center" };
         zebrerLigne(row, i);
         row.getCell(1).font = { bold: true };
         row.getCell(2).font = { bold: true };
@@ -226,6 +251,72 @@ export async function exporterExcelExecutive(
     wsCorr.getColumn(2).width = 25;
     wsCorr.getColumn(3).width = 20;
     wsCorr.getColumn(4).width = 70;
+    wsCorr.getColumn(5).width = 20;
+    wsCorr.getColumn(6).width = 28;
+  }
+
+  // =========================================================================
+  // ONGLETS 3 bis : TESTS STATISTIQUES ET GROUPES TESTÉS
+  // =========================================================================
+  const tests: TestStatistique[] = trierTests(analyse?.tests ?? []);
+  if (tests.length > 0) {
+    const wsTests = workbook.addWorksheet("Tests statistiques", {
+      views: [{ state: "frozen", ySplit: 1, showGridLines: true }],
+    });
+    wsTests.addRow([
+      "Question testée", "Verdict", "Méthode", "Statistique", "Degrés de liberté", "p-valeur (corrigée)",
+      "Taille d'effet", "Mesure de l'effet", "Ampleur", "Lignes", "Conclusion",
+    ]);
+    styliserEnTete(wsTests);
+    tests.forEach((t, i) => {
+      const v = verdictTest(t);
+      const ddl = Array.isArray(t.test.ddl) ? t.test.ddl.map((x) => Math.round(x * 10) / 10).join(" ; ") : Math.round(t.test.ddl * 10) / 10;
+      const mesureEffet = t.type === "lien" ? "V de Cramér" : t.methode === "t-welch" ? "d de Cohen" : "η² (part expliquée)";
+      const row = wsTests.addRow([
+        questionTest(t), LIBELLES_VERDICT[v], nomMethode(t), t.test.statistique, ddl, t.pAjustee,
+        t.test.effet, mesureEffet, LIBELLES_AMPLEUR[t.test.ampleur].fr, t.nbLignes, interpreterTest(t),
+      ]);
+      zebrerLigne(row, i);
+      row.getCell(1).font = { bold: true };
+      row.getCell(2).font = { bold: true, color: { argb: COULEUR_VERDICT[v] } };
+      row.getCell(4).numFmt = "0.00";
+      row.getCell(6).numFmt = FORMAT_P;
+      row.getCell(7).numFmt = "0.00";
+      row.getCell(10).numFmt = "#,##0";
+      row.eachCell((c) => (c.alignment = { vertical: "top", wrapText: true }));
+    });
+    const note = wsTests.addRow([]);
+    note.height = 6;
+    const avert = wsTests.addRow([AVERTISSEMENT_TESTS.fr]);
+    wsTests.mergeCells(avert.number, 1, avert.number, 11);
+    avert.getCell(1).font = { italic: true, color: { argb: "FF64748B" } };
+    avert.getCell(1).alignment = { wrapText: true, vertical: "top" };
+    avert.height = 32;
+    [30, 16, 20, 12, 16, 18, 13, 20, 13, 10, 90].forEach((w, j) => (wsTests.getColumn(j + 1).width = w));
+
+    const comparaisons = tests.filter((t) => t.type === "comparaison");
+    if (comparaisons.length > 0) {
+      const wsGroupes = workbook.addWorksheet("Groupes testés", {
+        views: [{ state: "frozen", ySplit: 1, showGridLines: true }],
+      });
+      wsGroupes.addRow([
+        "Mesure", "Dimension", "Groupe", "Lignes", "Moyenne", "Écart-type", "Médiane", "1er quartile", "3e quartile",
+        "Moustache basse", "Moustache haute", "Valeurs atypiques",
+      ]);
+      styliserEnTete(wsGroupes);
+      let i = 0;
+      for (const t of comparaisons) {
+        for (const g of t.groupes) {
+          const row = wsGroupes.addRow([
+            t.mesure, t.dimension, g.nom, g.n, g.moyenne, g.ecartType, g.mediane, g.q1, g.q3, g.moustacheBasse, g.moustacheHaute, g.nbAtypiques,
+          ]);
+          zebrerLigne(row, i++);
+          row.getCell(3).font = { bold: true };
+          for (let j = 5; j <= 11; j++) row.getCell(j).numFmt = "#,##0.00";
+        }
+      }
+      [22, 20, 22, 9, 13, 13, 13, 13, 13, 16, 16, 16].forEach((w, j) => (wsGroupes.getColumn(j + 1).width = w));
+    }
   }
 
   // =========================================================================

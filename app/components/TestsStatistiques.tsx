@@ -7,8 +7,12 @@ import {
   AVERTISSEMENT_TESTS,
   interpreterTest,
   libelleEffet,
+  LIBELLES_VERDICT,
   nomMethode,
+  trierTests,
+  verdictTest,
   type ComparaisonGroupes,
+  type Verdict,
   type TestStatistique,
 } from "../../lib/analyse/testsStatistiques";
 
@@ -66,14 +70,22 @@ function BoitesMoustaches({ groupes, mesure }: { groupes: ResumeGroupe[]; mesure
   );
 }
 
+const STYLES_VERDICT: Record<Verdict, { classe: string; Icone: typeof Info }> = {
+  demontre: { classe: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300", Icone: CheckCircle2 },
+  faible: { classe: "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300", Icone: Info },
+  nonDemontre: { classe: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300", Icone: CircleSlash },
+  redondant: { classe: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300", Icone: Link2 },
+};
+
 function Badge({ t }: { t: TestStatistique }) {
-  if (t.prudences.includes("redondant"))
-    return <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"><Link2 className="w-3 h-3" />Redondant</span>;
-  if (t.significatif && t.test.ampleur !== "negligeable")
-    return <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"><CheckCircle2 className="w-3 h-3" />Démontré</span>;
-  if (t.significatif)
-    return <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"><Info className="w-3 h-3" />Réel mais faible</span>;
-  return <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"><CircleSlash className="w-3 h-3" />Non démontré</span>;
+  const v = verdictTest(t);
+  const { classe, Icone } = STYLES_VERDICT[v];
+  return (
+    <span className={`inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-full ${classe}`}>
+      <Icone className="w-3 h-3" />
+      {LIBELLES_VERDICT[v]}
+    </span>
+  );
 }
 
 function CarteTest({ t }: { t: TestStatistique }) {
@@ -120,9 +132,7 @@ export default function TestsStatistiques({ tests }: { tests: TestStatistique[] 
       </p>
     );
   }
-  // Les résultats démontrés d'abord, du plus net au moins net
-  const ordre = (t: TestStatistique) => (t.prudences.includes("redondant") ? 2 : t.significatif ? 0 : 1);
-  const tries = [...tests].sort((a, b) => ordre(a) - ordre(b) || a.pAjustee - b.pAjustee);
+  const tries = trierTests(tests);
   const comparaisons = tries.filter((t): t is ComparaisonGroupes => t.type === "comparaison");
   const liens = tries.filter((t) => t.type === "lien");
   const limite = <T,>(l: T[]) => (tousVisibles ? l : l.slice(0, 4));
