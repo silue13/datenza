@@ -26,6 +26,11 @@ export interface OptionsSerie {
   libelleAutres?: string;
   /** Dénominateur imposé pour « Pourcentage » (part du total général quand la série est une sous-partie). */
   totalReference?: number;
+  /**
+   * Mesure personnalisée : calcule la valeur de chaque groupe à partir de ses lignes (remplace l'agrégation et la colonne Y).
+   * Le regroupement « Autres » est alors recalculé sur les lignes regroupées, ce qui reste juste pour un ratio.
+   */
+  evaluer?: (lignes: Cellule[][]) => number | null;
 }
 
 export interface PointSerie {
@@ -81,6 +86,8 @@ interface Acc {
   valeurs: number[] | null;
   distincts: Set<string> | null;
   ordre: number;
+  /** Lignes du groupe, gardées seulement pour une mesure personnalisée. */
+  lignes: Cellule[][] | null;
 }
 
 function valeurAgregee(a: Acc, agregation: AgregationGraphique, totalLignes: number): number | null {
@@ -124,7 +131,8 @@ export function calculerSerie(
   const idxY = colonneY ? entetes.indexOf(colonneY) : -1;
   const vide: SerieGraphique = { points: [], temporel: false, granularite: null, nbCategoriesTotal: 0, tronque: false, nbNonNumeriques: 0 };
   if (idxX === -1) return vide;
-  const besoinY = !["Nombre", "Pourcentage"].includes(agregation);
+  const evaluer = options.evaluer;
+  const besoinY = !evaluer && !["Nombre", "Pourcentage"].includes(agregation);
   if (besoinY && idxY === -1) return vide;
 
   const lignes = filtre ? corps.filter(filtre) : corps;
@@ -169,11 +177,13 @@ export function calculerSerie(
         valeurs: agregation === "Mediane" ? [] : null,
         distincts: agregation === "Valeurs distinctes" ? new Set() : null,
         ordre: i,
+        lignes: evaluer ? [] : null,
       };
       groupes.set(cle, g);
     }
     g.compte++;
     totalLignes++;
+    if (g.lignes) g.lignes.push(l);
     if (!besoinY) continue;
     const y = l[idxY];
     if (estValeurVide(y)) continue;
@@ -196,7 +206,7 @@ export function calculerSerie(
   let points = [...groupes.entries()].map(([label, g]) => ({
     label,
     cle: label as string | undefined,
-    valeur: valeurAgregee(g, agregation, options.totalReference ?? totalLignes),
+    valeur: evaluer ? evaluer(g.lignes ?? []) : valeurAgregee(g, agregation, options.totalReference ?? totalLignes),
     effectif: g.compte,
     ordre: g.ordre,
   }));
@@ -225,12 +235,15 @@ export function calculerSerie(
       const reste = points.slice(limite);
       points = points.slice(0, limite);
       const additif = agregation === "Somme" || agregation === "Nombre" || agregation === "Pourcentage";
-      if (options.regrouperAutres !== false && additif) {
-        const somme = reste.reduce((s, p) => s + (p.valeur ?? 0), 0);
+      if (options.regrouperAutres !== false && (additif || evaluer)) {
+        // Mesure personnalisée : recalculée sur toutes les lignes regroupées (un ratio ne s'additionne pas)
+        const valeurAutres = evaluer
+          ? evaluer(reste.flatMap((p) => groupes.get(p.label)?.lignes ?? []))
+          : reste.reduce((s, p) => s + (p.valeur ?? 0), 0);
         points.push({
           cle: undefined,
           label: `${options.libelleAutres ?? "Autres"} (${reste.length})`,
-          valeur: somme,
+          valeur: valeurAutres,
           effectif: reste.reduce((s, p) => s + p.effectif, 0),
           ordre: Infinity,
         });
@@ -322,7 +335,8 @@ export function calculerSeriesVentilees(
     const s = calculerSerie(entetes, corps, colonneX, colonneY, { ...options, limite: 0, totalReference }, filtre);
     const index = new Map(s.points.map((p) => [p.cle, p.valeur]));
     let reste: number | null = null;
-    if (aAutresAxe) {
+    // Une mesure personnalisée ne s'additionne pas forcément : sa part « Autres » par série reste vide
+    if (aAutresAxe && !options.evaluer) {
       for (const p of s.points) {
         if (p.cle !== undefined && !clesAxe.has(p.cle) && p.valeur !== null) reste = (reste ?? 0) + p.valeur;
       }
@@ -334,7 +348,7 @@ export function calculerSeriesVentilees(
     nom,
     donnees: serieDe((l) => !estValeurVide(l[idxS]) && nettoyerLibelle(l[idxS]) === nom),
   }));
-  if (toutes.length > gardees.length && additif) {
+  if (toutes.length > gardees.length && (additif || options.evaluer)) {
     series.push({
       nom: `Autres (${toutes.length - gardees.length})`,
       donnees: serieDe((l) => !estValeurVide(l[idxS]) && !ensembleGardees.has(nettoyerLibelle(l[idxS]))),

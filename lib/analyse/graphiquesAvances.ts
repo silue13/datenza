@@ -292,6 +292,8 @@ export function expliquerHistogramme(h: Histogramme, colonne: string): LigneExpl
 export interface MesureCombinee {
   colonne: string | null;
   agregation: AgregationGraphique;
+  /** Mesure personnalisée (remplace colonne et agrégation). */
+  evaluer?: (lignes: Cellule[][]) => number | null;
 }
 
 export interface GraphiqueCombine {
@@ -325,8 +327,8 @@ export function calculerCombine(
   mesureCourbe: MesureCombinee,
   options: { limite?: number } = {}
 ): GraphiqueCombine {
-  const base = calculerSerie(entetes, corps, colonneX, mesureBarres.colonne, { agregation: mesureBarres.agregation, limite: options.limite, regrouperAutres: false });
-  const seconde = calculerSerie(entetes, corps, colonneX, mesureCourbe.colonne, { agregation: mesureCourbe.agregation, limite: 0, regrouperAutres: false });
+  const base = calculerSerie(entetes, corps, colonneX, mesureBarres.colonne, { agregation: mesureBarres.agregation, limite: options.limite, regrouperAutres: false, evaluer: mesureBarres.evaluer });
+  const seconde = calculerSerie(entetes, corps, colonneX, mesureCourbe.colonne, { agregation: mesureCourbe.agregation, limite: 0, regrouperAutres: false, evaluer: mesureCourbe.evaluer });
   const index = new Map(seconde.points.map((p) => [p.cle, p.valeur]));
   const barres = base.points.map((p) => p.valeur);
   const courbe = base.points.map((p) => index.get(p.cle) ?? null);

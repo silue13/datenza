@@ -3,6 +3,8 @@ import type { BlocRapport } from "./analyse/rapport";
 import type { ConditionFiltre, DefinitionColonneCalculee } from "./analyse/filtres";
 import type { GraphiqueEpingle, ResultatAnalyse } from "../app/context/DataContext";
 import { normaliserSource, type SourceDistante } from "./import/source";
+import { normaliserRelations, normaliserTables, type Relation, type TableReference } from "./analyse/modele";
+import { normaliserMesures, type DefinitionMesure } from "./analyse/formules";
 
 // Sauvegarde locale (IndexedDB) de la session : les données restent après un rechargement
 // de la page, jusqu'à ce que l'utilisateur les supprime.
@@ -26,6 +28,11 @@ export interface EtatPersiste {
   projet?: { id: string; nom: string } | null;
   /** Source en direct (Google Sheets, adresse web) d'où viennent les données ; absente pour un fichier déposé. */
   source?: SourceDistante | null;
+  /** Modèle de données : tables de référence reliées à la table principale. */
+  tablesReference?: TableReference[];
+  relations?: Relation[];
+  /** Mesures réutilisables définies par l'utilisateur. */
+  mesures?: DefinitionMesure[];
 }
 
 function disponible(): boolean {
@@ -100,6 +107,9 @@ export async function chargerEtat(): Promise<EtatPersiste | null> {
       definitionsCalculs: brut.definitionsCalculs ?? [],
       projet: brut.projet?.id ? { id: String(brut.projet.id), nom: String(brut.projet.nom ?? "") } : null,
       source: normaliserSource(brut.source),
+      tablesReference: normaliserTables(brut.tablesReference),
+      relations: normaliserRelations(brut.relations),
+      mesures: normaliserMesures(brut.mesures),
     };
   } catch {
     return null;

@@ -28,12 +28,40 @@ describe("projets/format", () => {
   it("n'enregistre pas l'analyse ni les lignes dans les réglages", () => {
     const etat = { ...assemblerEtat("f", donnees, {}), resultat: { nbLignes: 3 } } as unknown as EtatPersiste;
     const r = extraireReglages(etat) as Record<string, unknown>;
-    expect(Object.keys(r).sort()).toEqual(["apercu", "choisies", "definitionsCalculs", "filtresActifs", "graphiquesEpingles", "rapport", "source"]);
+    expect(Object.keys(r).sort()).toEqual(["apercu", "choisies", "definitionsCalculs", "filtresActifs", "graphiquesEpingles", "mesures", "rapport", "relations", "source"]);
   });
   it("propose un nom et reconnaît un identifiant de partage", () => {
     expect(nomParDefaut("Ventes 2024.xlsx")).toBe("Ventes 2024");
     expect(nomParDefaut("")).toBe("Mon projet");
     expect(estUuid("3f2b8c1e-9d4a-4e7b-8a56-0c1d2e3f4a5b")).toBe(true);
     expect(estUuid("../etc")).toBe(false);
+  });
+});
+
+describe("projets/format — modèle de données et mesures", () => {
+  it("enregistre relations et mesures dans les réglages, tables dans les données, et les relit", async () => {
+    const { extraireReglages, assemblerEtat, compresserDonnees, decompresserDonnees } = await import("./format");
+    const tables = [{ id: "t1", nom: "Produits", entetes: ["Code", "Prix"], corps: [["P1", 10]] }];
+    const relations = [{ id: "r1", tableId: "t1", colonnePrincipale: "Région", colonneCle: "Code", colonnes: ["Prix"] }];
+    const mesures = [{ id: "m1", nom: "CA", formule: "SOMME([Prix])", format: "nombre" as const, unite: "FCFA" }];
+    const etat = {
+      nomFichier: "v.csv", sources: donnees.sources, choisies: [], rapport: [], resultat: null, graphiquesEpingles: [], filtresActifs: [], definitionsCalculs: [],
+      tablesReference: tables, relations, mesures,
+    };
+    const reglages = extraireReglages(etat);
+    expect(reglages.relations).toEqual(relations);
+    expect(reglages.mesures).toEqual(mesures);
+    expect("tablesReference" in reglages).toBe(false);
+    const blob = await compresserDonnees({ v: 1, sources: donnees.sources, tables });
+    const relu = assemblerEtat("v.csv", await decompresserDonnees(blob), reglages);
+    expect(relu.tablesReference).toEqual(tables);
+    expect(relu.relations).toEqual(relations);
+    expect(relu.mesures).toEqual(mesures);
+  });
+  it("ouvre un ancien projet sans modèle", () => {
+    const relu = assemblerEtat("f", donnees, { choisies: ["Montant"] });
+    expect(relu.tablesReference).toEqual([]);
+    expect(relu.relations).toEqual([]);
+    expect(relu.mesures).toEqual([]);
   });
 });

@@ -50,6 +50,7 @@ import {
   expliquerCombine,
 } from "../../lib/analyse/graphiquesAvances";
 import { interpreterCorrelation } from "../../lib/analyse/stats";
+import { CalculateurMesures, estAdditive, formaterMesure, valeurAffichee, type DefinitionMesure } from "../../lib/analyse/formules";
 import { operationPour, estPseudoMesure } from "../../lib/analyse/mesures";
 import type { ConditionFiltre } from "../../lib/analyse/filtres";
 import { useData, type GraphiqueEpingle, type TypeGraphique } from "../context/DataContext";
@@ -155,6 +156,29 @@ const OPTIONS_AGREGATION = (
     <option value="Valeurs distinctes">Nombre de valeurs distinctes</option>
   </>
 );
+
+/** Valeur d'option d'une mesure personnalisée dans les listes « Opération de calcul ». */
+const PREFIXE_MESURE = "mesure:";
+
+/** Libellé d'une mesure personnalisée dans un titre ou une légende : « Taux de marge (%) », « CA (FCFA) ». */
+const libelleMesurePerso = (m: DefinitionMesure) => `${m.nom}${m.format === "pourcentage" ? " (%)" : m.unite ? ` (${m.unite})` : ""}`;
+
+function OptionsCalcul({ mesures }: { mesures: DefinitionMesure[] }) {
+  return (
+    <>
+      {OPTIONS_AGREGATION}
+      {mesures.length > 0 && (
+        <optgroup label="Vos mesures">
+          {mesures.map((m) => (
+            <option key={m.id} value={`${PREFIXE_MESURE}${m.id}`}>
+              {m.nom}
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </>
+  );
+}
 
 const selectClasse =
   "w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-xs font-medium focus:ring-2 focus:ring-blue-500";
@@ -420,6 +444,9 @@ interface SpecGraphique {
   echelle: EchelleCourbe;
   /** Histogramme : nombre de classes demandé, 0 pour un choix automatique. */
   classes: number;
+  /** Mesure personnalisée à la place de l'opération et de la colonne Y (et de la courbe d'un graphique combiné). */
+  mesure?: string;
+  mesure2?: string;
 }
 
 type EchelleCourbe = "auto" | "commune" | "separee";
@@ -440,6 +467,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
     supprimerFiltre,
     reinitialiserFiltres,
     publierGraphiquesAffiches,
+    mesures,
     graphiquesExclus,
     basculerExclusionGraphique,
   } = useData();
@@ -511,6 +539,14 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
   const [messageErreur, setMessageErreur] = useState<string>("");
   const [colonneY2, setColonneY2] = useState<string>("");
   const [agregation2, setAgregation2] = useState<Agregation>("Moyenne");
+  const [mesureChoisie, setMesureChoisie] = useState<string>("");
+  const [mesureChoisie2, setMesureChoisie2] = useState<string>("");
+  const mesureActive = mesures.find((m) => m.id === mesureChoisie) ?? null;
+  const mesureActive2 = mesures.find((m) => m.id === mesureChoisie2) ?? null;
+
+  // Mesures personnalisées : calculées sur les données affichées (filtres compris)
+  const calculateur = useMemo(() => new CalculateurMesures(entetes, corps, mesures), [entetes, corps, mesures]);
+  const evaluateur = (def: DefinitionMesure) => (lignes: Cellule[][]) => valeurAffichee(calculateur.calculerOuVide(def, lignes), def);
   const [echelle, setEchelle] = useState<EchelleCourbe>("auto");
   const [nbClasses, setNbClasses] = useState<number>(0);
   const compteur = useRef(0);
@@ -663,7 +699,10 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
     }
 
     const { agregation: agg, limite: lim } = spec;
-    const besoinY = !["Nombre", "Pourcentage"].includes(agg);
+    const defMesure = spec.mesure ? mesures.find((m) => m.id === spec.mesure) ?? null : null;
+    if (spec.mesure && !defMesure) return { graphique: null, erreur: "La mesure de ce graphique a été supprimée." };
+    const evaluer = defMesure ? evaluateur(defMesure) : undefined;
+    const besoinY = !defMesure && !["Nombre", "Pourcentage"].includes(agg);
     if (entetes.indexOf(spec.x) === -1) return { graphique: null, erreur: spec.x ? `La colonne « ${spec.x} » n'existe plus.` : "Veuillez sélectionner une colonne." };
 
     // NUAGE DE POINTS : une ligne du fichier par point, sans agrégation
@@ -725,18 +764,20 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
 
     // GRAPHIQUE COMBINÉ : une mesure en barres, une autre en courbe, sur le même axe
     if (spec.type === "Combine") {
-      const besoinY2 = !["Nombre", "Pourcentage"].includes(spec.agregation2);
+      const defMesure2 = spec.mesure2 ? mesures.find((m) => m.id === spec.mesure2) ?? null : null;
+      if (spec.mesure2 && !defMesure2) return { graphique: null, erreur: "La mesure de la courbe a été supprimée." };
+      const besoinY2 = !defMesure2 && !["Nombre", "Pourcentage"].includes(spec.agregation2);
       if (besoinY && entetes.indexOf(spec.y) === -1) return { graphique: null, erreur: "Veuillez sélectionner la mesure des barres." };
       if (besoinY2 && entetes.indexOf(spec.y2) === -1) return { graphique: null, erreur: "Veuillez sélectionner la mesure de la courbe." };
-      const nomBarres = nomMesure(agg, spec.y);
-      const nomCourbe = nomMesure(spec.agregation2, spec.y2);
+      const nomBarres = defMesure ? libelleMesurePerso(defMesure) : nomMesure(agg, spec.y);
+      const nomCourbe = defMesure2 ? libelleMesurePerso(defMesure2) : nomMesure(spec.agregation2, spec.y2);
       if (nomBarres === nomCourbe) return { graphique: null, erreur: "Les barres et la courbe montrent la même mesure : choisissez-en deux différentes." };
       const c = calculerCombine(
         entetes,
         corps,
         spec.x,
-        { colonne: besoinY ? spec.y : null, agregation: agg },
-        { colonne: besoinY2 ? spec.y2 : null, agregation: spec.agregation2 },
+        { colonne: besoinY ? spec.y : null, agregation: agg, evaluer },
+        { colonne: besoinY2 ? spec.y2 : null, agregation: spec.agregation2, evaluer: defMesure2 ? evaluateur(defMesure2) : undefined },
         { limite: lim }
       );
       if (!c.axe.length || (!c.barres.some((v) => v !== null) && !c.courbe.some((v) => v !== null))) {
@@ -788,14 +829,14 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
     const circulaire = estCirculaire(spec.type);
     const lignes = spec.type === "Courbe" || spec.type === "Aires";
     const limiteEffective = circulaire ? Math.min(lim, MAX_PARTS_CIRCULAIRE) : lim;
-    const titreMesure = nomMesure(agg, spec.y);
-    const additif = ["Somme", "Nombre", "Pourcentage"].includes(agg);
+    const titreMesure = defMesure ? libelleMesurePerso(defMesure) : nomMesure(agg, spec.y);
+    const additif = defMesure ? estAdditive(defMesure, mesures) : ["Somme", "Nombre", "Pourcentage"].includes(agg);
     const base = { id: spec.id, type: spec.type, horizontal: spec.horizontal && spec.type === "Barres" };
 
     // MODE COMPARATIF : une série par fichier, alignée sur un axe commun
     if (estModeComparaison && spec.parFichier && sourcesFichiers.length >= 2 && !circulaire) {
       const series = sourcesFichiers.map((sourceNom) =>
-        calculerSerie(entetes, corps, spec.x, colY, { agregation: agg, regrouperAutres: false }, (l) => String(l[idxSource] ?? "").trim() === sourceNom)
+        calculerSerie(entetes, corps, spec.x, colY, { agregation: agg, regrouperAutres: false, evaluer }, (l) => String(l[idxSource] ?? "").trim() === sourceNom)
       );
       const temporel = series.some((x) => x.temporel);
       const granularite = series.find((x) => x.granularite)?.granularite ?? null;
@@ -832,12 +873,13 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
 
     // VENTILATION PAR LÉGENDE : barres groupées ou empilées, courbes multiples
     if (spec.legende && spec.legende !== spec.x && entetes.indexOf(spec.legende) !== -1 && !circulaire) {
-      const v = calculerSeriesVentilees(entetes, corps, spec.x, spec.legende, colY, { agregation: agg, limite: lim, limiteSeries: 8 });
+      const v = calculerSeriesVentilees(entetes, corps, spec.x, spec.legende, colY, { agregation: agg, limite: lim, limiteSeries: 8, evaluer });
       if (!v.axe.length || !v.series.length) return { graphique: null, erreur: "Aucune donnée exploitable pour cette combinaison de colonnes." };
       const empiler = spec.empile && additif && spec.type !== "Courbe";
       const notes: string[] = [];
       if (v.nbSeriesTotal > 8) notes.push(`${v.nbSeriesTotal} valeurs dans « ${spec.legende} » : les 8 plus fréquentes sont affichées${additif ? ", le reste dans « Autres »" : ""}.`);
-      if (spec.empile && !additif) notes.push(`Une ${LIBELLES_AGREGATION[agg].toLowerCase()} ne s'additionne pas : les séries sont affichées côte à côte.`);
+      if (spec.empile && !additif)
+        notes.push(defMesure ? `La mesure « ${defMesure.nom} » ne s'additionne pas : les séries sont affichées côte à côte.` : `Une ${LIBELLES_AGREGATION[agg].toLowerCase()} ne s'additionne pas : les séries sont affichées côte à côte.`);
       return {
         graphique: {
           ...base,
@@ -863,12 +905,16 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
       };
     }
 
-    const serie = calculerSerie(entetes, corps, spec.x, colY, { agregation: agg, limite: limiteEffective });
+    const serie = calculerSerie(entetes, corps, spec.x, colY, { agregation: agg, limite: limiteEffective, evaluer });
     const pointsValides = serie.points.filter((p) => p.valeur !== null);
     if (!pointsValides.length) {
       return {
         graphique: null,
-        erreur: besoinY ? `« ${spec.y} » ne contient aucune valeur numérique exploitable pour ce calcul.` : "Aucune donnée exploitable pour cette colonne.",
+        erreur: defMesure
+          ? `La mesure « ${defMesure.nom} » ne donne aucune valeur pour ces données.`
+          : besoinY
+          ? `« ${spec.y} » ne contient aucune valeur numérique exploitable pour ce calcul.`
+          : "Aucune donnée exploitable pour cette colonne.",
       };
     }
     if (circulaire && pointsValides.some((p) => (p.valeur as number) < 0)) {
@@ -880,7 +926,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
       notes.push(
         serie.temporel
           ? `${serie.nbCategoriesTotal} périodes : les ${limiteEffective} plus récentes sont affichées.`
-          : `${serie.nbCategoriesTotal} catégories : les ${limiteEffective} premières sont affichées${additif ? ", le reste est regroupé dans « Autres »" : ""}.`
+          : `${serie.nbCategoriesTotal} catégories : les ${limiteEffective} premières sont affichées${additif || defMesure ? ", le reste est regroupé dans « Autres »" : ""}.`
       );
     }
     if (serie.nbNonNumeriques) notes.push(`${serie.nbNonNumeriques} valeur(s) non numérique(s) ignorée(s) dans « ${spec.y} ».`);
@@ -923,6 +969,8 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
       agregation2,
       echelle,
       classes: nbClasses,
+      ...(mesureChoisie && !estNuageOuHistogramme(typeGraphique) && typeGraphique !== "Carte" ? { mesure: mesureChoisie } : {}),
+      ...(mesureChoisie2 && typeGraphique === "Combine" ? { mesure2: mesureChoisie2 } : {}),
     };
     const essai = construire(spec);
     if (!essai.graphique) {
@@ -950,7 +998,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
       }),
     // construire() ne dépend que des données ci-dessous
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [specs, entetes, corps, estModeComparaison, sourcesFichiers, idxSource]
+    [specs, entetes, corps, estModeComparaison, sourcesFichiers, idxSource, mesures, calculateur]
   );
 
   // Les graphiques affichés (automatiques puis créés à la main) sont ceux du PowerPoint : on les publie
@@ -975,8 +1023,15 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
 
   // Indicateurs clés : recalculés sur les données filtrées
   const indicateurs = useMemo(() => {
-    const cartes: { titre: string; valeur: number; detail: string }[] = [{ titre: "Lignes", valeur: corps.length, detail: "enregistrements" }];
-    for (const col of colonnesMesurables.filter((c) => !estPseudoMesure(c)).slice(0, 3)) {
+    const cartes: { titre: string; texte: string; complet: string; detail: string; perso?: boolean }[] = [
+      { titre: "Lignes", texte: formaterCompact(corps.length), complet: formaterComplet(corps.length), detail: "enregistrements" },
+    ];
+    // Vos mesures d'abord (7 au plus), puis des indicateurs automatiques pour compléter une rangée de 4
+    for (const m of mesures.slice(0, 7)) {
+      const v = calculateur.calculerOuVide(m, corps);
+      cartes.push({ titre: m.nom, texte: formaterMesure(v, m), complet: `${m.nom} = ${m.formule}`, detail: "votre mesure", perso: true });
+    }
+    for (const col of colonnesMesurables.filter((c) => !estPseudoMesure(c)).slice(0, Math.max(0, 4 - cartes.length))) {
       const idx = entetes.indexOf(col);
       let somme = 0;
       let n = 0;
@@ -989,10 +1044,11 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
       }
       if (!n) continue;
       const enSomme = operationPour(col) === "somme";
-      cartes.push({ titre: col, valeur: enSomme ? somme : somme / n, detail: enSomme ? "total" : "moyenne" });
+      const valeur = enSomme ? somme : somme / n;
+      cartes.push({ titre: col, texte: formaterCompact(valeur), complet: formaterComplet(valeur), detail: enSomme ? "total" : "moyenne" });
     }
     return cartes;
-  }, [corps, entetes, colonnesMesurables]);
+  }, [corps, entetes, colonnesMesurables, mesures, calculateur]);
 
   return (
     <div className="space-y-6">
@@ -1002,11 +1058,11 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
           {indicateurs.map((k) => (
             <div
               key={k.titre}
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3 shadow-sm"
-              title={formaterComplet(k.valeur)}
+              className={`bg-white dark:bg-slate-900 border rounded-2xl px-4 py-3 shadow-sm ${k.perso ? "border-indigo-200 dark:border-indigo-900" : "border-slate-200 dark:border-slate-800"}`}
+              title={k.complet}
             >
               <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 truncate">{k.titre}</p>
-              <p className="text-xl font-bold text-slate-900 dark:text-white tabular-nums">{formaterCompact(k.valeur)}</p>
+              <p className={`text-xl font-bold tabular-nums truncate ${k.perso ? "text-indigo-700 dark:text-indigo-300" : "text-slate-900 dark:text-white"}`}>{k.texte}</p>
               <p className="text-[10px] text-slate-400">{k.detail}</p>
             </div>
           ))}
@@ -1247,8 +1303,19 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
             <>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{typeGraphique === "Combine" ? "Barres : calcul" : "Opération de calcul"}</label>
-                <select value={agregation} onChange={(e) => setAgregation(e.target.value as Agregation)} className={selectClasse}>
-                  {OPTIONS_AGREGATION}
+                <select
+                  value={mesureActive ? `${PREFIXE_MESURE}${mesureActive.id}` : agregation}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v.startsWith(PREFIXE_MESURE)) setMesureChoisie(v.slice(PREFIXE_MESURE.length));
+                    else {
+                      setMesureChoisie("");
+                      setAgregation(v as Agregation);
+                    }
+                  }}
+                  className={selectClasse}
+                >
+                  <OptionsCalcul mesures={mesures} />
                 </select>
               </div>
 
@@ -1257,7 +1324,8 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
                 <select
                   value={colonneAxeY}
                   onChange={(e) => setColonneAxeY(e.target.value)}
-                  disabled={colonnesSansSource.length === 0 || agregation === "Nombre" || agregation === "Pourcentage"}
+                  disabled={!!mesureActive || colonnesSansSource.length === 0 || agregation === "Nombre" || agregation === "Pourcentage"}
+                  title={mesureActive ? `La mesure « ${mesureActive.nom} » définit déjà son calcul : ${mesureActive.formule}` : undefined}
                   className={`${selectClasse} disabled:opacity-40`}
                 >
                   {colonnesMesurables
@@ -1279,8 +1347,19 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
                 <>
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Courbe : calcul</label>
-                    <select value={agregation2} onChange={(e) => setAgregation2(e.target.value as Agregation)} className={selectClasse}>
-                      {OPTIONS_AGREGATION}
+                    <select
+                      value={mesureActive2 ? `${PREFIXE_MESURE}${mesureActive2.id}` : agregation2}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v.startsWith(PREFIXE_MESURE)) setMesureChoisie2(v.slice(PREFIXE_MESURE.length));
+                        else {
+                          setMesureChoisie2("");
+                          setAgregation2(v as Agregation);
+                        }
+                      }}
+                      className={selectClasse}
+                    >
+                      <OptionsCalcul mesures={mesures} />
                     </select>
                   </div>
                   <div>
@@ -1288,7 +1367,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
                     <select
                       value={colonneY2}
                       onChange={(e) => setColonneY2(e.target.value)}
-                      disabled={agregation2 === "Nombre" || agregation2 === "Pourcentage"}
+                      disabled={!!mesureActive2 || agregation2 === "Nombre" || agregation2 === "Pourcentage"}
                       className={`${selectClasse} disabled:opacity-40`}
                     >
                       {!colonneY2 && <option value="">Choisir…</option>}
