@@ -300,6 +300,7 @@ export default function AnalysePage() {
   } = useData();
 
   const [exportExcelEnCours, setExportExcelEnCours] = useState(false);
+  const [exportWordEnCours, setExportWordEnCours] = useState(false);
   const [exportPptxEnCours, setExportPptxEnCours] = useState(false);
 
   const [syntheseCorrIA, setSyntheseCorrIA] = useState<string | null>(null);
@@ -636,6 +637,33 @@ export default function AnalysePage() {
     setTimeout(() => {
       window.print();
     }, 80);
+  };
+
+  const telechargerWord = async () => {
+    if (!entetes.length || !corps.length || !resultatActif || exportWordEnCours) return;
+    setExportWordEnCours(true);
+    try {
+      // Chargés au clic seulement : la génération Word et le rendu des graphiques n'alourdissent pas la page
+      const [{ telechargerRapportWord }, { rendreGraphiques }] = await Promise.all([
+        import("../../lib/analyse/exportWord"),
+        import("../../lib/analyse/imagesRapport"),
+      ]);
+      const images = await rendreGraphiques(graphiquesPourPptx);
+      await telechargerRapportWord({
+        nomProjet: nomFichier || "Analyse",
+        entetes,
+        corps,
+        analyse: resultatActif,
+        rapport: estBenchmarkActif
+          ? syntheseComparativeCards.map((c) => ({ type: c.type, texte: `${c.titre} : ${c.detail}` }))
+          : rapportActif,
+        images,
+      });
+    } catch (error) {
+      console.error("Erreur lors de l'export Word :", error);
+    } finally {
+      setExportWordEnCours(false);
+    }
   };
 
   const telechargerExcelPropre = async () => {
@@ -1017,6 +1045,15 @@ Ne mets ni introduction ni conclusion.`;
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>{exportExcelEnCours ? "Export…" : "Excel (.xlsx)"}</span>
+            </button>
+
+            <button
+              onClick={telechargerWord}
+              disabled={exportWordEnCours}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+            >
+              <FileText className="w-4 h-4 text-sky-400 shrink-0" />
+              <span>{exportWordEnCours ? "Rédaction…" : "Word (.docx)"}</span>
             </button>
           </div>
         </div>

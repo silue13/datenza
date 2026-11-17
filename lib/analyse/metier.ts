@@ -409,6 +409,8 @@ export interface ColonnesMetier {
   client: string | null;
   mesure: string | null;
   dimensions: string[];
+  /** Dimension pour expliquer un écart : peu de catégories, et pas la colonne client. */
+  explicative: string | null;
   dates: string[];
   mesures: string[];
   candidatsClient: string[];
@@ -428,5 +430,43 @@ export function detecterColonnesMetier(statistiques: Record<string, InfoMinimale
     .filter((n) => statistiques[n].type === "identifiant" || statistiques[n].type === "categorielle")
     .sort((a, b) => Number(RE_CLIENT.test(norm(b))) - Number(RE_CLIENT.test(norm(a))));
   const client = candidatsClient.find((n) => RE_CLIENT.test(norm(n))) ?? null;
-  return { date: dates[0] ?? null, client, mesure: mesures[0] ?? null, dimensions, dates, mesures, candidatsClient };
+  const nbCat = (n: string) => Number(statistiques[n].stats.nbCategoriesDistinctes ?? 0);
+  const explicative = dimensions.filter((n) => n !== client && nbCat(n) <= 20).sort((a, b) => nbCat(a) - nbCat(b))[0] ?? null;
+  return { date: dates[0] ?? null, client, mesure: mesures[0] ?? null, dimensions, explicative, dates, mesures, candidatsClient };
+}
+
+// ---------------------------------------------------------------------------
+// Phrases de conclusion (page Analyse et rapport Word)
+// ---------------------------------------------------------------------------
+
+const nfFr = (x: number, dec = 0) => x.toLocaleString("fr-FR", { maximumFractionDigits: dec });
+const pctFr = (x: number) => `${nfFr(x, x < 10 ? 1 : 0)} %`;
+const signeFr = (x: number, dec = 0) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${nfFr(Math.abs(x), dec)}`;
+
+export function phrasePareto(r: ResultatPareto, dimension: string, mesure: string): string {
+  let t = `${pctFr(r.partElementsPour80)} des « ${dimension} » (${r.nbPour80} sur ${r.elements.length}) font 80 % de « ${mesure} ».`;
+  if (r.partElementsPour80 <= 30) t += " La concentration est forte : quelques éléments portent l'activité, leur perte serait lourde.";
+  else if (r.partElementsPour80 >= 60) t += " Le total est bien réparti : aucun élément n'est indispensable à lui seul.";
+  else t += " Concentration modérée.";
+  return t;
+}
+
+export function phraseEvolution(r: ResultatEvolution, mesure: string): string | null {
+  const c = r.precedente;
+  if (!c) return null;
+  const sens = c.ecart > 0 ? "en hausse" : c.ecart < 0 ? "en baisse" : "stable";
+  const moteur = c.contributions[0];
+  let t = `${r.periode} : « ${mesure} » ${sens}${c.variation !== null && c.ecart !== 0 ? ` de ${nfFr(Math.abs(c.variation), 1)} %` : ""} par rapport à ${c.libelle}`;
+  if (moteur && c.ecart !== 0 && Math.sign(moteur.ecart) === Math.sign(c.ecart)) t += `, surtout du fait de « ${moteur.nom} » (${signeFr(moteur.ecart)})`;
+  if (r.anneePrecedente?.variation != null) t += ` ; ${signeFr(r.anneePrecedente.variation, 1)} % sur un an`;
+  return `${t}.`;
+}
+
+export function phraseCohortes(r: ResultatCohortes): string | null {
+  const { m1, m3, m6 } = r.moyenne;
+  if (m1 === null) return null;
+  let t = `En moyenne, ${pctFr(m1)} des clients reviennent le mois suivant leur premier achat`;
+  if (m3 !== null) t += `, ${pctFr(m3)} au 3e mois`;
+  if (m6 !== null) t += `, ${pctFr(m6)} au 6e mois`;
+  return `${t}.`;
 }

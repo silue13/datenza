@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyserCohortes, analyserEvolution, analyserPareto, analyserRFM, detecterColonnesMetier } from "./metier";
+import { analyserCohortes, analyserEvolution, analyserPareto, analyserRFM, detecterColonnesMetier, phraseCohortes, phraseEvolution, phrasePareto } from "./metier";
 import { analyserColonnes } from "./analyse";
 
 describe("Pareto / ABC", () => {
@@ -138,5 +138,23 @@ describe("détection des colonnes", () => {
     expect(d.client).toBe("Code client");
     expect(d.mesure).toBe("Montant");
     expect(d.dimensions).toContain("Ville");
+    expect(d.explicative).toBe("Ville");
+  });
+});
+
+describe("phrases de conclusion", () => {
+  it("Pareto, évolution, cohortes", () => {
+    const p = analyserPareto(["Produit", "CA"], [["A", 50], ["B", 30], ...Array.from({ length: 8 }, (_, i) => [`P${i}`, 2.5])], "Produit", "CA");
+    if (!p.ok) throw new Error(p.raison);
+    expect(phrasePareto(p.valeur, "Produit", "CA")).toBe("20 % des « Produit » (2 sur 10) font 80 % de « CA ». La concentration est forte : quelques éléments portent l'activité, leur perte serait lourde.");
+
+    const lignes = [["2025-02-01", "Abidjan", 130], ["2025-02-15", "Bouaké", 70], ["2025-03-01", "Abidjan", 90], ["2025-03-15", "Bouaké", 100]];
+    const e = analyserEvolution(["Date", "Region", "Ventes"], lignes, "Date", "Ventes", "Region");
+    if (!e.ok) throw new Error(e.raison);
+    expect(phraseEvolution(e.valeur, "Ventes")).toBe("mars 2025 : « Ventes » en baisse de 5 % par rapport à févr. 2025, surtout du fait de « Abidjan » (−40).");
+
+    const c = analyserCohortes(["Client", "Date", "Montant"], ventesClients(), "Client", "Date");
+    if (!c.ok) throw new Error(c.raison);
+    expect(phraseCohortes(c.valeur)).toMatch(/^En moyenne, \d+ % des clients reviennent le mois suivant leur premier achat, \d+ % au 3e mois\.$/);
   });
 });

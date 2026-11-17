@@ -12,6 +12,9 @@ import {
   analyserRFM,
   CONSEILS_RFM,
   detecterColonnesMetier,
+  phraseCohortes,
+  phraseEvolution,
+  phrasePareto,
   type Comparaison,
   type ResultatRFM,
 } from "../../lib/analyse/metier";
@@ -92,15 +95,7 @@ function OngletPareto({ entetes, corps, dimensions, mesures, dimDefaut, mesureDe
       {r && !r.ok && <Indisponible>{r.raison}</Indisponible>}
       {r?.ok && (
         <>
-          <p className="text-sm text-slate-800 dark:text-slate-100">
-            <strong>{pct(r.valeur.partElementsPour80)}</strong> des « {dim} » ({r.valeur.nbPour80} sur {r.valeur.elements.length}) font{" "}
-            <strong>80 %</strong> de « {mes} ».
-            {r.valeur.partElementsPour80 <= 30
-              ? " La concentration est forte : quelques éléments portent l'activité, leur perte serait lourde."
-              : r.valeur.partElementsPour80 >= 60
-              ? " Le total est bien réparti : aucun élément n'est indispensable à lui seul."
-              : " Concentration modérée."}
-          </p>
+          <p className="text-sm text-slate-800 dark:text-slate-100">{phrasePareto(r.valeur, dim, mes)}</p>
           <div className="h-64 sm:h-72">
             <Bar
               data={{
@@ -207,16 +202,7 @@ function OngletEvolution({ entetes, corps, dates, mesures, dimensions, dateDefau
 
   if (!dates.length || !mesures.length) return <Indisponible>Il faut une colonne de dates (ou de mois, d&apos;années) et une colonne de montants.</Indisponible>;
   const p = r?.ok ? r.valeur : null;
-  const phrase = (() => {
-    if (!p?.precedente) return null;
-    const c = p.precedente;
-    const sens = c.ecart > 0 ? "en hausse" : c.ecart < 0 ? "en baisse" : "stable";
-    const moteur = c.contributions[0];
-    let t = `${p.periode} : « ${mes} » ${sens}${c.variation !== null && c.ecart !== 0 ? ` de ${nf(Math.abs(c.variation), 1)} %` : ""} par rapport à ${c.libelle}`;
-    if (moteur && c.ecart !== 0 && Math.sign(moteur.ecart) === Math.sign(c.ecart)) t += `, surtout du fait de « ${moteur.nom} » (${signe(moteur.ecart)})`;
-    if (p.anneePrecedente?.variation != null) t += ` ; ${signe(p.anneePrecedente.variation, 1)} % sur un an`;
-    return `${t}.`;
-  })();
+  const phrase = p ? phraseEvolution(p, mes) : null;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-w-2xl">
@@ -353,7 +339,6 @@ function OngletCohortes({ entetes, corps, clients, dates, clientDefaut, dateDefa
   const r = useMemo(() => (cli && date ? analyserCohortes(entetes, corps, cli, date) : null), [entetes, corps, cli, date]);
 
   if (!clients.length || !dates.length) return <Indisponible>Il faut une colonne client et une date (une ligne par achat ou par visite).</Indisponible>;
-  const m = r?.ok ? r.valeur.moyenne : null;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 max-w-xl">
@@ -363,13 +348,7 @@ function OngletCohortes({ entetes, corps, clients, dates, clientDefaut, dateDefa
       {r && !r.ok && <Indisponible>{r.raison}</Indisponible>}
       {r?.ok && (
         <>
-          {m && (
-            <p className="text-sm text-slate-800 dark:text-slate-100">
-              {m.m1 !== null && <>En moyenne, <strong>{pct(m.m1)}</strong> des clients reviennent le mois suivant leur premier achat</>}
-              {m.m3 !== null && <>, <strong>{pct(m.m3)}</strong> au 3ᵉ mois</>}
-              {m.m6 !== null && <>, <strong>{pct(m.m6)}</strong> au 6ᵉ mois</>}.
-            </p>
-          )}
+          {r.ok && phraseCohortes(r.valeur) && <p className="text-sm text-slate-800 dark:text-slate-100">{phraseCohortes(r.valeur)}</p>}
           <div className="overflow-x-auto">
             <table className="text-[11px] border-separate border-spacing-0.5">
               <thead>
@@ -439,7 +418,7 @@ export default function AnalysesMetier({ entetes, corps, statistiques, mesures }
       <p className="text-[11px] sm:text-xs text-slate-500">{actif.question}</p>
       <div role="tabpanel">
         {onglet === "pareto" && <OngletPareto entetes={entetes} corps={corps} dimensions={det.dimensions} mesures={det.mesures} dimDefaut={det.dimensions[0] ?? null} mesureDefaut={det.mesure} />}
-        {onglet === "evolution" && <OngletEvolution entetes={entetes} corps={corps} dates={det.dates} mesures={det.mesures} dimensions={det.dimensions} dateDefaut={det.date} mesureDefaut={det.mesure} dimDefaut={det.dimensions[0] ?? null} />}
+        {onglet === "evolution" && <OngletEvolution entetes={entetes} corps={corps} dates={det.dates} mesures={det.mesures} dimensions={det.dimensions} dateDefaut={det.date} mesureDefaut={det.mesure} dimDefaut={det.explicative} />}
         {onglet === "rfm" && <OngletRFM entetes={entetes} corps={corps} clients={det.candidatsClient} dates={det.dates} mesures={det.mesures} clientDefaut={det.client} dateDefaut={det.date} mesureDefaut={det.mesure} />}
         {onglet === "cohortes" && <OngletCohortes entetes={entetes} corps={corps} clients={det.candidatsClient} dates={det.dates} clientDefaut={det.client} dateDefaut={det.date} />}
       </div>
