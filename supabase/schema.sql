@@ -21,6 +21,21 @@ create table if not exists public.projets (
   updated_at timestamptz not null default now()
 );
 
+-- Si une table « projets » existait déjà (créée par un autre essai), on lui ajoute les colonnes manquantes.
+-- Ajouts uniquement : aucune colonne ni donnée existante n'est supprimée ou modifiée.
+alter table public.projets add column if not exists id uuid default gen_random_uuid();
+alter table public.projets add column if not exists user_id uuid default auth.uid() references auth.users (id) on delete cascade;
+alter table public.projets add column if not exists nom text not null default 'Projet';
+alter table public.projets add column if not exists nom_fichier text not null default '';
+alter table public.projets add column if not exists nb_lignes integer not null default 0;
+alter table public.projets add column if not exists nb_colonnes integer not null default 0;
+alter table public.projets add column if not exists taille_octets bigint not null default 0;
+alter table public.projets add column if not exists chemin_donnees text not null default '';
+alter table public.projets add column if not exists reglages jsonb not null default '{}'::jsonb;
+alter table public.projets add column if not exists partage_id uuid unique;
+alter table public.projets add column if not exists created_at timestamptz not null default now();
+alter table public.projets add column if not exists updated_at timestamptz not null default now();
+
 create index if not exists projets_user_idx on public.projets (user_id, updated_at desc);
 
 create or replace function public.projets_maj_date()
@@ -78,3 +93,6 @@ create policy "projets fichiers : suppression"
 
 -- Le partage par lien ne passe par aucune règle ci-dessus : les visiteurs n'ont aucun accès direct.
 -- C'est la route serveur /api/partage/[id] qui vérifie le lien et délivre un accès de 5 minutes aux données.
+
+-- 4. Prise en compte immédiate des nouvelles colonnes par l'API de Supabase -------------------
+notify pgrst, 'reload schema';
