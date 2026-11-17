@@ -26,6 +26,9 @@ function traduire(message: string): string {
   if (/different from the old/i.test(message)) return "Le nouveau mot de passe doit être différent de l'ancien.";
   if (/unable to validate email|invalid email|email address .* invalid/i.test(message)) return "Cette adresse e-mail n'est pas valide.";
   if (/failed to fetch|network/i.test(message)) return "Connexion Internet indisponible. Réessayez dans un instant.";
+  // Erreurs de configuration du projet Supabase, pas de la saisie : on le dit pour ne pas faire chercher l'utilisateur
+  if (/database error saving new user/i.test(message)) return "La création de compte est momentanément indisponible (erreur de configuration du serveur). Réessayez plus tard.";
+  if (/error sending (confirmation|recovery|magic link)? ?(e-?mail|mail)/i.test(message)) return "L'e-mail de confirmation n'a pas pu être envoyé. Réessayez dans quelques minutes.";
   return message;
 }
 
