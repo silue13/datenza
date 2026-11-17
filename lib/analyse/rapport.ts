@@ -2,12 +2,14 @@ import { arrondir } from "./utils";
 import { interpreterCorrelation } from "./stats";
 import { estPseudoMesure } from "./mesures";
 import { creerFormateurs, natureValeur } from "./format";
+import { formaterP } from "./inference";
+import { interpreterTest } from "./testsStatistiques";
 import type { analyserColonnes } from "./analyse";
 
 type Resultat = ReturnType<typeof analyserColonnes>;
 export type Langue = "fr" | "en";
 export interface BlocRapport {
-  type: "intro" | "qualite" | "mesure" | "categorie" | "numerique" | "booleen" | "date" | "correlation";
+  type: "intro" | "qualite" | "mesure" | "categorie" | "numerique" | "booleen" | "date" | "correlation" | "test";
   texte: string;
 }
 
@@ -108,11 +110,34 @@ export function genererRapport(res: Resultat, langue: Langue = "fr"): BlocRappor
     .slice(0, 3)
     .forEach((c) => {
       const force = interpreterCorrelation(c.coefficient, langue);
+      // Résultats enregistrés avant l'ajout des tests : pas de p-valeur à citer
+      const p = "pValeur" in c && typeof c.pValeur === "number" ? c.pValeur : null;
+      const preuve = p === null ? "" : `, ${formaterP(p, langue)}`;
+      const reserve = p !== null && !c.significative
+        ? L(" Trop peu de données pour exclure un effet du hasard.", " Too little data to rule out chance.")
+        : "";
       blocs.push({
         type: "correlation",
-        texte: L(`${c.colonneA} et ${c.colonneB} : relation ${force} (r = ${c.coefficient}).`, `${c.colonneA} and ${c.colonneB}: ${force} relationship (r = ${c.coefficient}).`),
+        texte: L(`${c.colonneA} et ${c.colonneB} : relation ${force} (r = ${c.coefficient}${preuve}).${reserve}`, `${c.colonneA} and ${c.colonneB}: ${force} relationship (r = ${c.coefficient}${preuve}).${reserve}`),
       });
     });
+
+  // Tests statistiques : les écarts et liens démontrés d'abord, sinon un constat d'absence
+  const tests = res.tests ?? [];
+  const demontres = tests
+    .filter((t) => t.significatif && !t.prudences.includes("redondant") && t.test.ampleur !== "negligeable")
+    .sort((a, b) => a.pAjustee - b.pAjustee)
+    .slice(0, 3);
+  for (const t of demontres) blocs.push({ type: "test", texte: `${L("Test statistique", "Statistical test")} : ${interpreterTest(t, langue)}` });
+  if (!demontres.length && tests.some((t) => t.type === "comparaison")) {
+    blocs.push({
+      type: "test",
+      texte: L(
+        "Test statistique : aucun écart entre groupes n'est démontré ; les différences visibles dans les répartitions peuvent venir du hasard.",
+        "Statistical test: no gap between groups is demonstrated; differences seen in the breakdowns may be due to chance."
+      ),
+    });
+  }
 
   return blocs;
 }

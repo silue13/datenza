@@ -68,7 +68,6 @@ function estDansFrontieresCI(lat: number, lng: number): boolean {
 
 export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Props) {
   const { graphiquesEpingles, epinglerGraphique } = useData();
-  const mapRef = useRef<any>(null);
 
   // État stockant les composants Leaflet une fois le navigateur prêt
   const [leafletReady, setLeafletReady] = useState<{
@@ -106,17 +105,10 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
         console.error("Erreur lors du chargement de Leaflet :", err);
       });
 
+    // La carte elle-même est détruite par MapContainer (react-leaflet) à son démontage :
+    // un map.remove() manuel ici la détruirait une seconde fois.
     return () => {
       actif = false;
-      // Nettoyage du conteneur Leaflet pour empêcher l'erreur "reused by another instance"
-      if (mapRef.current) {
-        try {
-          mapRef.current.remove();
-        } catch {
-          // ignore
-        }
-        mapRef.current = null;
-      }
     };
   }, []);
 
@@ -740,7 +732,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
         ) : (
           <leafletReady.MapContainer
             key={`map-container-${colonneGeo}-${periodeChoisie}-${enZones ? niveau : "cercles"}`}
-            ref={mapRef}
             center={centreCI}
             zoom={zoomCI}
             scrollWheelZoom={false}

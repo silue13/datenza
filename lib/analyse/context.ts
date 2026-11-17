@@ -2,6 +2,8 @@
 import type { analyserColonnes } from "./analyse";
 import type { Cellule } from "./utils";
 import { calculerSerie, type AgregationGraphique } from "./graphique";
+import { formaterP } from "./inference";
+import { interpreterTest, libelleEffet, nomMethode } from "./testsStatistiques";
 
 type Resultat = ReturnType<typeof analyserColonnes>;
 
@@ -18,6 +20,8 @@ export interface ContexteIA {
   evolutions?: { mesure: string; calcul: string; periode: string; granularite: string | null; points: { periode: string; valeur: number | null }[] }[];
   /** Classements détaillés (jusqu'à 15 modalités) des principales mesures par dimension. */
   classements?: { mesure: string; calcul: string; dimension: string; nbModalites: number; lignes: { valeur: string; resultat: number | null; lignes: number }[] }[];
+  /** Tests statistiques déjà calculés (p-valeurs corrigées de Holm) : à citer plutôt qu'à deviner. */
+  testsStatistiques?: { methode: string; pValeur: string; effet: string; significatif: boolean; conclusion: string }[];
   apercuPremieresLignes: Record<string, Cellule>[];
   note: string;
 }
@@ -117,7 +121,18 @@ export function construireContexte(
     mesures: res.mesures,
     ...(evolutions.length ? { evolutions } : {}),
     ...(classements.length ? { classements } : {}),
+    ...(res.tests?.length
+      ? {
+          testsStatistiques: res.tests.map((t) => ({
+            methode: nomMethode(t, "en"),
+            pValeur: formaterP(t.pAjustee, "en"),
+            effet: libelleEffet(t, "en"),
+            significatif: t.significatif,
+            conclusion: interpreterTest(t),
+          })),
+        }
+      : {}),
     apercuPremieresLignes: apercu,
-    note: "The complete raw data stays in the browser. Sensitive columns are masked. Statistics, 'evolutions' and 'classements' are computed over the complete imported dataset: quote those figures. The preview contains only the first rows and must never be used to compute totals.",
+    note: "The complete raw data stays in the browser. Sensitive columns are masked. Statistics, 'evolutions' and 'classements' are computed over the complete imported dataset: quote those figures. The preview contains only the first rows and must never be used to compute totals. 'testsStatistiques' holds significance tests already run on the full data: rely on them before claiming a difference or link is real.",
   };
 }

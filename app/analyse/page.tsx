@@ -9,6 +9,10 @@ import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
 import TableauCroiseDynamique from "../components/TableauCroiseDynamique";
 import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
 import BandeauSource from "../components/BandeauSource";
+import TestsStatistiques from "../components/TestsStatistiques";
+import PanneauRecette from "../components/PanneauRecette";
+import AnalysesMetier from "../components/AnalysesMetier";
+import { formaterP } from "../../lib/analyse/inference";
 import ModeleDonnees from "../components/ModeleDonnees";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
@@ -47,6 +51,8 @@ import {
   Sparkles,
   Loader2,
   RefreshCw,
+  FlaskConical,
+  Briefcase,
 } from "lucide-react";
 
 // Import dynamique sans SSR pour éviter le conflit d'instance DOM de Leaflet
@@ -295,6 +301,7 @@ export default function AnalysePage() {
   } = useData();
 
   const [exportExcelEnCours, setExportExcelEnCours] = useState(false);
+  const [exportWordEnCours, setExportWordEnCours] = useState(false);
   const [exportPptxEnCours, setExportPptxEnCours] = useState(false);
 
   const [syntheseCorrIA, setSyntheseCorrIA] = useState<string | null>(null);
@@ -631,6 +638,33 @@ export default function AnalysePage() {
     setTimeout(() => {
       window.print();
     }, 80);
+  };
+
+  const telechargerWord = async () => {
+    if (!entetes.length || !corps.length || !resultatActif || exportWordEnCours) return;
+    setExportWordEnCours(true);
+    try {
+      // Chargés au clic seulement : la génération Word et le rendu des graphiques n'alourdissent pas la page
+      const [{ telechargerRapportWord }, { rendreGraphiques }] = await Promise.all([
+        import("../../lib/analyse/exportWord"),
+        import("../../lib/analyse/imagesRapport"),
+      ]);
+      const images = await rendreGraphiques(graphiquesPourPptx);
+      await telechargerRapportWord({
+        nomProjet: nomFichier || "Analyse",
+        entetes,
+        corps,
+        analyse: resultatActif,
+        rapport: estBenchmarkActif
+          ? syntheseComparativeCards.map((c) => ({ type: c.type, texte: `${c.titre} : ${c.detail}` }))
+          : rapportActif,
+        images,
+      });
+    } catch (error) {
+      console.error("Erreur lors de l'export Word :", error);
+    } finally {
+      setExportWordEnCours(false);
+    }
   };
 
   const telechargerExcelPropre = async () => {
@@ -1013,6 +1047,15 @@ Ne mets ni introduction ni conclusion.`;
               <FileSpreadsheet className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>{exportExcelEnCours ? "Export…" : "Excel (.xlsx)"}</span>
             </button>
+
+            <button
+              onClick={telechargerWord}
+              disabled={exportWordEnCours}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+            >
+              <FileText className="w-4 h-4 text-sky-400 shrink-0" />
+              <span>{exportWordEnCours ? "Rédaction…" : "Word (.docx)"}</span>
+            </button>
           </div>
         </div>
       </section>
@@ -1106,6 +1149,7 @@ Ne mets ni introduction ni conclusion.`;
 
       <div className="print:hidden">
         <BarreOutilsDonnees />
+        <PanneauRecette />
       </div>
 
       <ModeleDonnees />
@@ -1144,6 +1188,24 @@ Ne mets ni introduction ni conclusion.`;
         >
           <Link2 className="w-3.5 h-3.5 text-cyan-500" />
           <span>Corrélations</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-tests")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <FlaskConical className="w-3.5 h-3.5 text-emerald-500" />
+          <span>Tests</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => allerASection("sec-metier")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <Briefcase className="w-3.5 h-3.5 text-amber-500" />
+          <span>Métier</span>
         </button>
 
         <button
@@ -1519,6 +1581,12 @@ Ne mets ni introduction ni conclusion.`;
 
                         <JaugeCorrelation r={c.coefficient} />
 
+                        {"pValeur" in c && typeof c.pValeur === "number" && (
+                          <p className={`text-[9px] sm:text-[10px] font-mono pt-1 ${c.significative ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
+                            {formaterP(c.pValeur)} · {c.significative ? "significative" : "non significative (peut venir du hasard)"}
+                          </p>
+                        )}
+
                         <div className="text-[10px] sm:text-[11px] flex items-start gap-1 pt-1">
                           <Lightbulb className="w-3 h-3 text-blue-600 shrink-0 mt-0.5" />
                           <p className="text-slate-600 dark:text-slate-400 leading-snug line-clamp-3 sm:line-clamp-none">
@@ -1537,6 +1605,31 @@ Ne mets ni introduction ni conclusion.`;
           )}
         </div>
       </Depliant>
+
+      {/* DÉPLIANT 4 : TESTS STATISTIQUES */}
+      <Depliant
+        id="sec-tests"
+        titre="Tests statistiques"
+        detail={(() => {
+          const t = resultatActif?.tests ?? [];
+          const n = t.filter((x) => x.significatif && !x.prudences.includes("redondant")).length;
+          return t.length ? `${n} résultat(s) démontré(s) sur ${t.length} test(s)` : "Aucun test applicable";
+        })()}
+      >
+        <TestsStatistiques tests={resultatActif?.tests ?? []} />
+      </Depliant>
+
+      {/* DÉPLIANT 5 : ANALYSES MÉTIER */}
+      {resultatActif && (
+        <Depliant id="sec-metier" titre="Analyses métier" detail="Pareto / ABC · évolution · segments clients · fidélité">
+          <AnalysesMetier
+            entetes={entetes}
+            corps={corps}
+            statistiques={resultatActif.statistiques}
+            mesures={(resultatActif.mesures ?? []).map((m) => m.colonne)}
+          />
+        </Depliant>
+      )}
 
       {/* 5. MODULES D'EXPLORATION VISUELLE & TABLEAUX */}
       <section className="space-y-8">
@@ -1684,6 +1777,10 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
   } else if (bloc.type === "correlation") {
     icone = <Link2 className="w-3.5 h-3.5 text-blue-600" />;
     badgeTexte = "Relation";
+  } else if (bloc.type === "test") {
+    icone = <FlaskConical className="w-3.5 h-3.5 text-emerald-600" />;
+    badgeTexte = "Test";
+    badgeCouleur = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
   }
 
   const partiesTexte = contenu.split(/(\d+(?:[.,]\d+)?\s*%)/g);

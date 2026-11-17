@@ -9,12 +9,15 @@ import {
   estValeurVide,
 } from "../../lib/analyse/utils";
 import { analyserNettoyage, appliquerCorrections } from "../../lib/analyse/nettoyage";
+import type { ConditionFiltre, DefinitionColonneCalculee } from "../../lib/analyse/filtres";
 import {
-  appliquerFiltres,
-  ajouterColonneCalculee,
-  type ConditionFiltre,
-  type DefinitionColonneCalculee,
-} from "../../lib/analyse/filtres";
+  adapterRecette,
+  creerRecette,
+  executerEtapes,
+  retirerCalcul,
+  type RapportRecette,
+  type Recette,
+} from "../../lib/analyse/recette";
 import { chargerEtat, sauvegarderEtat, effacerEtat, type EtatPersiste } from "../../lib/persistance";
 import { normaliserSource, type SourceDistante } from "../../lib/import/source";
 import { telechargerSource } from "../../lib/import/telechargement";
@@ -134,6 +137,18 @@ interface DataContextType {
   supprimerFiltre: (index: number) => void;
   reinitialiserFiltres: () => void;
   creerColonneCalculee: (def: DefinitionColonneCalculee) => void;
+  /** Colonnes calculées actives, dans l'ordre où elles sont appliquées. */
+  definitionsCalculs: DefinitionColonneCalculee[];
+  /** Retire une colonne calculée et ce qui en dépend ; renvoie la description des étapes retirées par ricochet. */
+  supprimerColonneCalculee: (index: number) => string[];
+  /** Colonnes du fichier importé, avant toute étape. */
+  colonnesSource: string[];
+  /** Recette décrivant les étapes actuelles (colonnes calculées, filtres, colonnes choisies). */
+  recetteCourante: (nom: string) => Recette;
+  /** Remplace les étapes actuelles par celles d'une recette, adaptées aux colonnes du fichier actif. */
+  appliquerRecette: (recette: Recette) => RapportRecette;
+  /** Charge un autre fichier en rejouant une recette (par défaut, les étapes actuelles). */
+  rejouerSurFichier: (nom: string, entetes: string[], corps: Cellule[][], recette?: Recette) => RapportRecette;
   nettoyerDonnees: (corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) => void;
   supprimerDonnees: () => void;
   restaurationTerminee: boolean;
@@ -210,33 +225,12 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     // 0. Colonnes des tables de référence (relations du modèle de données)
     const avecModele = appliquerModele(sourceEntetes, sourceCorps, modele.tables, modele.relations);
     setDiagnosticsModele(avecModele.diagnostics);
-    const baseEntetes = avecModele.entetes;
-    const baseCorps = avecModele.corps;
-    const colonnesReliees = baseEntetes.slice(sourceEntetes.length);
+    const colonnesReliees = avecModele.entetes.slice(sourceEntetes.length);
 
-    // 1. Conversion en objets
-    let objs = baseCorps.map((ligne) => {
-      const obj: Record<string, any> = {};
-      baseEntetes.forEach((h, idx) => {
-        obj[h] = ligne[idx];
-      });
-      return obj;
-    });
-
-    // 2. Application des colonnes calculées
-    for (const def of calculs) {
-      objs = ajouterColonneCalculee(objs, def);
-    }
-
-    // 3. Application des filtres
-    const objsFiltres = appliquerFiltres(objs, filtres);
-
-    // 4. Reconstruction des entêtes et corps finaux
-    const entetesFinales = [...baseEntetes, ...calculs.map((c) => c.nomNouvelleColonne)];
-    const corpsFinal: Cellule[][] = objsFiltres.map((obj) => entetesFinales.map((h) => obj[h]));
-
-    setEntetes(entetesFinales);
-    setCorps(corpsFinal);
+    // 1. Colonnes calculées puis filtres (même fonction que celle qui rejoue les recettes)
+    const final = executerEtapes(avecModele.entetes, avecModele.corps, calculs, filtres);
+    setEntetes(final.entetes);
+    setCorps(final.corps);
     setChoisies((prev) => Array.from(new Set([...prev, ...colonnesReliees, ...calculs.map((c) => c.nomNouvelleColonne)])));
   }
 
@@ -338,16 +332,12 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
       const { tableau } = await telechargerSource(origine.urlTelechargement, nomFichier);
       const propre = nettoyerImport(tableau.entetes, tableau.corps);
 
-      // Colonnes calculées puis filtres : on garde ceux dont les colonnes existent toujours (colonnes reliées comprises)
-      const disponibles = new Set(appliquerModele(propre.entetes, propre.corps, tablesReference, relations).entetes);
-      const calculs: DefinitionColonneCalculee[] = [];
-      for (const def of definitionsCalculs) {
-        if (disponibles.has(def.colonneA) && (!def.colonneB || disponibles.has(def.colonneB))) {
-          calculs.push(def);
-          disponibles.add(def.nomNouvelleColonne);
-        }
-      }
-      const filtres = filtresActifs.filter((f) => disponibles.has(f.colonne));
+      // Colonnes calculées puis filtres : rejoués comme une recette, sur les colonnes du fichier et celles des tables reliées
+      // (colonnes renommées reconnues, étapes impossibles écartées)
+      const entetesReliees = appliquerModele(propre.entetes, propre.corps, tablesReference, relations).entetes;
+      const adaptation = adapterRecette(creerRecette("", sources.entetes, definitionsCalculs, filtresActifs), entetesReliees);
+      const { calculs, filtres } = adaptation;
+      const disponibles = new Set([...entetesReliees, ...calculs.map((c) => c.nomNouvelleColonne)]);
 
       const ajoutees = propre.entetes.filter((h) => !sources.entetes.includes(h));
       const retirees = sources.entetes.filter((h) => !propre.entetes.includes(h));
@@ -357,11 +347,16 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
       if (retirees.length) notes.push(`${retirees.length} colonne(s) disparue(s) : ${retirees.slice(0, 4).join(", ")}${retirees.length > 4 ? "…" : ""}`);
       const reglagesPerdus = definitionsCalculs.length - calculs.length + (filtresActifs.length - filtres.length);
       if (reglagesPerdus) notes.push(`${reglagesPerdus} filtre(s) ou colonne(s) calculée(s) retiré(s), faute de colonne`);
+      if (adaptation.renommees.length) notes.push(`colonne(s) reconnue(s) sous un autre nom : ${adaptation.renommees.map(([a, b]) => `${a} → ${b}`).join(", ")}`);
 
       setSources(propre);
       setDefinitionsCalculs(calculs);
       setFiltresActifs(filtres);
-      setChoisies((prev) => [...prev.filter((c) => disponibles.has(c)), ...ajoutees.filter((c) => !prev.includes(c))]);
+      const renomme = new Map(adaptation.renommees);
+      setChoisies((prev) => {
+        const gardees = prev.map((c) => renomme.get(c) ?? c).filter((c) => disponibles.has(c));
+        return [...gardees, ...ajoutees.filter((c) => !gardees.includes(c))];
+      });
       regenererDonnees(propre.entetes, propre.corps, calculs, filtres);
       // L'analyse et le rapport décrivaient les anciennes données : ils sont recalculés à l'affichage
       setResultat(null);
@@ -423,6 +418,61 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     const maj = [...definitionsCalculs, def];
     setDefinitionsCalculs(maj);
     regenererDonnees(sources.entetes, sources.corps, maj, filtresActifs);
+  }
+
+  function supprimerColonneCalculee(index: number): string[] {
+    const r = retirerCalcul(definitionsCalculs, filtresActifs, index);
+    const retirees = new Set(definitionsCalculs.filter((c) => !r.calculs.includes(c)).map((c) => c.nomNouvelleColonne));
+    setDefinitionsCalculs(r.calculs);
+    setFiltresActifs(r.filtres);
+    setChoisies((prev) => prev.filter((c) => !retirees.has(c)));
+    regenererDonnees(sources.entetes, sources.corps, r.calculs, r.filtres);
+    return r.ricochets;
+  }
+
+  /** Colonnes disponibles avant les étapes : celles du fichier, plus celles des tables reliées par le modèle de données. */
+  function colonnesAvecModele(base: { entetes: string[]; corps: Cellule[][] }): string[] {
+    return appliquerModele(base.entetes, base.corps, tablesReference, relations).entetes;
+  }
+
+  function recetteCourante(nom: string): Recette {
+    const disponibles = colonnesAvecModele(sources);
+    // Colonnes choisies enregistrées seulement si l'utilisateur en a écarté : sinon « toutes », y compris les futures
+    const toutes = [...disponibles, ...definitionsCalculs.map((c) => c.nomNouvelleColonne)];
+    const restreint = toutes.some((c) => !choisies.includes(c));
+    return creerRecette(nom, disponibles, definitionsCalculs, filtresActifs, restreint ? choisies.filter((c) => toutes.includes(c)) : undefined);
+  }
+
+  /** Installe des données sources et des étapes adaptées, et invalide ce qui décrivait l'état précédent. */
+  function installerEtapes(base: { entetes: string[]; corps: Cellule[][] }, rapportRecette: RapportRecette) {
+    setDefinitionsCalculs(rapportRecette.calculs);
+    setFiltresActifs(rapportRecette.filtres);
+    regenererDonnees(base.entetes, base.corps, rapportRecette.calculs, rapportRecette.filtres);
+    setChoisies(rapportRecette.colonnesChoisies);
+    setResultat(null);
+    setRapport([]);
+  }
+
+  function appliquerRecette(recette: Recette): RapportRecette {
+    const r = adapterRecette(recette, colonnesAvecModele(sources));
+    installerEtapes(sources, r);
+    return r;
+  }
+
+  function rejouerSurFichier(nom: string, entetesData: string[], corpsData: Cellule[][], recette?: Recette): RapportRecette {
+    const aRejouer = recette ?? recetteCourante(nomFichier || "Étapes actuelles");
+    const propre = nettoyerImport(entetesData, corpsData);
+    // Le modèle de données (tables de référence, relations) et les mesures font partie de la préparation : ils sont gardés
+    const r = adapterRecette(aRejouer, colonnesAvecModele(propre));
+    setNomFichier(nom);
+    setSources(propre);
+    setSource(null);
+    setActualisation({ enCours: false, message: null, erreur: null });
+    setProjetCourant(null);
+    // Les graphiques épinglés sont des instantanés de l'ancien fichier : les garder montrerait d'anciens chiffres
+    setGraphiquesEpingles([]);
+    installerEtapes(propre, r);
+    return r;
   }
 
   function nettoyerDonnees(corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[]) {
@@ -662,6 +712,12 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
         supprimerFiltre,
         reinitialiserFiltres,
         creerColonneCalculee,
+        definitionsCalculs,
+        supprimerColonneCalculee,
+        colonnesSource: sources.entetes,
+        recetteCourante,
+        appliquerRecette,
+        rejouerSurFichier,
         nettoyerDonnees,
         supprimerDonnees,
         restaurationTerminee,

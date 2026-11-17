@@ -2,6 +2,19 @@ import pptxgen from "pptxgenjs";
 import { trierChronologiquement } from "./dates";
 import { expliquerGraphique } from "./graphique";
 import { parseNombre } from "./utils";
+import { formaterP } from "./inference";
+import {
+  AVERTISSEMENT_TESTS,
+  interpreterTest,
+  libelleEffet,
+  LIBELLES_VERDICT,
+  nomMethode,
+  questionTest,
+  trierTests,
+  verdictTest,
+  type ComparaisonGroupes,
+  type TestStatistique,
+} from "./testsStatistiques";
 
 // =========================================================================
 // INTERFACES & TYPES EXPORTÉS
@@ -58,7 +71,8 @@ export interface DonneesExportPptx {
   corps: (string | number | boolean | null | undefined)[][];
   analyse?: {
     statistiques?: Record<string, any>;
-    correlations?: { colonneA: string; colonneB: string; coefficient: number; interpretation?: string }[];
+    correlations?: { colonneA: string; colonneB: string; coefficient: number; interpretation?: string; pValeur?: number; significative?: boolean }[];
+    tests?: TestStatistique[];
     lignesInitiales?: number;
     colonnesInitiales?: number;
     doublonsPures?: number;
@@ -201,6 +215,128 @@ function ajouterEnteteSlide(slide: any, surtitre: string, titre: string, pptx: p
   slide.addShape(pptx.ShapeType.line, {
     x: 0.8, y: 1.22, w: 11.73, h: 0, line: { color: COULEURS.bordure, width: 1 },
   });
+}
+
+const COULEUR_VERDICT = { demontre: COULEURS.vert, faible: COULEURS.ambre, nonDemontre: COULEURS.texteDiscret, redondant: COULEURS.texteDiscret } as const;
+const MAX_LIGNES_TABLE_TESTS = 8;
+const MAX_SLIDES_ECARTS = 2;
+
+const nfPptx = (x: number) => x.toLocaleString("fr-FR", { maximumFractionDigits: Math.abs(x) >= 100 ? 0 : 2 });
+
+/** Tableau des tests, puis une diapositive par écart démontré (boîtes à moustaches dessinées en formes). */
+function ajouterSlidesTests(pptx: pptxgen, testsBruts: TestStatistique[]) {
+  if (!testsBruts.length) return;
+  const tests = trierTests(testsBruts);
+
+  // --- Diapositive de synthèse : question, verdict, preuve ---
+  const slide = pptx.addSlide();
+  slide.background = { color: COULEURS.fondClair };
+  ajouterEnteteSlide(slide, "TESTS STATISTIQUES", "Ce que les données démontrent, et ce qu'elles ne démontrent pas", pptx);
+
+  const entete = (text: string, align: "left" | "center" = "left") => ({
+    text, options: { bold: true, fill: { color: COULEURS.fondSombre }, color: COULEURS.texteBlanc, fontSize: 10, align },
+  });
+  const visibles = tests.slice(0, MAX_LIGNES_TABLE_TESTS);
+  const lignes = [
+    [entete("Question testée"), entete("Verdict", "center"), entete("Preuve")],
+    ...visibles.map((t, i) => {
+      const v = verdictTest(t);
+      const fond = { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair };
+      return [
+        { text: questionTest(t), options: { bold: true, fill: fond, fontSize: 9.5 } },
+        { text: LIBELLES_VERDICT[v], options: { bold: true, align: "center" as const, fill: fond, color: COULEUR_VERDICT[v], fontSize: 9.5 } },
+        { text: `${nomMethode(t)} · ${formaterP(t.pAjustee)} · ${libelleEffet(t)}`, options: { fill: fond, fontSize: 8.5, color: COULEURS.texteSecondaire } },
+      ];
+    }),
+  ];
+  slide.addTable(lignes as any, {
+    x: 0.8, y: 1.45, w: 7.6, colW: [2.9, 1.3, 3.4], fontFace: "Calibri", border: { pt: 0.75, color: COULEURS.bordure },
+  });
+  if (tests.length > visibles.length) {
+    slide.addText(`${tests.length - visibles.length} autre(s) test(s) non démontré(s) : détail dans l'export Excel.`, {
+      x: 0.8, y: 6.55, w: 7.6, h: 0.3, fontFace: "Calibri", fontSize: 9, italic: true, color: COULEURS.texteDiscret,
+    });
+  }
+
+  // Panneau « À retenir »
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x: 8.65, y: 1.45, w: 3.85, h: 5.4, rectRadius: 0.08, fill: { color: COULEURS.fondCarte }, line: { color: COULEURS.bordure, width: 1 },
+  });
+  slide.addShape(pptx.ShapeType.rect, {
+    x: 8.65, y: 1.45, w: 3.85, h: 0.45, fill: { color: COULEURS.fondCartouche }, line: { color: COULEURS.fondCartouche },
+  });
+  slide.addText("À RETENIR", {
+    x: 8.9, y: 1.55, w: 3.4, h: 0.25, fontFace: "Calibri", fontSize: 9, bold: true, color: COULEURS.texteBlanc, charSpacing: 1,
+  });
+  const demontres = tests.filter((t) => verdictTest(t) === "demontre").slice(0, 2);
+  const retenir = demontres.length
+    ? demontres.map((t) => `• ${interpreterTest(t)}`).join("\n\n")
+    : "• Aucun écart ni lien n'est démontré : les différences visibles dans les tableaux et graphiques peuvent venir du hasard. Ne pas fonder de décision sur elles seules.";
+  slide.addText(retenir, {
+    x: 8.9, y: 2.05, w: 3.4, h: 3.55, fontFace: "Calibri", fontSize: 9.5, color: COULEURS.textePrincipal, lineSpacingMultiple: 1.2, valign: "top", fit: "shrink",
+  });
+  slide.addText(AVERTISSEMENT_TESTS.fr, {
+    x: 8.9, y: 5.65, w: 3.4, h: 1.1, fontFace: "Calibri", fontSize: 8, italic: true, color: COULEURS.texteDiscret, valign: "bottom", fit: "shrink",
+  });
+
+  // --- Une diapositive par écart démontré : boîtes à moustaches ---
+  const ecarts = tests.filter((t): t is ComparaisonGroupes => t.type === "comparaison" && verdictTest(t) === "demontre").slice(0, MAX_SLIDES_ECARTS);
+  for (const t of ecarts) {
+    const sl = pptx.addSlide();
+    sl.background = { color: COULEURS.fondClair };
+    ajouterEnteteSlide(sl, "ÉCART DÉMONTRÉ ENTRE GROUPES", `${t.mesure} selon ${t.dimension}`, pptx);
+
+    const groupes = t.groupes;
+    const min = Math.min(...groupes.map((g) => g.moustacheBasse));
+    const max = Math.max(...groupes.map((g) => g.moustacheHaute));
+    const etendue = max - min || 1;
+    const x0 = 2.9, largeur = 5.4;
+    const X = (v: number) => x0 + ((v - min) / etendue) * largeur;
+    const pas = Math.min(1.0, 4.3 / groupes.length);
+    const hBoite = pas * 0.55;
+
+    sl.addShape(pptx.ShapeType.roundRect, {
+      x: 0.8, y: 1.45, w: 7.75, h: 5.4, rectRadius: 0.08, fill: { color: COULEURS.fondCarte }, line: { color: COULEURS.bordure, width: 1 },
+    });
+    groupes.forEach((g, i) => {
+      const yc = 1.8 + i * pas + pas / 2;
+      sl.addText(`${g.nom} (${g.n})`, {
+        x: 0.95, y: yc - 0.15, w: 1.85, h: 0.3, fontFace: "Calibri", fontSize: 9, color: COULEURS.textePrincipal, align: "right", fit: "shrink",
+      });
+      const trait = { color: COULEURS.texteDiscret, width: 1 };
+      sl.addShape(pptx.ShapeType.line, { x: X(g.moustacheBasse), y: yc, w: Math.max(X(g.moustacheHaute) - X(g.moustacheBasse), 0.001), h: 0, line: trait });
+      sl.addShape(pptx.ShapeType.line, { x: X(g.moustacheBasse), y: yc - hBoite / 3, w: 0, h: (2 * hBoite) / 3, line: trait });
+      sl.addShape(pptx.ShapeType.line, { x: X(g.moustacheHaute), y: yc - hBoite / 3, w: 0, h: (2 * hBoite) / 3, line: trait });
+      sl.addShape(pptx.ShapeType.rect, {
+        x: X(g.q1), y: yc - hBoite / 2, w: Math.max(X(g.q3) - X(g.q1), 0.02), h: hBoite,
+        fill: { color: COULEURS.bleuLeger }, line: { color: COULEURS.bleuAccent, width: 1 },
+      });
+      sl.addShape(pptx.ShapeType.line, { x: X(g.mediane), y: yc - hBoite / 2, w: 0, h: hBoite, line: { color: COULEURS.bleuCobalt, width: 2 } });
+      sl.addShape(pptx.ShapeType.ellipse, {
+        x: X(g.moyenne) - 0.05, y: yc - 0.05, w: 0.1, h: 0.1, fill: { color: COULEURS.ambre }, line: { color: COULEURS.fondCarte, width: 0.5 },
+      });
+    });
+    const yAxe = 1.8 + groupes.length * pas + 0.05;
+    sl.addText(nfPptx(min), { x: x0 - 0.5, y: yAxe, w: 1, h: 0.25, fontFace: "Calibri", fontSize: 8, color: COULEURS.texteDiscret, align: "center" });
+    sl.addText(nfPptx(max), { x: x0 + largeur - 0.5, y: yAxe, w: 1, h: 0.25, fontFace: "Calibri", fontSize: 8, color: COULEURS.texteDiscret, align: "center" });
+    sl.addText("Boîte : 50 % central des valeurs · trait : médiane · point orange : moyenne · moustaches : hors valeurs atypiques", {
+      x: 0.95, y: 6.35, w: 7.45, h: 0.3, fontFace: "Calibri", fontSize: 8, italic: true, color: COULEURS.texteDiscret,
+    });
+
+    sl.addShape(pptx.ShapeType.roundRect, {
+      x: 8.75, y: 1.45, w: 3.75, h: 5.4, rectRadius: 0.08, fill: { color: COULEURS.fondCarte }, line: { color: COULEURS.bordure, width: 1 },
+    });
+    sl.addShape(pptx.ShapeType.rect, { x: 8.75, y: 1.45, w: 0.1, h: 5.4, fill: { color: COULEURS.vert }, line: { color: COULEURS.vert } });
+    sl.addText("CONCLUSION", {
+      x: 9.05, y: 1.6, w: 3.3, h: 0.25, fontFace: "Calibri", fontSize: 9, bold: true, color: COULEURS.vert, charSpacing: 1,
+    });
+    sl.addText(interpreterTest(t), {
+      x: 9.05, y: 1.95, w: 3.3, h: 3.6, fontFace: "Calibri", fontSize: 10.5, color: COULEURS.textePrincipal, lineSpacingMultiple: 1.25, valign: "top", fit: "shrink",
+    });
+    sl.addText(`${nomMethode(t)} · ${formaterP(t.pAjustee)} (corrigée) · ${libelleEffet(t)} · ${t.nbLignes.toLocaleString("fr-FR")} lignes. Moyennes calculées par ligne du fichier.`, {
+      x: 9.05, y: 5.7, w: 3.3, h: 1.0, fontFace: "Calibri", fontSize: 8, color: COULEURS.texteDiscret, valign: "bottom",
+    });
+  }
 }
 
 /** MOTEUR D'AUTO-AJUSTEMENT DU TABLEAU CROISÉ DYNAMIQUE (TDC) */
@@ -577,6 +713,8 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       numerique: { titre: "DISTRIBUTION CHIFFRÉE", couleur: COULEURS.bleuCobalt },
       categorie: { titre: "SEGMENTATION STRATÉGIQUE", couleur: COULEURS.ambre },
       anomalie: { titre: "POINT DE VIGILANCE CRITIQUE", couleur: COULEURS.rose },
+      correlation: { titre: "RELATION ENTRE VARIABLES", couleur: COULEURS.cyan },
+      test: { titre: "TEST STATISTIQUE", couleur: COULEURS.vert },
     };
 
     donnees.rapport.slice(0, 4).forEach((bloc, idx) => {
@@ -632,7 +770,7 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
 
         return [
           { text: `${nettoyerNomMetier(c.colonneA)} ↔ ${nettoyerNomMetier(c.colonneB)}`, options: { bold: true, fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, fontSize: 9.5 } },
-          { text: `r = ${c.coefficient}`, options: { bold: true, align: "center" as const, fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, color: colorR, fontSize: 9.5 } },
+          { text: typeof c.pValeur === "number" ? `r = ${c.coefficient}\n${formaterP(c.pValeur)}` : `r = ${c.coefficient}`, options: { bold: true, align: "center" as const, fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, color: colorR, fontSize: 9.5 } },
           { text: interpretationText, options: { fill: { color: i % 2 === 0 ? COULEURS.fondCarte : COULEURS.fondClair }, fontSize: 9 } },
         ];
       }),
@@ -692,6 +830,11 @@ export async function exporterRapportPowerPoint(donnees: DonneesExportPptx): Pro
       });
     }
   }
+
+  // ==========================================
+  // SLIDES 4 bis : TESTS STATISTIQUES
+  // ==========================================
+  ajouterSlidesTests(pptx, donnees.analyse?.tests ?? []);
 
   // ==========================================
   // SLIDE 5 : TABLEAU CROISÉ DYNAMIQUE (TDC)
