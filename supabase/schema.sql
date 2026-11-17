@@ -94,5 +94,56 @@ create policy "projets fichiers : suppression"
 -- Le partage par lien ne passe par aucune règle ci-dessus : les visiteurs n'ont aucun accès direct.
 -- C'est la route serveur /api/partage/[id] qui vérifie le lien et délivre un accès de 5 minutes aux données.
 
--- 4. Prise en compte immédiate des nouvelles colonnes par l'API de Supabase -------------------
+-- 4. Quota journalier de l'assistant IA ------------------------------------------------------
+-- Chaque question à l'assistant coûte un appel payant à un fournisseur d'IA : le serveur décompte les
+-- questions de chaque compte, par jour (UTC). Le compteur n'est modifiable que par la fonction ci-dessous.
+create table if not exists public.quotas_ia (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  jour date not null default ((now() at time zone 'utc')::date),
+  nb integer not null default 0 check (nb >= 0),
+  primary key (user_id, jour)
+);
+
+alter table public.quotas_ia enable row level security;
+
+drop policy if exists "quotas_ia : lecture de son quota" on public.quotas_ia;
+create policy "quotas_ia : lecture de son quota"
+  on public.quotas_ia for select to authenticated
+  using ((select auth.uid()) = user_id);
+-- Aucune règle d'ajout ou de modification : seule consommer_quota_ia écrit dans cette table.
+
+-- Ajoute une question au compteur du jour si la limite n'est pas atteinte (opération atomique).
+-- Renvoie autorise = faux, sans rien compter, quand la limite est déjà atteinte.
+create or replace function public.consommer_quota_ia(limite integer)
+returns table (autorise boolean, utilises integer)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := auth.uid();
+  aujourd_hui date := (now() at time zone 'utc')::date;
+  n integer;
+begin
+  if uid is null then
+    raise exception 'Utilisateur non authentifié';
+  end if;
+  insert into public.quotas_ia as q (user_id, jour, nb)
+  values (uid, aujourd_hui, 1)
+  on conflict (user_id, jour) do update set nb = q.nb + 1
+    where q.nb < limite
+  returning q.nb into n;
+  if n is null then
+    select q.nb into n from public.quotas_ia q where q.user_id = uid and q.jour = aujourd_hui;
+    return query select false, coalesce(n, 0);
+  else
+    return query select true, n;
+  end if;
+end;
+$$;
+
+revoke all on function public.consommer_quota_ia(integer) from public, anon;
+grant execute on function public.consommer_quota_ia(integer) to authenticated;
+
+-- 5. Prise en compte immédiate des nouvelles colonnes par l'API de Supabase -------------------
 notify pgrst, 'reload schema';

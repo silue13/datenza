@@ -23,6 +23,8 @@ import { calculerTdcAvecLimite, type Agregation } from "../../lib/analyse/tdc";
 import { parseNombre, arrondir, type Cellule } from "../../lib/analyse/utils";
 import TableTdc from "../components/TableTdc";
 import { enregistrerFournisseur, lireFournisseur } from "../../lib/prefs";
+import { appelerIA } from "../../lib/ia/appelIA";
+import { useAuth } from "../context/AuthContext";
 
 interface Message {
   role: "user" | "assistant";
@@ -214,6 +216,9 @@ function CalculsIA({ calculs }: { calculs: ResultatRequete[] }) {
 
 export default function AssistantIAPage() {
   const { nomFichier, corps, entetes, resultat, mesures } = useData();
+  const { utilisateur, chargement: chargementCompte, configure: comptesConfigures } = useAuth();
+  // L'assistant consomme des appels payants : il est réservé aux comptes connectés (vérifié aussi par le serveur)
+  const connexionRequise = comptesConfigures && !chargementCompte && !utilisateur;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [chargement, setChargement] = useState(false);
@@ -462,10 +467,7 @@ Le fichier de référence étalon est : « ${refSource} ».
     setChargement(true);
 
     const appeler = async (resultatsCalculs?: string) => {
-      const rep = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const rep = await appelerIA({
           question,
           contexte,
           historique,
@@ -474,8 +476,7 @@ Le fichier de référence étalon est : « ${refSource} ».
           langueApp: "fr",
           calculs: true,
           ...(resultatsCalculs ? { resultatsCalculs } : {}),
-        }),
-      });
+        });
       const data = (await rep.json().catch(() => ({}))) as { reponse?: string; fournisseur?: string; error?: string };
       if (!rep.ok || !data.reponse) throw new Error(data.error ?? `Erreur ${rep.status}`);
       return data as { reponse: string; fournisseur?: string };
@@ -706,12 +707,23 @@ Le fichier de référence étalon est : « ${refSource} ».
                 key={idx}
                 type="button"
                 onClick={() => void envoyerQuestion(sug)}
-                disabled={chargement}
+                disabled={chargement || connexionRequise}
                 className="px-3 py-1 bg-white hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 hover:text-purple-700 dark:text-slate-300 dark:hover:text-purple-300 rounded-full border border-slate-200 dark:border-slate-700 whitespace-nowrap transition text-[11px] cursor-pointer"
               >
                 {sug}
               </button>
             ))}
+          </div>
+        )}
+
+        {connexionRequise && (
+          <div className="px-4 py-3 border-t border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span>
+              <strong>Connectez-vous pour poser vos questions.</strong> L&apos;assistant IA est réservé aux comptes DATENZA (création gratuite) ; vos fichiers restent dans votre navigateur.
+            </span>
+            <Link href="/compte" className="shrink-0 self-start sm:self-auto px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold">
+              Se connecter
+            </Link>
           </div>
         )}
 
@@ -721,7 +733,8 @@ Le fichier de référence étalon est : « ${refSource} ».
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void envoyerQuestion()}
+            onKeyDown={(e) => e.key === "Enter" && !connexionRequise && void envoyerQuestion()}
+            disabled={connexionRequise}
             placeholder={
               estBenchmarkActif
                 ? `Posez votre question comparative (ex: Quels sont les plus gros écarts vs ${refSource} ? Génère un TDC comparatif...)`
@@ -731,7 +744,7 @@ Le fichier de référence étalon est : « ${refSource} ».
           />
           <button
             onClick={() => void envoyerQuestion()}
-            disabled={chargement || !input.trim()}
+            disabled={chargement || !input.trim() || connexionRequise}
             className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white font-semibold text-xs rounded-xl shadow transition inline-flex items-center gap-1.5 cursor-pointer"
           >
             <Send className="w-3.5 h-3.5" />

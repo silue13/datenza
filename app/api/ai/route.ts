@@ -3,6 +3,7 @@ import { NextResponse, connection } from "next/server";
 import { verifierQuestionLieeAuxFichier } from "../../../lib/ia/ai-guard";
 import { construireMessagesIA, determinerLangueConversation } from "../../../lib/ia/prompts";
 import { appelerFournisseur, candidatsIA, fournisseursConfigures, IA_CONFIG } from "../../../lib/ia/ai-providers";
+import { verifierAccesIA } from "../../../lib/ia/acces";
 
 export const maxDuration = 60; // à ajuster selon ton plan Vercel
 
@@ -20,9 +21,8 @@ interface CorpsRequete {
 
 const erreur = (message: string, status: number) => NextResponse.json({ error: message }, { status });
 
-// Limite provisoire : 60 appels / heure / adresse IP (une question qui demande des calculs compte pour deux appels).
-// En mémoire, donc propre à chaque instance serveur : c'est un garde-fou, pas une vraie protection.
-// À remplacer par l'authentification Supabase + un compteur persistant.
+// Première ligne de défense : 60 appels / heure / adresse IP, en mémoire (propre à chaque instance).
+// La vraie protection est l'accès réservé aux comptes connectés, avec un quota journalier en base (lib/ia/acces.ts).
 const LIMITE = 60;
 const FENETRE_MS = 60 * 60 * 1000;
 const compteurs = new Map<string, { debut: number; n: number }>();
@@ -77,6 +77,11 @@ export async function POST(req: Request) {
   const candidats = candidatsIA(String(body?.fournisseur ?? "auto"));
   if (!candidats.length) return erreur("Aucun service IA n’est configuré sur le serveur.", 503);
 
+  // 2) Compte connecté et quota du jour, vérifiés juste avant l'appel payant :
+  //    une question hors sujet ou sans moteur disponible ne coûte rien au quota
+  const acces = await verifierAccesIA(req.headers.get("authorization"));
+  if (!acces.ok) return erreur(acces.message, acces.status);
+
   const langue = determinerLangueConversation(question, body?.langueConversation, body?.langueApp);
   const resultatsCalculs = typeof body?.resultatsCalculs === "string" ? body.resultatsCalculs.slice(0, 60_000) : "";
   const messages = construireMessagesIA(question, contexte, langue, body?.historique, {
@@ -91,7 +96,7 @@ export async function POST(req: Request) {
     if (echeance - Date.now() < 3000) break;
     try {
       const reponse = await appelerFournisseur(nom, messages, echeance);
-      return NextResponse.json({ fournisseur: nom, reponse });
+      return NextResponse.json({ fournisseur: nom, reponse, ...(acces.limite ? { quota: { utilises: acces.utilises, limite: acces.limite } } : {}) });
     } catch (e) {
       erreurs.push(`${IA_CONFIG[nom].nom} : ${e instanceof Error ? e.message : "erreur"}`);
     }
