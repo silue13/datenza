@@ -30,7 +30,7 @@ describe("analyse/analyserColonnes", () => {
   });
   it("calcule la corrélation entre colonnes numériques", () => {
     expect(res.correlations).toEqual([
-      { colonneA: "Montant", colonneB: "Surface", coefficient: 1, nbPaires: 6, interpretation: "très forte et positive" },
+      { colonneA: "Montant", colonneB: "Surface", coefficient: 1, nbPaires: 6, interpretation: "très forte et positive", pValeur: 0, significative: true },
     ]);
   });
 });

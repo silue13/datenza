@@ -12,6 +12,8 @@ import {
 } from "./utils";
 import { calculerFrequences, calculerTendance, correlationPearson, interpreterCorrelation } from "./stats";
 import { calculerMesures } from "./mesures";
+import { corrigerHolm, pCorrelation, SEUIL_SIGNIFICATIVITE } from "./inference";
+import { executerTestsStatistiques } from "./testsStatistiques";
 import { detecterOrdreDate, detecterTypeColonne, lireDateOuAnnee, normaliser, type TypeColonne } from "./detection";
 import { clePeriode } from "./dates";
 import { analyserNettoyage, appliquerCorrections } from "./nettoyage";
@@ -203,10 +205,23 @@ export function analyserColonnes(entetesBrutes: string[], corpsBrut: Cellule[][]
     }
   }
 
+  // 6. Significativité des corrélations, corrigée pour le nombre de paires testées
+  const pBruts = correlations.map((c) => pCorrelation(c.coefficient, c.nbPaires) ?? 1);
+  const pAjustes = corrigerHolm(pBruts);
+  const correlationsTestees = correlations.map((c, i) => ({
+    ...c,
+    pValeur: pAjustes[i],
+    significative: pAjustes[i] < SEUIL_SIGNIFICATIVITE,
+  }));
+
+  const mesures = calculerMesures(entetes, corpsNettoye, statistiques);
+
   return {
     nbLignes: corpsNettoye.length,
     statistiques,
-    correlations,
-    mesures: calculerMesures(entetes, corpsNettoye, statistiques),
+    correlations: correlationsTestees,
+    mesures,
+    // 7. Tests de comparaison entre groupes et de lien entre catégories
+    tests: executerTestsStatistiques(entetes, corpsNettoye, statistiques, mesures.map((m) => m.colonne)),
   };
 }

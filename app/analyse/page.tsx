@@ -9,6 +9,8 @@ import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
 import TableauCroiseDynamique from "../components/TableauCroiseDynamique";
 import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
 import BandeauSource from "../components/BandeauSource";
+import TestsStatistiques from "../components/TestsStatistiques";
+import { formaterP } from "../../lib/analyse/inference";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
 import { useData } from "../context/DataContext";
@@ -46,6 +48,7 @@ import {
   Sparkles,
   Loader2,
   RefreshCw,
+  FlaskConical,
 } from "lucide-react";
 
 // Import dynamique sans SSR pour éviter le conflit d'instance DOM de Leaflet
@@ -1145,6 +1148,15 @@ Ne mets ni introduction ni conclusion.`;
 
         <button
           type="button"
+          onClick={() => allerASection("sec-tests")}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
+        >
+          <FlaskConical className="w-3.5 h-3.5 text-emerald-500" />
+          <span>Tests</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => allerASection("sec-previsions")}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100/80 hover:bg-blue-50 hover:text-blue-600 dark:bg-slate-800/80 dark:hover:bg-blue-950/50 dark:hover:text-blue-300 text-xs font-semibold text-slate-700 dark:text-slate-300 transition shrink-0 cursor-pointer border border-transparent hover:border-blue-200/60 dark:hover:border-blue-800/60"
         >
@@ -1516,6 +1528,12 @@ Ne mets ni introduction ni conclusion.`;
 
                         <JaugeCorrelation r={c.coefficient} />
 
+                        {"pValeur" in c && typeof c.pValeur === "number" && (
+                          <p className={`text-[9px] sm:text-[10px] font-mono pt-1 ${c.significative ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
+                            {formaterP(c.pValeur)} · {c.significative ? "significative" : "non significative (peut venir du hasard)"}
+                          </p>
+                        )}
+
                         <div className="text-[10px] sm:text-[11px] flex items-start gap-1 pt-1">
                           <Lightbulb className="w-3 h-3 text-blue-600 shrink-0 mt-0.5" />
                           <p className="text-slate-600 dark:text-slate-400 leading-snug line-clamp-3 sm:line-clamp-none">
@@ -1533,6 +1551,19 @@ Ne mets ni introduction ni conclusion.`;
             </p>
           )}
         </div>
+      </Depliant>
+
+      {/* DÉPLIANT 4 : TESTS STATISTIQUES */}
+      <Depliant
+        id="sec-tests"
+        titre="Tests statistiques"
+        detail={(() => {
+          const t = resultatActif?.tests ?? [];
+          const n = t.filter((x) => x.significatif && !x.prudences.includes("redondant")).length;
+          return t.length ? `${n} résultat(s) démontré(s) sur ${t.length} test(s)` : "Aucun test applicable";
+        })()}
+      >
+        <TestsStatistiques tests={resultatActif?.tests ?? []} />
       </Depliant>
 
       {/* 5. MODULES D'EXPLORATION VISUELLE & TABLEAUX */}
@@ -1681,6 +1712,10 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
   } else if (bloc.type === "correlation") {
     icone = <Link2 className="w-3.5 h-3.5 text-blue-600" />;
     badgeTexte = "Relation";
+  } else if (bloc.type === "test") {
+    icone = <FlaskConical className="w-3.5 h-3.5 text-emerald-600" />;
+    badgeTexte = "Test";
+    badgeCouleur = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
   }
 
   const partiesTexte = contenu.split(/(\d+(?:[.,]\d+)?\s*%)/g);
