@@ -180,7 +180,7 @@ export function nettoyerNomMetier(nom?: string): string {
 /** Nettoie tout résidu de syntaxe Markdown ou format brut pour document institutionnel */
 function nettoyerTexteProfessionnel(texte?: string): string {
   if (!texte) return "";
-  let t = texte
+  const t = texte
     .replace(/^#+\s+/gm, "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/\*(.*?)\*/g, "$1")

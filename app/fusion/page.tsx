@@ -14,13 +14,9 @@ import {
   BarChart2,
   Download,
   ArrowRight,
-  ShieldCheck,
   Settings2,
   Layers,
   GitMerge,
-  Filter,
-  CheckCircle2,
-  ArrowLeftRight,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import {
@@ -32,7 +28,6 @@ import {
   type TypeJointure,
 } from "../../lib/analyse/fusion";
 import { analyserColonnes } from "../../lib/analyse/analyse";
-import { type Cellule } from "../../lib/analyse/utils";
 
 export default function FusionNettoyagePage() {
   const router = useRouter();

@@ -643,6 +643,16 @@ export default function AnalysePage() {
     }, 80);
   };
 
+  // Liste exacte des graphiques du PowerPoint : même contenu et même ordre qu'à l'écran
+  const graphiquesPourPptx = useMemo(() => {
+    const affiches = (graphiquesAffiches || []).filter((g) => !(graphiquesExclus || []).includes(String(g.id)));
+    const ids = new Set(affiches.map((g) => String(g.id)));
+    const titres = new Set(affiches.map((g) => g.titre));
+    // Un ancien graphique épinglé identique à un graphique affiché ne doit pas apparaître deux fois
+    const autres = (graphiquesEpingles || []).filter((g) => !ids.has(String(g.id)) && !titres.has(g.titre));
+    return [...affiches, ...autres];
+  }, [graphiquesAffiches, graphiquesExclus, graphiquesEpingles]);
+
   const telechargerWord = async () => {
     if (!entetes.length || !corps.length || !resultatActif || exportWordEnCours) return;
     setExportWordEnCours(true);
@@ -776,7 +786,7 @@ export default function AnalysePage() {
 
       // Le PowerPoint reprend les graphiques de l'écran (automatiques puis créés à la main, sauf ceux retirés),
       // suivis des éléments ajoutés depuis les autres modules (prévision, carte, tableau croisé).
-      let graphiquesExport: any[] = [...graphiquesPourPptx] as any;
+      const graphiquesExport: any[] = [...graphiquesPourPptx] as any;
       if (graphiquesExport.length === 0 && estBenchmarkActif) {
         const colCat = noms.find((n) => {
           const idx = entetes.indexOf(n);
@@ -832,15 +842,6 @@ export default function AnalysePage() {
     }
   };
 
-  // Liste exacte des graphiques du PowerPoint : même contenu et même ordre qu'à l'écran
-  const graphiquesPourPptx = useMemo(() => {
-    const affiches = (graphiquesAffiches || []).filter((g) => !(graphiquesExclus || []).includes(String(g.id)));
-    const ids = new Set(affiches.map((g) => String(g.id)));
-    const titres = new Set(affiches.map((g) => g.titre));
-    // Un ancien graphique épinglé identique à un graphique affiché ne doit pas apparaître deux fois
-    const autres = (graphiquesEpingles || []).filter((g) => !ids.has(String(g.id)) && !titres.has(g.titre));
-    return [...affiches, ...autres];
-  }, [graphiquesAffiches, graphiquesExclus, graphiquesEpingles]);
 
   const correlationsStandard = useMemo(() => {
     return [...(resultatActif?.correlations ?? [])]
@@ -1323,7 +1324,6 @@ Ne mets ni introduction ni conclusion.`;
           {noms.map((nom) => {
             const info = resultatActif?.statistiques?.[nom];
             if (!info) return null;
-            const s = info.stats;
             const colIdx = entetes.indexOf(nom);
 
             if (estBenchmarkActif && colIdx !== -1) {
@@ -1753,7 +1753,7 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
   const textePropre = nettoyerNomAffichage(bloc.texte);
   const parties = textePropre.split(/:(.+)/);
   let titre = parties.length > 1 ? parties[0].trim() : "Point clé";
-  let contenu = parties.length > 1 ? parties[1].trim() : textePropre;
+  const contenu = parties.length > 1 ? parties[1].trim() : textePropre;
 
   if (titre.toLowerCase() === "point cle" || titre.toLowerCase() === "point clé") {
     if (/lignes?|champ/i.test(contenu)) titre = "Périmètre audité";

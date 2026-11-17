@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import { Line } from "react-chartjs-2";
 import "./chartSetup";
 import {
@@ -112,7 +112,8 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   } = useData();
 
   const actionEpingler = onEpingler || epinglerGraphique;
-  const [estDejaInclus, setEstDejaInclus] = useState(false);
+  // Graphique (et référence) déjà ajouté au PPTX : tout changement de réglage en produit un nouveau, non inclus
+  const [inclusPour, setInclusPour] = useState<string | null>(null);
 
   // 1. Détection du mode benchmark multi-fichiers
   const estModeComparaison = entetes.includes("Fichier Source");
@@ -179,27 +180,19 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     colonnesDisponibles.mesurables[0] ||
     "";
 
-  const [colonneTemps, setColonneTemps] = useState<string>(defautTemps);
-  const [colonneMesure, setColonneMesure] = useState<string>(defautMesure);
+  const [colonneTempsChoisie, setColonneTemps] = useState<string>(defautTemps);
+  const [colonneMesureChoisie, setColonneMesure] = useState<string>(defautMesure);
   const [modeAgregation, setModeAgregation] = useState<TypeAgregationTemporelle>("somme");
   const [horizon, setHorizon] = useState<number>(3);
   const [ongletExplication, setOngletExplication] = useState<"scenarios" | "calendrier" | "historique" | "guide">("scenarios");
 
-  // Synchronisation et protection contre la sélection identique (colonneTemps === colonneMesure)
-  useEffect(() => {
-    if (!colonneTemps && colonnesDisponibles.temporelles.length > 0) {
-      setColonneTemps(colonnesDisponibles.temporelles[0]);
-    }
-
-    const mesureValide =
-      colonnesDisponibles.mesurables.find((c) => c !== colonneTemps) ||
-      colonnesDisponibles.mesurables[0] ||
-      "";
-
-    if (!colonneMesure || colonneMesure === colonneTemps) {
-      setColonneMesure(mesureValide);
-    }
-  }, [colonnesDisponibles, colonneTemps, colonneMesure]);
+  // Colonnes effectives : choix de l'utilisateur s'il reste valable, sinon une colonne disponible
+  // (jamais la même colonne pour le temps et la mesure). Calculées à chaque rendu, sans effet de synchronisation.
+  const colonneTemps = colonneTempsChoisie || colonnesDisponibles.temporelles[0] || "";
+  const colonneMesure =
+    colonneMesureChoisie && colonneMesureChoisie !== colonneTemps
+      ? colonneMesureChoisie
+      : colonnesDisponibles.mesurables.find((c) => c !== colonneTemps) || colonnesDisponibles.mesurables[0] || "";
 
   const idGraphiqueCourant = useMemo(() => {
     return hashChaineEnNombre(`prevision-${colonneTemps}-${colonneMesure}-${horizon}-${modeAgregation}`);
@@ -208,13 +201,10 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   const estInclusPptx = useMemo(() => {
     return (
       (graphiquesEpingles || []).some((g) => g.id === idGraphiqueCourant) ||
-      estDejaInclus
+      inclusPour === `${idGraphiqueCourant}|${refSource}`
     );
-  }, [graphiquesEpingles, idGraphiqueCourant, estDejaInclus]);
+  }, [graphiquesEpingles, idGraphiqueCourant, inclusPour, refSource]);
 
-  useEffect(() => {
-    setEstDejaInclus(false);
-  }, [idGraphiqueCourant, refSource]);
 
   // Alerte métier si agrégation inappropriée
   const alerteMetier = useMemo(() => {
@@ -582,7 +572,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     if (actionEpingler) {
       actionEpingler(objetExport);
     }
-    setEstDejaInclus(true);
+    setInclusPour(`${idGraphiqueCourant}|${refSource}`);
   };
 
   // Options du graphique de prévision

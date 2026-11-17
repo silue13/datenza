@@ -405,7 +405,7 @@ Le fichier de référence étalon est : « ${refSource} ».
     };
 
     return JSON.stringify(contexteBenchmarkMulti);
-  }, [nomFichier, entetes, corps, resultat, mesures, estBenchmarkActif, sourcesFichiers, refSource, corpsParSource, idxSource]);
+  }, [nomFichier, entetes, corps, resultat, mesures, estBenchmarkActif, sourcesFichiers, refSource, corpsParSource]);
 
   // 3. Suggestions dynamiques selon le mode
   const suggestions = useMemo(() => {

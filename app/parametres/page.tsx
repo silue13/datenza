@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useAppareil } from "../hooks/useAppareil";
 import {
   Check,
-  Download,
   Laptop,
   Monitor,
   Moon,
@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { appliquerTheme, enregistrerTheme, lireTheme, type Theme } from "../../lib/prefs";
 
-type Plateforme = "windows" | "android" | "ios" | "mac";
 
 const THEMES: { id: Theme; nom: string; aide: string; Icone: LucideIcon }[] = [
   { id: "clair", nom: "Clair", aide: "Fond blanc, idéal en plein jour", Icone: Sun },
@@ -58,24 +57,8 @@ function Apercu({ id }: { id: Theme }) {
 export default function ParametresPage() {
   const [theme, setTheme] = useState<Theme>(() => (typeof window === "undefined" ? "systeme" : lireTheme()));
   const [confirme, setConfirme] = useState(false);
-  const [plateforme, setPlateforme] = useState<Plateforme>("windows");
+  const { systeme: plateforme } = useAppareil();
   const [afficherGuideIos, setAfficherGuideIos] = useState(false);
-
-  // Détection automatique du système d'exploitation
-  useEffect(() => {
-    const ua = window.navigator.userAgent.toLowerCase();
-    const estIpadTactile = /macintosh/i.test(ua) && window.navigator.maxTouchPoints > 1;
-
-    if (/iphone|ipad|ipod/i.test(ua) || estIpadTactile) {
-      setPlateforme("ios");
-    } else if (/android/i.test(ua)) {
-      setPlateforme("android");
-    } else if (/macintosh|mac os x/i.test(ua)) {
-      setPlateforme("mac");
-    } else {
-      setPlateforme("windows");
-    }
-  }, []);
 
   function choisirTheme(t: Theme) {
     setTheme(t);
@@ -117,7 +100,7 @@ export default function ParametresPage() {
     <div className="mx-auto max-w-3xl pb-12 font-sans text-slate-800 dark:text-slate-100">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">Paramètres</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Personnalisez l’affichage et l'utilisation de DATENZA.</p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Personnalisez l’affichage et l&apos;utilisation de DATENZA.</p>
       </header>
 
       {/* Section 1 : Thème & Apparence */}
@@ -180,7 +163,7 @@ export default function ParametresPage() {
             <h2 className="text-base font-semibold text-slate-900 dark:text-white">Application DATENZA</h2>
           </div>
           <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-            Installez DATENZA sur vos appareils pour un lancement rapide et direct sans passer par la barre d'adresse d'un navigateur.
+            Installez DATENZA sur vos appareils pour un lancement rapide et direct sans passer par la barre d&apos;adresse d&apos;un navigateur.
           </p>
         </div>
 
@@ -287,7 +270,7 @@ export default function ParametresPage() {
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">Installer sur iOS</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Ajout à l'écran d'accueil</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Ajout à l&apos;écran d&apos;accueil</p>
               </div>
             </div>
 
@@ -309,7 +292,7 @@ export default function ParametresPage() {
                   <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-800 dark:bg-slate-800 dark:text-slate-200">
                     <Share className="h-3 w-3" /> Partager
                   </span>
-                  en bas de l'écran.
+                  en bas de l&apos;écran.
                 </span>
               </li>
               <li className="flex items-start gap-3">
@@ -317,7 +300,7 @@ export default function ParametresPage() {
                   3
                 </span>
                 <span>
-                  Faites défiler vers le bas et sélectionnez <strong>« Sur l'écran d'accueil »</strong>, puis touchez <strong>Ajouter</strong>.
+                  Faites défiler vers le bas et sélectionnez <strong>« Sur l&apos;écran d&apos;accueil »</strong>, puis touchez <strong>Ajouter</strong>.
                 </span>
               </li>
             </ol>
@@ -327,7 +310,7 @@ export default function ParametresPage() {
               onClick={() => setAfficherGuideIos(false)}
               className="mt-6 w-full rounded-xl bg-blue-600 py-2.5 text-xs font-semibold text-white transition hover:bg-blue-700 active:scale-95"
             >
-              J'ai compris
+              J&apos;ai compris
             </button>
           </div>
         </div>

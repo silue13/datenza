@@ -29,20 +29,20 @@ export default function PartagePage() {
 function ProjetPartageVue() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params?.id) ? params.id[0] : params?.id;
-  const [projet, setProjet] = useState<ProjetPartage | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
+  // Résultat mémorisé avec l'identifiant du lien : un autre lien affiche « chargement » sans remise à zéro manuelle
+  const [resultat, setResultat] = useState<{ id: string; projet: ProjetPartage | null; erreur: string | null } | null>(null);
+  const projet = resultat && resultat.id === id ? resultat.projet : null;
+  const erreur = resultat && resultat.id === id ? resultat.erreur : null;
 
   useEffect(() => {
     if (!id) return;
     let annule = false;
-    setProjet(null);
-    setErreur(null);
     chargerPartage(id)
       .then((p) => {
-        if (!annule) setProjet(p);
+        if (!annule) setResultat({ id, projet: p, erreur: null });
       })
       .catch((e) => {
-        if (!annule) setErreur(e instanceof Error ? e.message : "Ce projet partagé est indisponible.");
+        if (!annule) setResultat({ id, projet: null, erreur: e instanceof Error ? e.message : "Ce projet partagé est indisponible." });
       });
     return () => {
       annule = true;

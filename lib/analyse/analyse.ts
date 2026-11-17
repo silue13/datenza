@@ -7,7 +7,6 @@ import {
   nettoyerEntetes,
   estLigneTotal,
   estColonneIdentifiant,
-  estColonneTemporelle,
   type Cellule,
 } from "./utils";
 import { calculerFrequences, calculerTendance, correlationPearson, interpreterCorrelation } from "./stats";

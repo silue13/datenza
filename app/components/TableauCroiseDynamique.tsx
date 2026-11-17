@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Table,
   Sparkles,
@@ -10,7 +10,6 @@ import {
   Presentation,
   ArrowLeftRight,
   LayoutGrid,
-  ListFilter,
 } from "lucide-react";
 import {
   arrondir,
@@ -40,6 +39,16 @@ interface Props {
 }
 
 type AgregationTCD = "Somme" | "Moyenne" | "Nombre" | "Minimum" | "Maximum";
+
+/** Valeur affichée dans une case selon le calcul choisi (fonction pure : utilisable dans les calculs mémorisés). */
+function valeurCase(cell: CelluleTdc | undefined, agregation: AgregationTCD): number {
+  if (!cell || cell.n === 0) return 0;
+  if (agregation === "Nombre") return cell.n;
+  if (agregation === "Moyenne") return cell.nNum ? cell.somme / cell.nNum : 0;
+  if (agregation === "Minimum") return cell.min === Infinity ? 0 : cell.min;
+  if (agregation === "Maximum") return cell.max === -Infinity ? 0 : cell.max;
+  return cell.somme;
+}
 
 function versNombre(v: Cellule): number | null {
   if (estValeurVide(v)) return null;
@@ -129,7 +138,8 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
   const idxColonne = entetes.indexOf(colonneColonne);
   const idxMesure = entetes.indexOf(colonneMesure);
 
-  const [estDejaInclus, setEstDejaInclus] = useState(false);
+  // Tableau déjà ajouté au PPTX : tout changement de réglage ou de données en produit un nouveau, non inclus
+  const [inclus, setInclus] = useState<{ cle: string; corps: Cellule[][] } | null>(null);
 
   // Inverser instantanément Lignes et Colonnes
   const intervertirDimensions = () => {
@@ -254,22 +264,13 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       };
     }, [idxLigne, idxColonne, idxMesure, corps, agregation]);
 
-  // Tout changement de réglage ou de données produit un nouveau tableau, pas encore ajouté au PPTX
-  useEffect(() => {
-    setEstDejaInclus(false);
-  }, [idxLigne, idxColonne, idxMesure, corps, agregation]);
+  const cleTableau = `${idxLigne}|${idxColonne}|${idxMesure}|${agregation}`;
+  const estDejaInclus = inclus !== null && inclus.cle === cleTableau && inclus.corps === corps;
 
   /** Vrai si la case n'a rien à afficher : aucune ligne, ou aucune valeur numérique pour un calcul sur la mesure. */
   const caseVide = (cell?: CelluleTdc) => !cell || cell.n === 0 || (agregation !== "Nombre" && cell.nNum === 0);
 
-  const calculerValeur = (cell?: CelluleTdc) => {
-    if (!cell || cell.n === 0) return 0;
-    if (agregation === "Nombre") return cell.n;
-    if (agregation === "Moyenne") return cell.nNum ? cell.somme / cell.nNum : 0;
-    if (agregation === "Minimum") return cell.min === Infinity ? 0 : cell.min;
-    if (agregation === "Maximum") return cell.max === -Infinity ? 0 : cell.max;
-    return cell.somme;
-  };
+  const calculerValeur = (cell?: CelluleTdc) => valeurCase(cell, agregation);
 
   const estComparatifActif = modalitesColonnes.length >= 2 && (colonneColonne === "Fichier Source" || estModeComparaison);
   const colRef = useMemo(
@@ -316,7 +317,7 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       },
     });
 
-    setEstDejaInclus(true);
+    setInclus({ cle: cleTableau, corps });
   };
 
   const syntheseComparatif = useMemo(() => {
@@ -338,7 +339,7 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       let maxValLigne = -Infinity;
 
       modalitesColonnes.forEach((c) => {
-        const val = calculerValeur(grille.get(lig)?.get(c));
+        const val = valeurCase(grille.get(lig)?.get(c), agregation);
         if (val > maxValLigne) {
           maxValLigne = val;
           leaderLigne = c;
@@ -347,8 +348,8 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
 
       if (victoiresParColonne[leaderLigne] !== undefined) victoiresParColonne[leaderLigne]++;
 
-      const v1 = calculerValeur(grille.get(lig)?.get(colRef));
-      const v2 = calculerValeur(grille.get(lig)?.get(colCible));
+      const v1 = valeurCase(grille.get(lig)?.get(colRef), agregation);
+      const v2 = valeurCase(grille.get(lig)?.get(colCible), agregation);
       const diff = Math.round((v2 - v1) * 100) / 100;
       const pct = v1 > 0 ? Math.round((diff / v1) * 1000) / 10 : 0;
 
@@ -375,7 +376,7 @@ export default function TableauCroiseDynamique({ entetes, corps, onAjouterPptx }
       leaderLignes,
       totalLignes: modalitesLignes.length,
     };
-  }, [estComparatifActif, colRef, colCible, totauxColonnes, modalitesColonnes, modalitesLignes, grille]);
+  }, [estComparatifActif, colRef, colCible, totauxColonnes, modalitesColonnes, modalitesLignes, grille, agregation]);
 
   return (
     <div className="bloc-tdc-print print-eviter-coupure bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-5 shadow-sm">

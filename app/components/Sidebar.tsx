@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useAppareil } from "../hooks/useAppareil";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -31,17 +32,9 @@ const navigation = [
 export default function Sidebar() {
   const pathname = usePathname();
   const [estReduit, setEstReduit] = useState<boolean>(false);
-  const [os, setOs] = useState<"windows" | "android">("windows");
-
   // Détection automatique de l'appareil (Windows ou Android)
-  useEffect(() => {
-    const ua = window.navigator.userAgent.toLowerCase();
-    if (/android/i.test(ua)) {
-      setOs("android");
-    } else {
-      setOs("windows");
-    }
-  }, []);
+  const { systeme } = useAppareil();
+  const os: "windows" | "android" = systeme === "android" ? "android" : "windows";
 
   const estAndroid = os === "android";
   const lienTelechargement = estAndroid ? "/datenza.apk?v=2" : "/datenza.msi?v=2";

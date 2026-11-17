@@ -12,7 +12,6 @@ import {
   Presentation,
   Loader2,
   RefreshCw,
-  TrendingUp,
   BarChart3,
   FileText,
   ImageDown,
@@ -39,7 +38,6 @@ import {
   formaterComplet,
   libellePeriode,
   type AgregationGraphique,
-  type SerieGraphique,
 } from "../../lib/analyse/graphique";
 import {
   calculerNuage,
@@ -104,9 +102,6 @@ const nomMesure = (agg: Agregation, colonne: string) =>
   agg === "Nombre" ? "Effectif" : agg === "Pourcentage" ? LIBELLES_AGREGATION.Pourcentage : `${LIBELLES_AGREGATION[agg]} — ${colonne}`;
 
 const estCirculaire = (type: TypeGraphique) => type === "Camembert" || type === "Anneau";
-
-/** Libellés d'axe lisibles : « 2024-03 » devient « mars 2024 ». */
-const libellesSerie = (s: SerieGraphique) => s.points.map((p) => (s.granularite ? libellePeriode(p.label) : p.label));
 
 const NOMS_GRANULARITE: Record<string, string> = { jour: "par jour", mois: "par mois", trimestre: "par trimestre", annee: "par année" };
 

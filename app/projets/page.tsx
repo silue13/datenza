@@ -40,41 +40,56 @@ export default function ProjetsPage() {
   const { nomFichier, aDesDonnees, projetCourant, definirProjetCourant, obtenirEtat, ouvrirEtat, restaurationTerminee, graphiquesAffiches, graphiquesExclus } =
     useData();
 
-  const [projets, setProjets] = useState<ProjetResume[]>([]);
-  const [listeChargee, setListeChargee] = useState(false);
+  const [projetsCharges, setProjets] = useState<ProjetResume[]>([]);
+  // Compte pour lequel la liste a été chargée : après un changement de compte, l'ancienne liste n'est plus montrée
+  const [chargePour, setChargePour] = useState<string | null>(null);
   const [retour, setRetour] = useState<Retour>(null);
   /** Action en cours : "enregistrement" ou l'identifiant du projet concerné. */
   const [occupe, setOccupe] = useState<string | null>(null);
-  const [nom, setNom] = useState("");
+  // Nom proposé : celui du projet ouvert, sinon le nom du fichier ; une saisie ne vaut que pour ce projet et ce fichier
+  const [nomSaisi, setNomSaisi] = useState<{ cle: string; valeur: string } | null>(null);
   const [aConfirmer, setAConfirmer] = useState<{ id: string; action: "supprimer" | "ouvrir" } | null>(null);
   const [renommage, setRenommage] = useState<{ id: string; nom: string } | null>(null);
   const [copie, setCopie] = useState<string | null>(null);
 
   const idUtilisateur = utilisateur?.id ?? null;
 
-  const rafraichir = useCallback(async () => {
+  const rafraichir = useCallback(async (pour: string) => {
     try {
       setProjets(await listerProjets());
     } catch (e) {
       setRetour({ type: "erreur", texte: message(e) });
     } finally {
-      setListeChargee(true);
+      setChargePour(pour);
     }
   }, []);
 
+  // Chargement à la connexion ; une réponse arrivée après un changement de compte est ignorée
   useEffect(() => {
-    if (!idUtilisateur) {
-      setProjets([]);
-      setListeChargee(false);
-      return;
-    }
-    void rafraichir();
-  }, [idUtilisateur, rafraichir]);
+    if (!idUtilisateur) return;
+    let annule = false;
+    listerProjets()
+      .then((liste) => {
+        if (!annule) setProjets(liste);
+      })
+      .catch((e) => {
+        if (!annule) setRetour({ type: "erreur", texte: message(e) });
+      })
+      .finally(() => {
+        if (!annule) setChargePour(idUtilisateur);
+      });
+    return () => {
+      annule = true;
+    };
+  }, [idUtilisateur]);
 
-  // Nom proposé : celui du projet ouvert, sinon le nom du fichier
-  useEffect(() => {
-    setNom(projetCourant?.nom ?? (aDesDonnees ? nomParDefaut(nomFichier) : ""));
-  }, [projetCourant, aDesDonnees, nomFichier]);
+  const listeChargee = !!idUtilisateur && chargePour === idUtilisateur;
+  const projets = listeChargee ? projetsCharges : [];
+
+  const cleNom = `${projetCourant?.id ?? ""}|${projetCourant?.nom ?? ""}|${aDesDonnees}|${nomFichier}`;
+  const nomPropose = projetCourant?.nom ?? (aDesDonnees ? nomParDefaut(nomFichier) : "");
+  const nom = nomSaisi?.cle === cleNom ? nomSaisi.valeur : nomPropose;
+  const setNom = (valeur: string) => setNomSaisi({ cle: cleNom, valeur });
 
   async function enregistrer(commeNouveau: boolean) {
     if (occupe) return;
@@ -87,7 +102,7 @@ export default function ProjetsPage() {
       const p = await enregistrerProjet(obtenirEtat(), nom, cible, apercu);
       definirProjetCourant({ id: p.id, nom: p.nom });
       setRetour({ type: "ok", texte: cible ? `« ${p.nom} » a été mis à jour.` : `« ${p.nom} » est enregistré dans votre compte.` });
-      await rafraichir();
+      if (idUtilisateur) await rafraichir(idUtilisateur);
     } catch (e) {
       setRetour({ type: "erreur", texte: message(e) });
     } finally {
@@ -297,7 +312,7 @@ export default function ProjetsPage() {
           <h2 className="text-sm font-bold text-slate-900 dark:text-white">
             Projets enregistrés{listeChargee ? ` (${projets.length})` : ""}
           </h2>
-          <button type="button" onClick={() => void rafraichir()} className={BOUTON_SECONDAIRE} title="Actualiser la liste">
+          <button type="button" onClick={() => idUtilisateur && void rafraichir(idUtilisateur)} className={BOUTON_SECONDAIRE} title="Actualiser la liste">
             <RefreshCw className="w-3.5 h-3.5" />
             Actualiser
           </button>

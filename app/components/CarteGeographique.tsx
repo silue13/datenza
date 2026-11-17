@@ -112,21 +112,6 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     };
   }, []);
 
-  const estModeComparaison = entetes.includes("Fichier Source");
-  const idxSource = entetes.indexOf("Fichier Source");
-
-  const sourcesFichiers = useMemo(() => {
-    if (!estModeComparaison || idxSource === -1) return [];
-    return Array.from(new Set(corps.map((l) => String(l[idxSource] ?? "").trim()).filter(Boolean)));
-  }, [estModeComparaison, idxSource, corps]);
-
-  const estBenchmarkActif = estModeComparaison && sourcesFichiers.length >= 2;
-
-  const [sourceRefChoisie, setSourceRefChoisie] = useState<string>("");
-  const refSource = sourcesFichiers.includes(sourceRefChoisie)
-    ? sourceRefChoisie
-    : sourcesFichiers[0] || "";
-
   // 1. DÉTECTION DU FORMAT MATRICIEL
   const colonnesEnTetesGeographiques = useMemo(() => {
     return entetes.filter((h) => {

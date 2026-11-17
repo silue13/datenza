@@ -1,42 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Download, Share, PlusSquare, X, Smartphone, Monitor, Laptop } from "lucide-react";
-import { Capacitor } from "@capacitor/core";
-
-type Plateforme = "android" | "ios" | "windows" | "mac";
+import { useAppareil } from "../hooks/useAppareil";
 
 export default function BoutonInstallerApp() {
-  const [estInstalle, setEstInstalle] = useState(false);
-  const [os, setOs] = useState<Plateforme>("windows");
+  const { systeme: os, autonome: estInstalle } = useAppareil();
   const [modalIosOuverte, setModalIosOuverte] = useState(false);
-
-  useEffect(() => {
-    // 1. Détection mode autonome / app déjà installée
-    const enModeAutonome =
-      (typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches) ||
-      (typeof window !== "undefined" && (window.navigator as unknown as { standalone?: boolean }).standalone === true) ||
-      (typeof window !== "undefined" && Capacitor.isNativePlatform());
-
-    if (enModeAutonome) {
-      setEstInstalle(true);
-      return;
-    }
-
-    // 2. Détection du système d'exploitation
-    const userAgent = window.navigator.userAgent.toLowerCase();
-    const estIpadTactile = /macintosh/i.test(userAgent) && window.navigator.maxTouchPoints > 1;
-
-    if (/iphone|ipad|ipod/.test(userAgent) || estIpadTactile) {
-      setOs("ios");
-    } else if (/android/.test(userAgent)) {
-      setOs("android");
-    } else if (/macintosh|mac os x/.test(userAgent)) {
-      setOs("mac");
-    } else {
-      setOs("windows");
-    }
-  }, []);
 
   if (estInstalle) return null;
 
