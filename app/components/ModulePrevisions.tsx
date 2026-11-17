@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import { Line } from "react-chartjs-2";
 import "./chartSetup";
 import {
@@ -33,13 +33,17 @@ import {
   estColonneIdentifiant,
   estColonneTemporelle,
 } from "@/lib/analyse/utils";
-import { useData } from "../context/DataContext";
+import { useData, type GraphiqueEpingle } from "../context/DataContext";
+import type { Chart, ChartDataset, LegendItem, TooltipItem } from "chart.js";
+
+/** Jeu de données d'une courbe de prévision ; indexDerniereDonnee situe la dernière valeur observée. */
+type JeuPrevision = ChartDataset<"line", (number | null)[]> & { label: string; indexDerniereDonnee?: number };
 import { formaterCompact, libellePeriode } from "../../lib/analyse/graphique";
 
 interface ModulePrevisionsProps {
   entetes: string[];
   corps: Cellule[][];
-  onEpingler?: (graphique: any) => void;
+  onEpingler?: (graphique: GraphiqueEpingle) => void;
 }
 
 interface SourceCalculee {
@@ -77,8 +81,8 @@ function hashChaineEnNombre(str: string): number {
  */
 const MARQUEUR_PREVISION = {
   id: "marqueurPrevision",
-  afterDatasetsDraw(chart: any) {
-    const index = chart.data?.datasets?.find((d: any) => typeof d.indexDerniereDonnee === "number")?.indexDerniereDonnee;
+  afterDatasetsDraw(chart: Chart) {
+    const index = (chart.data?.datasets as JeuPrevision[] | undefined)?.find((d) => typeof d.indexDerniereDonnee === "number")?.indexDerniereDonnee;
     if (typeof index !== "number" || index < 0 || !chart.scales?.x || !chart.chartArea) return;
     const x = chart.scales.x.getPixelForValue(index);
     const { top, bottom } = chart.chartArea;
@@ -112,7 +116,8 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   } = useData();
 
   const actionEpingler = onEpingler || epinglerGraphique;
-  const [estDejaInclus, setEstDejaInclus] = useState(false);
+  // Graphique (et référence) déjà ajouté au PPTX : tout changement de réglage en produit un nouveau, non inclus
+  const [inclusPour, setInclusPour] = useState<string | null>(null);
 
   // 1. Détection du mode benchmark multi-fichiers
   const estModeComparaison = entetes.includes("Fichier Source");
@@ -179,27 +184,19 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     colonnesDisponibles.mesurables[0] ||
     "";
 
-  const [colonneTemps, setColonneTemps] = useState<string>(defautTemps);
-  const [colonneMesure, setColonneMesure] = useState<string>(defautMesure);
+  const [colonneTempsChoisie, setColonneTemps] = useState<string>(defautTemps);
+  const [colonneMesureChoisie, setColonneMesure] = useState<string>(defautMesure);
   const [modeAgregation, setModeAgregation] = useState<TypeAgregationTemporelle>("somme");
   const [horizon, setHorizon] = useState<number>(3);
   const [ongletExplication, setOngletExplication] = useState<"scenarios" | "calendrier" | "historique" | "guide">("scenarios");
 
-  // Synchronisation et protection contre la sélection identique (colonneTemps === colonneMesure)
-  useEffect(() => {
-    if (!colonneTemps && colonnesDisponibles.temporelles.length > 0) {
-      setColonneTemps(colonnesDisponibles.temporelles[0]);
-    }
-
-    const mesureValide =
-      colonnesDisponibles.mesurables.find((c) => c !== colonneTemps) ||
-      colonnesDisponibles.mesurables[0] ||
-      "";
-
-    if (!colonneMesure || colonneMesure === colonneTemps) {
-      setColonneMesure(mesureValide);
-    }
-  }, [colonnesDisponibles, colonneTemps, colonneMesure]);
+  // Colonnes effectives : choix de l'utilisateur s'il reste valable, sinon une colonne disponible
+  // (jamais la même colonne pour le temps et la mesure). Calculées à chaque rendu, sans effet de synchronisation.
+  const colonneTemps = colonneTempsChoisie || colonnesDisponibles.temporelles[0] || "";
+  const colonneMesure =
+    colonneMesureChoisie && colonneMesureChoisie !== colonneTemps
+      ? colonneMesureChoisie
+      : colonnesDisponibles.mesurables.find((c) => c !== colonneTemps) || colonnesDisponibles.mesurables[0] || "";
 
   const idGraphiqueCourant = useMemo(() => {
     return hashChaineEnNombre(`prevision-${colonneTemps}-${colonneMesure}-${horizon}-${modeAgregation}`);
@@ -208,13 +205,10 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   const estInclusPptx = useMemo(() => {
     return (
       (graphiquesEpingles || []).some((g) => g.id === idGraphiqueCourant) ||
-      estDejaInclus
+      inclusPour === `${idGraphiqueCourant}|${refSource}`
     );
-  }, [graphiquesEpingles, idGraphiqueCourant, estDejaInclus]);
+  }, [graphiquesEpingles, idGraphiqueCourant, inclusPour, refSource]);
 
-  useEffect(() => {
-    setEstDejaInclus(false);
-  }, [idGraphiqueCourant, refSource]);
 
   // Alerte métier si agrégation inappropriée
   const alerteMetier = useMemo(() => {
@@ -426,7 +420,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
   }, [sourceActive]);
 
   // 5. Préparation des datasets Chart.js
-  let chartData: { labels: string[]; datasets: any[] } = { labels: [], datasets: [] };
+  let chartData: { labels: string[]; datasets: JeuPrevision[] } = { labels: [], datasets: [] };
 
   if (estBenchmarkActif && calculsComparatifs && calculsComparatifs.possible) {
     const { sources } = calculsComparatifs;
@@ -436,7 +430,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     const tousLabels = [...labelsHisto, ...labelsProj];
     const nbHisto = labelsHisto.length;
 
-    const datasets: any[] = [];
+    const datasets: JeuPrevision[] = [];
 
     sources.forEach((s, idx) => {
       const palette = PALETTE_COMPARAISON[idx % PALETTE_COMPARAISON.length];
@@ -483,7 +477,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           pointBackgroundColor: "#2563eb",
           borderWidth: 2.5,
           // Courbe « monotone » : elle passe par les points sans dessiner de creux ni de bosses qui n'existent pas
-          cubicInterpolationMode: "monotone",
+          cubicInterpolationMode: "monotone" as const,
           fill: "origin",
           pointRadius: nbH > 48 ? 0 : 3,
           pointHoverRadius: 5,
@@ -500,7 +494,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
                 backgroundColor: "transparent",
                 borderWidth: 1.5,
                 borderDash: [3, 3],
-                cubicInterpolationMode: "monotone",
+                cubicInterpolationMode: "monotone" as const,
                 pointRadius: 0,
                 pointHoverRadius: 0,
                 order: 3,
@@ -514,7 +508,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           backgroundColor: "#ea580c",
           borderDash: [6, 4],
           borderWidth: 2.5,
-          cubicInterpolationMode: "monotone",
+          cubicInterpolationMode: "monotone" as const,
           pointRadius: [...vide(nbH - 1), 0, ...res.projections.map(() => 4)],
           pointHoverRadius: 6,
           pointBackgroundColor: "#ea580c",
@@ -525,7 +519,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           data: [...vide(nbH - 1), dernierReel, ...res.projections.map((p) => p.borneHaute)],
           borderColor: "transparent",
           backgroundColor: "rgba(234, 88, 12, 0.14)",
-          cubicInterpolationMode: "monotone",
+          cubicInterpolationMode: "monotone" as const,
           fill: "+1",
           pointRadius: 0,
           pointHoverRadius: 0,
@@ -536,7 +530,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
           data: [...vide(nbH - 1), dernierReel, ...res.projections.map((p) => p.borneBasse)],
           borderColor: "transparent",
           backgroundColor: "transparent",
-          cubicInterpolationMode: "monotone",
+          cubicInterpolationMode: "monotone" as const,
           pointRadius: 0,
           pointHoverRadius: 0,
           order: 5,
@@ -554,8 +548,9 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       .filter((d) => !d.label.includes("Borne basse") && !d.label.includes("Intervalle") && !d.label.startsWith("Modèle"))
       .map((d) => ({
         label: d.label,
-        data: d.data.map((v: any) => (v === null || v === undefined ? 0 : Number(v) || 0)),
-        borderColor: d.borderColor || "#2563EB",
+        data: d.data.map((v) => (v === null || v === undefined ? 0 : Number(v) || 0)),
+        borderColor: typeof d.borderColor === "string" ? d.borderColor : "#2563EB",
+        backgroundColor: typeof d.borderColor === "string" ? d.borderColor : "#2563EB",
       }));
 
     const titrePptx = estBenchmarkActif
@@ -569,7 +564,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       interpretation = `Projection à +${horizon} périodes.\nFiabilité : ${sourceActive.metriques.fiabilite} (R² = ${sourceActive.metriques.r2}).\nAtterrissage projeté : ${calculsDecisionnels.cibleFinale.valeurPrevue.toLocaleString("fr-FR")} (${sourceActive.metriques.variationEstimeePct >= 0 ? "+" : ""}${sourceActive.metriques.variationEstimeePct} %). Seuil de vigilance pour la prochaine période : ${calculsDecisionnels.seuilAlerteJ30.toLocaleString("fr-FR")}.`;
     }
 
-    const objetExport: any = {
+    const objetExport: GraphiqueEpingle = {
       id: idGraphiqueCourant,
       titre: titrePptx,
       type: "Courbe",
@@ -582,7 +577,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     if (actionEpingler) {
       actionEpingler(objetExport);
     }
-    setEstDejaInclus(true);
+    setInclusPour(`${idGraphiqueCourant}|${refSource}`);
   };
 
   // Options du graphique de prévision
@@ -600,7 +595,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
         position: "top" as const,
         align: "end" as const,
         labels: {
-          filter: (item: any) => !item.text.includes("Borne basse"),
+          filter: (item: LegendItem) => !item.text.includes("Borne basse"),
           usePointStyle: true,
           boxWidth: 7,
           boxHeight: 7,
@@ -610,18 +605,18 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       },
       tooltip: {
         // Les deux bornes ne sont pas listées une par une : elles sont résumées sous la projection
-        filter: (item: any) => !/Borne basse|Intervalle/.test(item.dataset.label ?? "") && item.parsed.y !== null,
+        filter: (item: TooltipItem<"line">) => !/Borne basse|Intervalle/.test(item.dataset.label ?? "") && item.parsed.y !== null,
         callbacks: {
-          label: (context: any) => {
+          label: (context: TooltipItem<"line">) => {
             const v = context.parsed.y;
             return v !== null ? `${context.dataset.label} : ${v.toLocaleString("fr-FR")}` : "";
           },
-          afterBody: (items: any[]) => {
+          afterBody: (items: TooltipItem<"line">[]) => {
             const i = items[0]?.dataIndex;
             const jeux = items[0]?.chart?.data?.datasets ?? [];
-            const haut = jeux.find((d: any) => String(d.label).includes("Intervalle"))?.data?.[i];
-            const bas = jeux.find((d: any) => String(d.label).includes("Borne basse"))?.data?.[i];
-            const projection = jeux.find((d: any) => d.label === "Projection")?.data?.[i];
+            const haut = jeux.find((d) => String(d.label).includes("Intervalle"))?.data?.[i];
+            const bas = jeux.find((d) => String(d.label).includes("Borne basse"))?.data?.[i];
+            const projection = jeux.find((d) => d.label === "Projection")?.data?.[i];
             const observe = jeux[0]?.data?.[i];
             if (typeof haut !== "number" || typeof bas !== "number" || typeof projection !== "number" || typeof observe === "number") return "";
             return `Fourchette probable (95 %) : ${bas.toLocaleString("fr-FR")} à ${haut.toLocaleString("fr-FR")}`;

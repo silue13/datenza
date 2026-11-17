@@ -121,7 +121,7 @@ export function verifierQuestionLieeAuxFichier(
   const qNorm = normaliserTexte(qBrute);
 
   // 3. Détection d'un signal analytique ou comparatif
-  let signal = RE_SIGNAUX.some((re) => re.test(qNorm));
+  const signal = RE_SIGNAUX.some((re) => re.test(qNorm));
   if (signal) return { ok: true };
 
   // 4. Détection via les métadonnées du fichier (colonnes, fichiers comparés, valeurs)

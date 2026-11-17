@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Fichiers servis tels quels (service worker, script de génération d'icônes) : pas du code de l'application
+    "public/**",
+    // Projet Android généré par Capacitor
+    "android/**",
   ]),
 ]);
 

@@ -1,7 +1,7 @@
 name: Vérifications
 
 # À chaque envoi sur une branche et à chaque pull request vers main : le code doit compiler,
-# passer les tests et se construire comme sur Vercel. Une PR au rouge ne doit pas être fusionnée.
+# respecter le lint, passer les tests et se construire comme sur Vercel. Une PR au rouge ne doit pas être fusionnée.
 on:
   push:
   pull_request:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   verifier:
-    name: Typage, tests et build
+    name: Typage, lint, tests et build
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -37,6 +37,9 @@ jobs:
 
       - name: Vérifier le typage
         run: npx tsc --noEmit -p .
+
+      - name: Vérifier le lint (aucune erreur ni avertissement)
+        run: npx eslint . --max-warnings=0
 
       - name: Lancer les tests
         run: npx vitest run

@@ -122,7 +122,14 @@ export function jsonVersLignes(texte: string): unknown[][] {
     return sortie;
   };
   const plats = (liste as unknown[]).map((o) => aplatir(o));
-  for (const p of plats) for (const k of Object.keys(p)) if (!vues.has(k)) (vues.add(k), cles.push(k));
+  for (const p of plats) {
+    for (const k of Object.keys(p)) {
+      if (!vues.has(k)) {
+        vues.add(k);
+        cles.push(k);
+      }
+    }
+  }
   return [cles, ...plats.map((p) => cles.map((k) => p[k] ?? ""))];
 }
 
@@ -241,11 +248,9 @@ function normaliserMilliersPoint(corps: Cellule[][], j: number, nom: string): bo
   let numCourt = 0;
   let entiers = 0;
   let maxEntier = 0;
-  let total = 0;
   for (const l of corps) {
     const v = l[j];
     if (estValeurVide(v)) continue;
-    total++;
     if (typeof v === "number") {
       if (Number.isInteger(v)) {
         entiers++;

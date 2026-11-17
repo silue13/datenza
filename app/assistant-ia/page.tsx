@@ -294,7 +294,7 @@ export default function AssistantIAPage() {
     });
 
     // Profilage complet des colonnes numériques par source
-    const indicateursNumeriques: Record<string, any> = {};
+    const indicateursNumeriques: Record<string, unknown> = {};
 
     colonnesUtiles.forEach((col) => {
       const idx = entetes.indexOf(col);
@@ -361,7 +361,7 @@ export default function AssistantIAPage() {
     });
 
     // Profilage des colonnes catégorielles
-    const dominancesCategorielles: Record<string, any> = {};
+    const dominancesCategorielles: Record<string, unknown> = {};
     colonnesUtiles.forEach((col) => {
       if (indicateursNumeriques[col]) return;
       const idx = entetes.indexOf(col);
@@ -405,7 +405,7 @@ Le fichier de référence étalon est : « ${refSource} ».
     };
 
     return JSON.stringify(contexteBenchmarkMulti);
-  }, [nomFichier, entetes, corps, resultat, mesures, estBenchmarkActif, sourcesFichiers, refSource, corpsParSource, idxSource]);
+  }, [nomFichier, entetes, corps, resultat, mesures, estBenchmarkActif, sourcesFichiers, refSource, corpsParSource]);
 
   // 3. Suggestions dynamiques selon le mode
   const suggestions = useMemo(() => {

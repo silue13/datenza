@@ -7,8 +7,8 @@ import {
   nettoyerEntetes,
   estLigneTotal,
   estColonneIdentifiant,
-  estColonneTemporelle,
   type Cellule,
+  type LigneObjet,
 } from "./utils";
 import { calculerFrequences, calculerTendance, correlationPearson, interpreterCorrelation } from "./stats";
 import { calculerMesures } from "./mesures";
@@ -16,7 +16,7 @@ import { corrigerHolm, pCorrelation, SEUIL_SIGNIFICATIVITE } from "./inference";
 import { executerTestsStatistiques } from "./testsStatistiques";
 import { detecterOrdreDate, detecterTypeColonne, lireDateOuAnnee, normaliser, type TypeColonne } from "./detection";
 import { clePeriode } from "./dates";
-import { analyserNettoyage, appliquerCorrections } from "./nettoyage";
+import { analyserNettoyage, appliquerCorrections, type CorrectionSaisie } from "./nettoyage";
 
 const MAX_COLS_CORR = 12;
 const MAX_LIGNES_CORR = 50000;
@@ -50,7 +50,7 @@ export function analyserColonnes(entetesBrutes: string[], corpsBrut: Cellule[][]
   // 3. Échantillonnage performant pour la détection des corrections de casse
   const echantillonLignes = corpsFiltre.slice(0, 3000);
   const donneesObjetsEchantillon = echantillonLignes.map((ligne) => {
-    const obj: Record<string, any> = {};
+    const obj: LigneObjet = {};
     entetes.forEach((h, idx) => {
       obj[h] = ligne[idx];
     });
@@ -58,7 +58,7 @@ export function analyserColonnes(entetesBrutes: string[], corpsBrut: Cellule[][]
   });
 
   const rapportNettoyage = analyserNettoyage(donneesObjetsEchantillon);
-  const corrections: { colonne: string; valeurOriginale: any; valeurSuggeree: any }[] = [];
+  const corrections: CorrectionSaisie[] = [];
 
   Object.values(rapportNettoyage.suggestionsParColonne).forEach((suggestions) => {
     suggestions.forEach((s) => {
@@ -75,7 +75,7 @@ export function analyserColonnes(entetesBrutes: string[], corpsBrut: Cellule[][]
   let corpsNettoye = corpsFiltre;
   if (corrections.length > 0) {
     const donneesCompletesObjets = corpsFiltre.map((ligne) => {
-      const obj: Record<string, any> = {};
+      const obj: LigneObjet = {};
       entetes.forEach((h, idx) => {
         obj[h] = ligne[idx];
       });

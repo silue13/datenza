@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Bar, Line, Pie, Doughnut, Scatter } from "react-chartjs-2";
+import type { ActiveElement, ChartData, ChartDataset, ChartEvent, ChartOptions, TooltipItem } from "chart.js";
+import type { Context as ContexteEtiquette } from "chartjs-plugin-datalabels";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -12,7 +14,6 @@ import {
   Presentation,
   Loader2,
   RefreshCw,
-  TrendingUp,
   BarChart3,
   FileText,
   ImageDown,
@@ -39,7 +40,6 @@ import {
   formaterComplet,
   libellePeriode,
   type AgregationGraphique,
-  type SerieGraphique,
 } from "../../lib/analyse/graphique";
 import {
   calculerNuage,
@@ -104,9 +104,6 @@ const nomMesure = (agg: Agregation, colonne: string) =>
   agg === "Nombre" ? "Effectif" : agg === "Pourcentage" ? LIBELLES_AGREGATION.Pourcentage : `${LIBELLES_AGREGATION[agg]} — ${colonne}`;
 
 const estCirculaire = (type: TypeGraphique) => type === "Camembert" || type === "Anneau";
-
-/** Libellés d'axe lisibles : « 2024-03 » devient « mars 2024 ». */
-const libellesSerie = (s: SerieGraphique) => s.points.map((p) => (s.granularite ? libellePeriode(p.label) : p.label));
 
 const NOMS_GRANULARITE: Record<string, string> = { jour: "par jour", mois: "par mois", trimestre: "par trimestre", annee: "par année" };
 
@@ -215,7 +212,18 @@ function calculerLargeurConteneur(nbPoints: number): string {
 // - camembert / anneau : aucun axe, part en % sur chaque secteur, légende à droite ;
 // - axes en notation compacte (1,2 M), infobulles avec la valeur complète ;
 // - étiquettes de valeurs affichées quand le graphique reste lisible (12 points au plus).
-function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: (index: number) => void): any {
+type TypeCartesienOuCirculaire = "bar" | "line" | "pie" | "doughnut";
+
+/**
+ * Un graphique épinglé a la forme des données Chart.js (labels, datasets) plus des champs propres à DATENZA
+ * (titre, constats, filtres…). On transmet le même objet plutôt qu'une copie : une copie à chaque rendu
+ * relancerait l'animation du graphique à chaque mise à jour de la page.
+ */
+function donneesGraphique<T extends TypeCartesienOuCirculaire>(g: GraphiqueEpingle): ChartData<T> {
+  return g as unknown as ChartData<T>;
+}
+
+function creerOptionsChart<T extends TypeCartesienOuCirculaire>(g: GraphiqueEpingle, nbPoints: number, onSelection?: (index: number) => void): ChartOptions<T> {
   const circulaire = estCirculaire(g.type);
   const horizontal = !!g.horizontal && g.type === "Barres";
   const empile = !!g.empile && !circulaire;
@@ -233,10 +241,10 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
     indexAxis: horizontal ? ("y" as const) : ("x" as const),
     interaction: { mode: circulaire ? ("nearest" as const) : ("index" as const), intersect: circulaire, axis: horizontal ? ("y" as const) : ("x" as const) },
     // Filtrage croisé : un clic sur une barre, un point ou un secteur filtre tous les graphiques
-    onClick: (_evt: unknown, elements: { index: number }[]) => {
+    onClick: (_evt: ChartEvent, elements: ActiveElement[]) => {
       if (cliquable && elements.length && g.filtresClic?.[elements[0].index]) onSelection!(elements[0].index);
     },
-    onHover: (evt: any, elements: { index: number }[]) => {
+    onHover: (evt: ChartEvent, elements: ActiveElement[]) => {
       const cible = evt?.native?.target as HTMLElement | undefined;
       if (cible) cible.style.cursor = cliquable && elements.length && g.filtresClic?.[elements[0].index] ? "pointer" : "default";
     },
@@ -258,7 +266,7 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
       },
       datalabels: circulaire
         ? {
-            display: (ctx: any) => total > 0 && Math.abs(ctx.dataset.data[ctx.dataIndex] ?? 0) / total >= 0.04,
+            display: (ctx: ContexteEtiquette) => total > 0 && Math.abs(Number(ctx.dataset.data[ctx.dataIndex] ?? 0)) / total >= 0.04,
             color: "#ffffff",
             font: { size: 10, weight: "bold" as const },
             formatter: (v: number | null) => (v === null || !total ? "" : pourcent(v)),
@@ -276,8 +284,10 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
       tooltip: {
         enabled: true,
         callbacks: {
-          label: (ctx: any) => {
-            const v: number | null | undefined = circulaire ? ctx.parsed : horizontal ? ctx.parsed?.x : ctx.parsed?.y;
+          label: (ctx: TooltipItem<TypeCartesienOuCirculaire>) => {
+            // Camembert : un nombre ; barres et courbes : un point { x, y }
+            const p = ctx.parsed as number | { x: number; y: number } | null;
+            const v: number | null | undefined = typeof p === "number" ? p : horizontal ? p?.x : p?.y;
             if (v === null || v === undefined || Number.isNaN(v)) return `${ctx.dataset.label ?? ""} : aucune donnée`;
             const nom = circulaire ? ctx.label : ctx.dataset.label;
             return `${nom} : ${formaterComplet(v)}${circulaire && total ? ` (${pourcent(v)})` : ""}`;
@@ -287,7 +297,8 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
     },
   };
 
-  if (circulaire) return commun;
+  // Options construites ci-dessus, communes aux quatre types : on les annonce pour le type demandé
+  if (circulaire) return commun as unknown as ChartOptions<T>;
 
   const titreAxe = (texte?: string) => ({ display: !!texte, text: texte ?? "", color: "#64748b", font: { size: 10, weight: "bold" as const } });
   const axeValeurs = {
@@ -321,15 +332,18 @@ function creerOptionsChart(g: GraphiqueEpingle, nbPoints: number, onSelection?: 
     scales: horizontal
       ? { x: axeValeurs, y: axeCategories }
       : { y: axeValeurs, x: axeCategories, ...(deuxAxes ? { y1: axeDroite } : {}) },
-  };
+  } as unknown as ChartOptions<T>;
 }
 
 /** Données Chart.js d'un nuage de points : une série par catégorie, puis la droite de tendance. */
-function donneesNuage(g: GraphiqueEpingle): any {
+type Point = { x: number; y: number };
+
+function donneesNuage(g: GraphiqueEpingle): ChartData<"scatter", Point[]> {
   const n = g.nuage;
   if (!n) return { datasets: [] };
   const dense = n.series.reduce((t, s) => t + s.points.length, 0) > 400;
-  const datasets: any[] = n.series.map((s, i) => {
+  // Les points d'une série, puis la droite de tendance tracée en ligne par-dessus le nuage
+  const datasets: ChartDataset<"scatter" | "line", Point[]>[] = n.series.map((s, i) => {
     const couleur = /^Autres \(\d+\)$/.test(s.nom) ? COULEUR_AUTRES : PALETTE[i % PALETTE.length];
     return {
       label: s.nom || g.axes?.y || "Lignes",
@@ -359,10 +373,10 @@ function donneesNuage(g: GraphiqueEpingle): any {
       pointStyle: "line",
     });
   }
-  return { datasets };
+  return { datasets: datasets as ChartDataset<"scatter", Point[]>[] };
 }
 
-function creerOptionsNuage(g: GraphiqueEpingle): any {
+function creerOptionsNuage(g: GraphiqueEpingle): ChartOptions<"scatter"> {
   const axe = (texte?: string) => ({
     type: "linear" as const,
     title: { display: !!texte, text: texte ?? "", color: "#64748b", font: { size: 10, weight: "bold" as const } },
@@ -384,10 +398,10 @@ function creerOptionsNuage(g: GraphiqueEpingle): any {
       },
       datalabels: { display: false },
       tooltip: {
-        filter: (item: any) => item.dataset.type !== "line",
+        filter: (item: TooltipItem<"scatter">) => (item.dataset as { type?: string }).type !== "line",
         callbacks: {
-          title: (items: any[]) => (items[0]?.dataset?.label && (g.nuage?.series.length ?? 0) > 1 ? items[0].dataset.label : ""),
-          label: (ctx: any) => [`${g.axes?.x ?? "X"} : ${formaterComplet(ctx.parsed.x)}`, `${g.axes?.y ?? "Y"} : ${formaterComplet(ctx.parsed.y)}`],
+          title: (items: TooltipItem<"scatter">[]) => (items[0]?.dataset?.label && (g.nuage?.series.length ?? 0) > 1 ? items[0].dataset.label : ""),
+          label: (ctx: TooltipItem<"scatter">) => [`${g.axes?.x ?? "X"} : ${ctx.parsed.x === null ? "—" : formaterComplet(ctx.parsed.x)}`, `${g.axes?.y ?? "Y"} : ${ctx.parsed.y === null ? "—" : formaterComplet(ctx.parsed.y)}`],
         },
       },
     },
@@ -599,7 +613,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
         );
         const temporel = series.some((x) => x.temporel);
         const aligne = alignerSeries(series);
-        const garder = (liste: any[]) => (temporel ? liste.slice(-60) : liste.slice(0, 30));
+        const garder = <T,>(liste: T[]) => (temporel ? liste.slice(-60) : liste.slice(0, 30));
         const labels = garder(aligne.labels).map((l: string) => (series.some((x) => x.granularite) ? libellePeriode(l) : l));
 
         if (labels.length >= 1) {
@@ -1191,11 +1205,11 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
                       className="relative"
                     >
                       {g.type === "Courbe" || g.type === "Aires" ? (
-                        <Line data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                        <Line data={donneesGraphique<"line">(g)} options={creerOptionsChart<"line">(g, nbPoints, (i) => basculerFiltre(g, i))} />
                       ) : g.type === "Anneau" ? (
-                        <Doughnut data={g as any} options={{ ...creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
+                        <Doughnut data={donneesGraphique<"doughnut">(g)} options={{ ...creerOptionsChart<"doughnut">(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
                       ) : (
-                        <Bar data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                        <Bar data={donneesGraphique<"bar">(g)} options={creerOptionsChart<"bar">(g, nbPoints, (i) => basculerFiltre(g, i))} />
                       )}
                     </div>
                   </div>
@@ -1529,15 +1543,15 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
                         className="relative"
                       >
                         {(g.type === "Barres" || g.type === "Histogramme" || g.type === "Combine") && (
-                          <Bar data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                          <Bar data={donneesGraphique<"bar">(g)} options={creerOptionsChart<"bar">(g, nbPoints, (i) => basculerFiltre(g, i))} />
                         )}
                         {g.type === "Nuage" && <Scatter data={donneesNuage(g)} options={creerOptionsNuage(g)} />}
                         {(g.type === "Courbe" || g.type === "Aires") && (
-                          <Line data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />
+                          <Line data={donneesGraphique<"line">(g)} options={creerOptionsChart<"line">(g, nbPoints, (i) => basculerFiltre(g, i))} />
                         )}
-                        {g.type === "Camembert" && <Pie data={g as any} options={creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i))} />}
+                        {g.type === "Camembert" && <Pie data={donneesGraphique<"pie">(g)} options={creerOptionsChart<"pie">(g, nbPoints, (i) => basculerFiltre(g, i))} />}
                         {g.type === "Anneau" && (
-                          <Doughnut data={g as any} options={{ ...creerOptionsChart(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
+                          <Doughnut data={donneesGraphique<"doughnut">(g)} options={{ ...creerOptionsChart<"doughnut">(g, nbPoints, (i) => basculerFiltre(g, i)), cutout: "62%" }} />
                         )}
                       </div>
                     )}

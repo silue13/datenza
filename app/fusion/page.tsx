@@ -14,13 +14,9 @@ import {
   BarChart2,
   Download,
   ArrowRight,
-  ShieldCheck,
   Settings2,
   Layers,
   GitMerge,
-  Filter,
-  CheckCircle2,
-  ArrowLeftRight,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import {
@@ -32,7 +28,6 @@ import {
   type TypeJointure,
 } from "../../lib/analyse/fusion";
 import { analyserColonnes } from "../../lib/analyse/analyse";
-import { type Cellule } from "../../lib/analyse/utils";
 
 export default function FusionNettoyagePage() {
   const router = useRouter();
@@ -204,11 +199,19 @@ export default function FusionNettoyagePage() {
       });
     }
 
-    Object.entries(analyseStat.statistiques).forEach(([nomCol, info]: [string, any]) => {
-      const s = info.stats;
+    // Statistiques de forme variable selon le type de colonne : seuls les champs lus ici sont décrits
+    type StatsLues = {
+      max?: number | null;
+      moyenne?: number | null;
+      topValeurs?: { valeur: string; pourcentage: number; effectif: number }[];
+      distincts?: number;
+      unicite?: number;
+    };
+    Object.entries(analyseStat.statistiques).forEach(([nomCol, info]) => {
+      const s = info.stats as StatsLues;
       if (info.type === "numerique" && s) {
-        const valMax = s.max !== null ? s.max.toLocaleString("fr-FR") : "—";
-        const valMoy = s.moyenne !== null ? s.moyenne.toLocaleString("fr-FR") : "—";
+        const valMax = s.max != null ? s.max.toLocaleString("fr-FR") : "—";
+        const valMoy = s.moyenne != null ? s.moyenne.toLocaleString("fr-FR") : "—";
         rapportDynamique.push({
           type: "numerique",
           texte: `Performance « ${nomCol} » : Moyenne constatée de ${valMoy} (avec un pic culminant à ${valMax}).`,
@@ -226,7 +229,7 @@ export default function FusionNettoyagePage() {
       if (info.type === "identifiant" && s) {
         rapportDynamique.push({
           type: "qualite",
-          texte: `Répertoire « ${nomCol} » : ${s.distincts.toLocaleString("fr-FR")} entité(s) distincte(s) répertoriée(s) (unicité de ${s.unicite} %).`,
+          texte: `Répertoire « ${nomCol} » : ${(s.distincts ?? 0).toLocaleString("fr-FR")} entité(s) distincte(s) répertoriée(s) (unicité de ${s.unicite} %).`,
         });
       }
     });

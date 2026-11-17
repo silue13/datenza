@@ -12,41 +12,49 @@ interface InfoVersion {
   url: string;
 }
 
+/**
+ * Version disponible au téléchargement : l'information si elle est plus récente, null si l'application est
+ * à jour, undefined si rien n'a pu être vérifié (navigateur, réseau). Ne touche pas à l'état du composant.
+ */
+async function lireVersionDisponible(): Promise<InfoVersion | null | undefined> {
+  if (!Capacitor.isNativePlatform()) return undefined;
+
+  try {
+    // 1. Lire la version locale installée sur le smartphone
+    const appInfo = await App.getInfo();
+    const codeLocal = parseInt(appInfo.build, 10);
+
+    // 2. Récupérer la dernière version déclarée sur Vercel sans cache
+    const res = await fetch(`https://datenza.vercel.app/version.json?t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return undefined;
+
+    const infoDistante: InfoVersion = await res.json();
+
+    // 3. Si l'application a bien été mise à jour (codeLocal >= distant) : on retire la bannière
+    if (codeLocal >= infoDistante.versionCode) {
+      return null;
+    }
+
+    // 4. Si une version supérieure existe toujours
+    return infoDistante;
+  } catch (err) {
+    console.warn("Vérification de mise à jour ignorée :", err);
+    return undefined;
+  }
+}
+
 export default function VerificateurMiseAJour() {
   const [majDisponible, setMajDisponible] = useState<InfoVersion | null>(null);
   const [masque, setMasque] = useState(false);
   const [telechargementLance, setTelechargementLance] = useState(false);
 
-  // Fonction de vérification de version
-  const verifierVersion = useCallback(async () => {
-    if (!Capacitor.isNativePlatform()) return;
-
-    try {
-      // 1. Lire la version locale installée sur le smartphone
-      const appInfo = await App.getInfo();
-      const codeLocal = parseInt(appInfo.build, 10);
-
-      // 2. Récupérer la dernière version déclarée sur Vercel sans cache
-      const res = await fetch(`https://datenza.vercel.app/version.json?t=${Date.now()}`, {
-        cache: "no-store",
-      });
-      if (!res.ok) return;
-
-      const infoDistante: InfoVersion = await res.json();
-
-      // 3. Si l'application a bien été mise à jour (codeLocal >= distant) : on retire la bannière
-      if (codeLocal >= infoDistante.versionCode) {
-        setMajDisponible(null);
-        return;
-      }
-
-      // 4. Si une version supérieure existe toujours
-      if (infoDistante.versionCode > codeLocal) {
-        setMajDisponible(infoDistante);
-      }
-    } catch (err) {
-      console.warn("Vérification de mise à jour ignorée :", err);
-    }
+  // L'état n'est modifié qu'à l'arrivée de la réponse, jamais pendant l'effet lui-même
+  const verifierVersion = useCallback(() => {
+    void lireVersionDisponible().then((info) => {
+      if (info !== undefined) setMajDisponible(info);
+    });
   }, []);
 
   useEffect(() => {

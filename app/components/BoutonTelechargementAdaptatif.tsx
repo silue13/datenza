@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useAppareil } from "../hooks/useAppareil";
 import { Download, Monitor, Smartphone } from "lucide-react";
 
 interface Props {
@@ -9,22 +9,9 @@ interface Props {
 }
 
 export default function BoutonTelechargementAdaptatif({ className = "", variante = "complet" }: Props) {
-  // 'windows' par défaut pour le rendu initial serveur (SSR)
-  const [os, setOs] = useState<"windows" | "android" | "autre">("windows");
-  const [estCharge, setEstCharge] = useState(false);
-
-  useEffect(() => {
-    const ua = window.navigator.userAgent.toLowerCase();
-
-    if (/android/i.test(ua)) {
-      setOs("android");
-    } else if (/win/i.test(ua)) {
-      setOs("windows");
-    } else {
-      setOs("windows"); // Fallback par défaut si OS indéterminé ou Mac/Linux
-    }
-    setEstCharge(true);
-  }, []);
+  // « windows » par défaut au rendu serveur, puis le vrai système dans le navigateur
+  const { systeme } = useAppareil();
+  const os: "windows" | "android" = systeme === "android" ? "android" : "windows";
 
   const config = {
     windows: {

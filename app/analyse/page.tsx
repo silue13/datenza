@@ -16,7 +16,7 @@ import BlocSecurise from "../components/BlocSecurise";
 import { estVersionPerimee, rechargerPourNouvelleVersion } from "../../lib/erreurs";
 import { formaterP } from "../../lib/analyse/inference";
 import ModeleDonnees from "../components/ModeleDonnees";
-import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
+import { exporterRapportPowerPoint, type BlocRapportExport, type DonneesExportPptx, type GraphiqueExport } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
 import { useData } from "../context/DataContext";
 import {
@@ -340,7 +340,7 @@ export default function AnalysePage() {
     return Object.entries(resultatActif.statistiques)
       .filter(([h]) => h !== "Fichier Source")
       .slice(0, 8)
-      .map(([col, info]: [string, any]) => ({
+      .map(([col, info]) => ({
         type: info.type === "numerique" ? "numerique" : "categorie",
         texte: `Indicateur « ${col} » : profilé avec succès (${info.type}).`,
       }));
@@ -643,6 +643,16 @@ export default function AnalysePage() {
     }, 80);
   };
 
+  // Liste exacte des graphiques du PowerPoint : même contenu et même ordre qu'à l'écran
+  const graphiquesPourPptx = useMemo(() => {
+    const affiches = (graphiquesAffiches || []).filter((g) => !(graphiquesExclus || []).includes(String(g.id)));
+    const ids = new Set(affiches.map((g) => String(g.id)));
+    const titres = new Set(affiches.map((g) => g.titre));
+    // Un ancien graphique épinglé identique à un graphique affiché ne doit pas apparaître deux fois
+    const autres = (graphiquesEpingles || []).filter((g) => !ids.has(String(g.id)) && !titres.has(g.titre));
+    return [...affiches, ...autres];
+  }, [graphiquesAffiches, graphiquesExclus, graphiquesEpingles]);
+
   const telechargerWord = async () => {
     if (!entetes.length || !corps.length || !resultatActif || exportWordEnCours) return;
     setExportWordEnCours(true);
@@ -699,14 +709,14 @@ export default function AnalysePage() {
     await new Promise((r) => setTimeout(r, 50));
 
     try {
-      const rapportFinal = estBenchmarkActif
+      const rapportFinal: BlocRapportExport[] = estBenchmarkActif
         ? syntheseComparativeCards.map((c) => ({
             type: c.type,
             texte: `${c.titre} : ${c.detail}`,
           }))
-        : (rapportActif as any);
+        : rapportActif;
 
-      let tdcManuelExport: any = undefined;
+      let tdcManuelExport: DonneesExportPptx["tdcManuel"] = undefined;
       if (estBenchmarkActif && colonnesMesurables.length > 0) {
         const colCat = noms.find((n) => {
           const idx = entetes.indexOf(n);
@@ -776,7 +786,7 @@ export default function AnalysePage() {
 
       // Le PowerPoint reprend les graphiques de l'écran (automatiques puis créés à la main, sauf ceux retirés),
       // suivis des éléments ajoutés depuis les autres modules (prévision, carte, tableau croisé).
-      let graphiquesExport: any[] = [...graphiquesPourPptx] as any;
+      const graphiquesExport: GraphiqueExport[] = [...graphiquesPourPptx];
       if (graphiquesExport.length === 0 && estBenchmarkActif) {
         const colCat = noms.find((n) => {
           const idx = entetes.indexOf(n);
@@ -819,12 +829,12 @@ export default function AnalysePage() {
         nomProjet: nomFichier || "Analyse Datenza",
         entetes: entetes,
         corps: corps,
-        analyse: resultatActif as any,
+        analyse: resultatActif,
         rapport: rapportFinal,
         graphiquesEpingles: graphiquesExport,
         tdcManuel: tdcManuelExport,
         syntheseCorrelationsIA: syntheseCorrIA ?? undefined,
-      } as any);
+      });
     } catch (error) {
       console.error("Erreur lors de l'export PowerPoint :", error);
     } finally {
@@ -832,15 +842,6 @@ export default function AnalysePage() {
     }
   };
 
-  // Liste exacte des graphiques du PowerPoint : même contenu et même ordre qu'à l'écran
-  const graphiquesPourPptx = useMemo(() => {
-    const affiches = (graphiquesAffiches || []).filter((g) => !(graphiquesExclus || []).includes(String(g.id)));
-    const ids = new Set(affiches.map((g) => String(g.id)));
-    const titres = new Set(affiches.map((g) => g.titre));
-    // Un ancien graphique épinglé identique à un graphique affiché ne doit pas apparaître deux fois
-    const autres = (graphiquesEpingles || []).filter((g) => !ids.has(String(g.id)) && !titres.has(g.titre));
-    return [...affiches, ...autres];
-  }, [graphiquesAffiches, graphiquesExclus, graphiquesEpingles]);
 
   const correlationsStandard = useMemo(() => {
     return [...(resultatActif?.correlations ?? [])]
@@ -864,24 +865,20 @@ export default function AnalysePage() {
     setChargementCorrIA(true);
     setErreurCorrIA(null);
     try {
-      const topRelations = (estBenchmarkActif ? correlationsBenchmark.slice(0, 5) : correlationsStandard.slice(0, 6)).map(
-        (c: any) => {
-          if (estBenchmarkActif) {
-            return {
-              relation: `${c.colA} ↔ ${c.colB}`,
-              reference: `${nettoyerNomAffichage(refSource)} (r = ${c.rRef})`,
-              comparaisons: c.comparaisons.map(
-                (comp: any) => `${nettoyerNomAffichage(comp.source)}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`
-              ),
-            };
-          }
-          return {
+      // Deux formes de corrélation selon le mode : comparaison de fichiers ou fichier unique
+      const topRelations = estBenchmarkActif
+        ? correlationsBenchmark.slice(0, 5).map((c) => ({
+            relation: `${c.colA} ↔ ${c.colB}`,
+            reference: `${nettoyerNomAffichage(refSource)} (r = ${c.rRef})`,
+            comparaisons: c.comparaisons.map(
+              (comp) => `${nettoyerNomAffichage(comp.source)}: r = ${comp.r} (${comp.diff > 0 ? "+" : ""}${comp.diff})`
+            ),
+          }))
+        : correlationsStandard.slice(0, 6).map((c) => ({
             relation: `${c.colonneA} ↔ ${c.colonneB}`,
             coefficient_r: c.coefficient,
             intensite: c.interpretation,
-          };
-        }
-      );
+          }));
 
       const question = `Interprète de façon managériale et opérationnelle ces corrélations statistiques dominantes :
 ${JSON.stringify(topRelations)}
@@ -1323,7 +1320,6 @@ Ne mets ni introduction ni conclusion.`;
           {noms.map((nom) => {
             const info = resultatActif?.statistiques?.[nom];
             if (!info) return null;
-            const s = info.stats;
             const colIdx = entetes.indexOf(nom);
 
             if (estBenchmarkActif && colIdx !== -1) {
@@ -1753,7 +1749,7 @@ function CarteSyntheseItem({ bloc }: { bloc: { type: string; texte: string }; in
   const textePropre = nettoyerNomAffichage(bloc.texte);
   const parties = textePropre.split(/:(.+)/);
   let titre = parties.length > 1 ? parties[0].trim() : "Point clé";
-  let contenu = parties.length > 1 ? parties[1].trim() : textePropre;
+  const contenu = parties.length > 1 ? parties[1].trim() : textePropre;
 
   if (titre.toLowerCase() === "point cle" || titre.toLowerCase() === "point clé") {
     if (/lignes?|champ/i.test(contenu)) titre = "Périmètre audité";

@@ -1,5 +1,8 @@
 import ExcelJS from "exceljs";
-import { type Cellule, parseNombre, estValeurVide, estColonneIdentifiant, estColonneTemporelle } from "./utils";
+import { type Cellule, type StatsNumeriques, parseNombre, estValeurVide, estColonneIdentifiant, estColonneTemporelle } from "./utils";
+import type { analyserColonnes } from "./analyse";
+
+type ResultatAnalyse = ReturnType<typeof analyserColonnes>;
 import { convertirDate, detecterOrdreDate } from "./dates";
 import { operationPour } from "./mesures";
 import { LIBELLES_AMPLEUR } from "./inference";
@@ -44,8 +47,8 @@ export async function exporterExcelExecutive(
   nomProjet: string,
   entetes: string[],
   corps: Cellule[][],
-  analyse?: any,
-  rapport?: any
+  analyse?: ResultatAnalyse | null,
+  rapport?: { type: string; texte: string }[]
 ) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "DATENZA v2.0";
@@ -171,23 +174,29 @@ export async function exporterExcelExecutive(
     wsStats.addRow(["Variable", "Type", "Complétude", "Détail / Statistiques"]);
     styliserEnTete(wsStats);
 
-    Object.entries(analyse.statistiques).forEach(([nomCol, info]: [string, any], i) => {
+    Object.entries(analyse.statistiques).forEach(([nomCol, info], i) => {
       if (nomCol === "Fichier Source") return;
 
       let detail = "—";
-      const s = info.stats;
+      // Forme des statistiques selon le type de colonne (voir analyserColonnes)
+      const stats = info.stats;
+      const num = stats as unknown as StatsNumeriques;
+      const cat = stats as { topValeurs?: { valeur: string; pourcentage: number }[]; nbCategoriesDistinctes?: number };
+      const ident = stats as { unicite?: number; distincts?: number };
+      const dates = stats as { min?: string | null; max?: string | null };
 
-      if (info.type === "numerique" && s) {
+      if (info.type === "numerique" && stats) {
+        const s = num;
         const nf = (x: number | null | undefined) => (x === null || x === undefined ? "-" : x.toLocaleString("fr-FR"));
         // Additionner un taux, un ratio ou une taille moyenne n'a pas de sens : pas de total pour ces colonnes
         const total = operationPour(nomCol) === "somme" ? `Total: ${nf(s.somme)} | ` : "";
         detail = `${total}Moy: ${nf(s.moyenne)} | Médiane: ${nf(s.mediane)} | Écart-type: ${nf(s.ecartType)} | Min: ${nf(s.min)} | Max: ${nf(s.max)}${s.atypiques ? ` | Atypiques: ${s.atypiques}` : ""}`;
-      } else if (info.type === "categorielle" && s && s.topValeurs && s.topValeurs.length > 0) {
-        detail = `Top: ${s.topValeurs[0].valeur} (${s.topValeurs[0].pourcentage}%) | Distincts: ${s.nbCategoriesDistinctes}`;
-      } else if (info.type === "identifiant" && s) {
-        detail = `Unicité: ${s.unicite}% | Distincts: ${s.distincts}`;
-      } else if (info.type === "date" && s) {
-        detail = `De: ${s.min?.slice(0, 10)} à ${s.max?.slice(0, 10)}`;
+      } else if (info.type === "categorielle" && cat.topValeurs && cat.topValeurs.length > 0) {
+        detail = `Top: ${cat.topValeurs[0].valeur} (${cat.topValeurs[0].pourcentage}%) | Distincts: ${cat.nbCategoriesDistinctes}`;
+      } else if (info.type === "identifiant" && stats) {
+        detail = `Unicité: ${ident.unicite}% | Distincts: ${ident.distincts}`;
+      } else if (info.type === "date" && stats) {
+        detail = `De: ${dates.min?.slice(0, 10)} à ${dates.max?.slice(0, 10)}`;
       }
 
       const row = wsStats.addRow([
@@ -220,9 +229,9 @@ export async function exporterExcelExecutive(
     styliserEnTete(wsCorr);
 
     [...analyse.correlations]
-      .filter((c: any) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
-      .sort((a: any, b: any) => Math.abs(b.coefficient) - Math.abs(a.coefficient))
-      .forEach((c: any, i) => {
+      .filter((c) => c.colonneA !== "Fichier Source" && c.colonneB !== "Fichier Source")
+      .sort((a, b) => Math.abs(b.coefficient) - Math.abs(a.coefficient))
+      .forEach((c, i) => {
         const testee = typeof c.pValeur === "number";
         const row = wsCorr.addRow([
           c.colonneA,
@@ -329,7 +338,7 @@ export async function exporterExcelExecutive(
     wsRap.addRow(["Catégorie", "Constat Métier"]);
     styliserEnTete(wsRap);
 
-    rapport.forEach((bloc: any, i: number) => {
+    rapport.forEach((bloc, i: number) => {
       if (bloc.texte.includes("Fichier Source")) return;
 
       const row = wsRap.addRow([bloc.type.toUpperCase(), bloc.texte]);
