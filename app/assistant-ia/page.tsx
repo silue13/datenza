@@ -17,6 +17,7 @@ import {
 import { useData } from "../context/DataContext";
 import { analyserColonnes } from "../../lib/analyse/analyse";
 import { construireContexte, estColonneSensible } from "../../lib/analyse/context";
+import { CalculateurMesures, formaterMesure } from "../../lib/analyse/formules";
 import { contientBlocRequetes, executerRequete, extraireRequetes, resultatsPourIA, type ResultatRequete } from "../../lib/analyse/requete";
 import { calculerTdcAvecLimite, type Agregation } from "../../lib/analyse/tdc";
 import { parseNombre, arrondir, type Cellule } from "../../lib/analyse/utils";
@@ -212,7 +213,7 @@ function CalculsIA({ calculs }: { calculs: ResultatRequete[] }) {
 }
 
 export default function AssistantIAPage() {
-  const { nomFichier, corps, entetes, resultat } = useData();
+  const { nomFichier, corps, entetes, resultat, mesures } = useData();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [chargement, setChargement] = useState(false);
@@ -271,8 +272,12 @@ export default function AssistantIAPage() {
     const res = resultat ?? analyserColonnes(entetes, corps, entetes);
     const baseCtx = construireContexte(nomFichier, entetes, corps, res);
 
+    // Mesures définies par l'utilisateur : nom, formule et valeur sur les données affichées
+    const calc = new CalculateurMesures(entetes, corps, mesures);
+    const mesuresUtilisateur = mesures.map((m) => ({ nom: m.nom, formule: m.formule, valeur: formaterMesure(calc.calculerOuVide(m, corps), m) }));
+
     if (!estBenchmarkActif) {
-      return JSON.stringify(baseCtx);
+      return JSON.stringify(mesuresUtilisateur.length ? { ...baseCtx, mesures_definies_par_l_utilisateur: mesuresUtilisateur } : baseCtx);
     }
 
     const colonnesUtiles = entetes.filter((h) => h !== "Fichier Source");
@@ -395,7 +400,7 @@ Le fichier de référence étalon est : « ${refSource} ».
     };
 
     return JSON.stringify(contexteBenchmarkMulti);
-  }, [nomFichier, entetes, corps, resultat, estBenchmarkActif, sourcesFichiers, refSource, corpsParSource, idxSource]);
+  }, [nomFichier, entetes, corps, resultat, mesures, estBenchmarkActif, sourcesFichiers, refSource, corpsParSource, idxSource]);
 
   // 3. Suggestions dynamiques selon le mode
   const suggestions = useMemo(() => {

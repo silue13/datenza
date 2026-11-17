@@ -21,6 +21,13 @@ import {
 import { chargerEtat, sauvegarderEtat, effacerEtat, type EtatPersiste } from "../../lib/persistance";
 import { normaliserSource, type SourceDistante } from "../../lib/import/source";
 import { telechargerSource } from "../../lib/import/telechargement";
+import { appliquerModele, type DiagnosticRelation, type Relation, type TableReference } from "../../lib/analyse/modele";
+import type { DefinitionMesure } from "../../lib/analyse/formules";
+
+interface ModeleSession {
+  tables: TableReference[];
+  relations: Relation[];
+}
 
 /** État de la dernière actualisation d'une source en direct. */
 export interface EtatActualisation {
@@ -156,6 +163,23 @@ interface DataContextType {
   ouvrirEtat: (etat: EtatPersiste, projet?: ProjetCourant | null) => void;
   /** Projet partagé affiché en lecture seule : rien n'est sauvegardé, la session du visiteur reste intacte. */
   lectureSeule: boolean;
+  /** Modèle de données : tables de référence reliées à la table principale par des relations. */
+  tablesReference: TableReference[];
+  relations: Relation[];
+  /** État de chaque relation (correspondances trouvées, clés introuvables), dans l'ordre des relations. */
+  diagnosticsModele: DiagnosticRelation[];
+  /** Table principale telle qu'importée (avant colonnes reliées, colonnes calculées et filtres). */
+  tablePrincipale: { entetes: string[]; corps: Cellule[][] };
+  /** Colonnes utilisables comme point de départ d'une relation : table principale puis colonnes déjà reliées. */
+  colonnesPourRelation: string[];
+  ajouterTableReference: (table: TableReference) => void;
+  retirerTableReference: (id: string) => void;
+  enregistrerRelation: (relation: Relation) => void;
+  retirerRelation: (id: string) => void;
+  /** Mesures réutilisables (formules nommées). */
+  mesures: DefinitionMesure[];
+  enregistrerMesure: (mesure: DefinitionMesure) => void;
+  supprimerMesure: (id: string) => void;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -183,19 +207,31 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
   const [source, setSource] = useState<SourceDistante | null>(null);
   const [actualisation, setActualisation] = useState<EtatActualisation>({ enCours: false, message: null, erreur: null });
   const actualisationEnCours = useRef(false);
+  const [tablesReference, setTablesReference] = useState<TableReference[]>([]);
+  const [relations, setRelations] = useState<Relation[]>([]);
+  const [diagnosticsModele, setDiagnosticsModele] = useState<DiagnosticRelation[]>([]);
+  const [mesures, setMesures] = useState<DefinitionMesure[]>([]);
 
-  // Recalcule le jeu de données affiché à partir des sources, calculs et filtres
+  // Recalcule le jeu de données affiché : sources → colonnes reliées → colonnes calculées → filtres
   function regenererDonnees(
-    baseEntetes: string[],
-    baseCorps: Cellule[][],
+    sourceEntetes: string[],
+    sourceCorps: Cellule[][],
     calculs: DefinitionColonneCalculee[],
-    filtres: ConditionFiltre[]
+    filtres: ConditionFiltre[],
+    modele: ModeleSession = { tables: tablesReference, relations }
   ) {
-    if (!baseEntetes.length || !baseCorps.length) return;
-    const final = executerEtapes(baseEntetes, baseCorps, calculs, filtres);
+    if (!sourceEntetes.length || !sourceCorps.length) return;
+
+    // 0. Colonnes des tables de référence (relations du modèle de données)
+    const avecModele = appliquerModele(sourceEntetes, sourceCorps, modele.tables, modele.relations);
+    setDiagnosticsModele(avecModele.diagnostics);
+    const colonnesReliees = avecModele.entetes.slice(sourceEntetes.length);
+
+    // 1. Colonnes calculées puis filtres (même fonction que celle qui rejoue les recettes)
+    const final = executerEtapes(avecModele.entetes, avecModele.corps, calculs, filtres);
     setEntetes(final.entetes);
     setCorps(final.corps);
-    setChoisies((prev) => Array.from(new Set([...prev, ...calculs.map((c) => c.nomNouvelleColonne)])));
+    setChoisies((prev) => Array.from(new Set([...prev, ...colonnesReliees, ...calculs.map((c) => c.nomNouvelleColonne)])));
   }
 
   /** Prépare un tableau importé : en-têtes propres, lignes vides et lignes de totaux retirées, corrections de saisie évidentes. */
@@ -264,6 +300,11 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
 
     setSource(nouvelleSource ?? null);
     setActualisation({ enCours: false, message: null, erreur: null });
+    // Nouveau fichier : le modèle et les mesures du précédent ne s'appliquent plus
+    setTablesReference([]);
+    setRelations([]);
+    setDiagnosticsModele([]);
+    setMesures([]);
     setProjetCourant(null);
     setNomFichier(nom);
     setSources({ entetes: entetesPropres, corps: corpsNettoye });
@@ -291,10 +332,12 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
       const { tableau } = await telechargerSource(origine.urlTelechargement, nomFichier);
       const propre = nettoyerImport(tableau.entetes, tableau.corps);
 
-      // Colonnes calculées puis filtres : rejoués comme une recette (colonnes renommées reconnues, étapes impossibles écartées)
-      const adaptation = adapterRecette(creerRecette("", sources.entetes, definitionsCalculs, filtresActifs), propre.entetes);
+      // Colonnes calculées puis filtres : rejoués comme une recette, sur les colonnes du fichier et celles des tables reliées
+      // (colonnes renommées reconnues, étapes impossibles écartées)
+      const entetesReliees = appliquerModele(propre.entetes, propre.corps, tablesReference, relations).entetes;
+      const adaptation = adapterRecette(creerRecette("", sources.entetes, definitionsCalculs, filtresActifs), entetesReliees);
       const { calculs, filtres } = adaptation;
-      const disponibles = new Set([...propre.entetes, ...calculs.map((c) => c.nomNouvelleColonne)]);
+      const disponibles = new Set([...entetesReliees, ...calculs.map((c) => c.nomNouvelleColonne)]);
 
       const ajoutees = propre.entetes.filter((h) => !sources.entetes.includes(h));
       const retirees = sources.entetes.filter((h) => !propre.entetes.includes(h));
@@ -387,11 +430,17 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     return r.ricochets;
   }
 
+  /** Colonnes disponibles avant les étapes : celles du fichier, plus celles des tables reliées par le modèle de données. */
+  function colonnesAvecModele(base: { entetes: string[]; corps: Cellule[][] }): string[] {
+    return appliquerModele(base.entetes, base.corps, tablesReference, relations).entetes;
+  }
+
   function recetteCourante(nom: string): Recette {
+    const disponibles = colonnesAvecModele(sources);
     // Colonnes choisies enregistrées seulement si l'utilisateur en a écarté : sinon « toutes », y compris les futures
-    const toutes = [...sources.entetes, ...definitionsCalculs.map((c) => c.nomNouvelleColonne)];
+    const toutes = [...disponibles, ...definitionsCalculs.map((c) => c.nomNouvelleColonne)];
     const restreint = toutes.some((c) => !choisies.includes(c));
-    return creerRecette(nom, sources.entetes, definitionsCalculs, filtresActifs, restreint ? choisies.filter((c) => toutes.includes(c)) : undefined);
+    return creerRecette(nom, disponibles, definitionsCalculs, filtresActifs, restreint ? choisies.filter((c) => toutes.includes(c)) : undefined);
   }
 
   /** Installe des données sources et des étapes adaptées, et invalide ce qui décrivait l'état précédent. */
@@ -405,7 +454,7 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
   }
 
   function appliquerRecette(recette: Recette): RapportRecette {
-    const r = adapterRecette(recette, sources.entetes);
+    const r = adapterRecette(recette, colonnesAvecModele(sources));
     installerEtapes(sources, r);
     return r;
   }
@@ -413,7 +462,8 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
   function rejouerSurFichier(nom: string, entetesData: string[], corpsData: Cellule[][], recette?: Recette): RapportRecette {
     const aRejouer = recette ?? recetteCourante(nomFichier || "Étapes actuelles");
     const propre = nettoyerImport(entetesData, corpsData);
-    const r = adapterRecette(aRejouer, propre.entetes);
+    // Le modèle de données (tables de référence, relations) et les mesures font partie de la préparation : ils sont gardés
+    const r = adapterRecette(aRejouer, colonnesAvecModele(propre));
     setNomFichier(nom);
     setSources(propre);
     setSource(null);
@@ -441,11 +491,15 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
   }
 
   function appliquerEtat(etat: EtatPersiste) {
+    const modele: ModeleSession = { tables: etat.tablesReference ?? [], relations: etat.relations ?? [] };
     setNomFichier(etat.nomFichier);
     setSources(etat.sources);
     setDefinitionsCalculs(etat.definitionsCalculs);
     setFiltresActifs(etat.filtresActifs);
-    regenererDonnees(etat.sources.entetes, etat.sources.corps, etat.definitionsCalculs, etat.filtresActifs);
+    setTablesReference(modele.tables);
+    setRelations(modele.relations);
+    setMesures(etat.mesures ?? []);
+    regenererDonnees(etat.sources.entetes, etat.sources.corps, etat.definitionsCalculs, etat.filtresActifs, modele);
     setChoisies(etat.choisies);
     setRapport(etat.rapport);
     setResultat(etat.resultat);
@@ -460,7 +514,21 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
   }
 
   function obtenirEtat(): EtatPersiste {
-    return { nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projet: projetCourant, source };
+    return {
+      nomFichier,
+      sources,
+      choisies,
+      rapport,
+      resultat,
+      graphiquesEpingles,
+      filtresActifs,
+      definitionsCalculs,
+      projet: projetCourant,
+      source,
+      tablesReference,
+      relations,
+      mesures,
+    };
   }
 
   // Restauration de l'état persisté (ou affichage direct d'un projet partagé)
@@ -501,10 +569,13 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
         definitionsCalculs,
         projet: projetCourant,
         source,
+        tablesReference,
+        relations,
+        mesures,
       });
     }, 600);
     return () => clearTimeout(minuteur);
-  }, [restaurationTerminee, lectureSeule, nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projetCourant, source]);
+  }, [restaurationTerminee, lectureSeule, nomFichier, sources, choisies, rapport, resultat, graphiquesEpingles, filtresActifs, definitionsCalculs, projetCourant, source, tablesReference, relations, mesures]);
 
   function supprimerDonnees() {
     setNomFichier("");
@@ -520,8 +591,63 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     setProjetCourant(null);
     setSource(null);
     setActualisation({ enCours: false, message: null, erreur: null });
+    setTablesReference([]);
+    setRelations([]);
+    setDiagnosticsModele([]);
+    setMesures([]);
     if (!lectureSeule) void effacerEtat();
   }
+
+  // ---------- Modèle de données et mesures
+
+  /** Modifie le modèle et recalcule aussitôt les données (filtres ou calculs qui ne s'appliquent plus sont retirés). */
+  function changerModele(modele: ModeleSession) {
+    const disponibles = new Set(appliquerModele(sources.entetes, sources.corps, modele.tables, modele.relations).entetes);
+    const calculs: DefinitionColonneCalculee[] = [];
+    for (const def of definitionsCalculs) {
+      if (disponibles.has(def.colonneA) && (!def.colonneB || disponibles.has(def.colonneB))) {
+        calculs.push(def);
+        disponibles.add(def.nomNouvelleColonne);
+      }
+    }
+    const filtres = filtresActifs.filter((f) => disponibles.has(f.colonne));
+    setTablesReference(modele.tables);
+    setRelations(modele.relations);
+    setDefinitionsCalculs(calculs);
+    setFiltresActifs(filtres);
+    setChoisies((prev) => prev.filter((c) => disponibles.has(c)));
+    regenererDonnees(sources.entetes, sources.corps, calculs, filtres, modele);
+    // L'analyse décrivait les anciennes colonnes : elle est recalculée à l'affichage
+    setResultat(null);
+    setRapport([]);
+  }
+
+  function ajouterTableReference(table: TableReference) {
+    changerModele({ tables: [...tablesReference.filter((t) => t.id !== table.id), table], relations });
+  }
+
+  function retirerTableReference(id: string) {
+    changerModele({ tables: tablesReference.filter((t) => t.id !== id), relations: relations.filter((r) => r.tableId !== id) });
+  }
+
+  function enregistrerRelation(relation: Relation) {
+    const existe = relations.some((r) => r.id === relation.id);
+    changerModele({ tables: tablesReference, relations: existe ? relations.map((r) => (r.id === relation.id ? relation : r)) : [...relations, relation] });
+  }
+
+  function retirerRelation(id: string) {
+    changerModele({ tables: tablesReference, relations: relations.filter((r) => r.id !== id) });
+  }
+
+  function enregistrerMesure(mesure: DefinitionMesure) {
+    setMesures((prev) => (prev.some((m) => m.id === mesure.id) ? prev.map((m) => (m.id === mesure.id ? mesure : m)) : [...prev, mesure]));
+  }
+
+  function supprimerMesure(id: string) {
+    setMesures((prev) => prev.filter((m) => m.id !== id));
+  }
+
+  const colonnesPourRelation = [...sources.entetes, ...diagnosticsModele.flatMap((d) => d.colonnesAjoutees.map((c) => c.nom))];
 
   const [graphiquesAffiches, setGraphiquesAffiches] = useState<GraphiqueEpingle[]>([]);
   const [graphiquesExclus, setGraphiquesExclus] = useState<string[]>([]);
@@ -565,6 +691,18 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
         actualisation,
         actualiserSource,
         definirIntervalleSource,
+        tablesReference,
+        relations,
+        diagnosticsModele,
+        colonnesPourRelation,
+        tablePrincipale: sources,
+        ajouterTableReference,
+        retirerTableReference,
+        enregistrerRelation,
+        retirerRelation,
+        mesures,
+        enregistrerMesure,
+        supprimerMesure,
         setChoisies,
         setRapport,
         setResultat,

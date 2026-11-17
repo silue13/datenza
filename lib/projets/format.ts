@@ -4,9 +4,14 @@ import type { Cellule } from "../analyse/utils";
 import type { EtatPersiste } from "../persistance";
 import { normaliserSource } from "../import/source";
 import type { ApercuGraphique } from "./apercu";
+import { normaliserRelations, normaliserTables, type TableReference } from "../analyse/modele";
+import { normaliserMesures } from "../analyse/formules";
 
 /** Tout ce qui décrit un projet, hors lignes du fichier et hors analyse (recalculée à l'ouverture). */
-export type ReglagesProjet = Pick<EtatPersiste, "choisies" | "rapport" | "graphiquesEpingles" | "filtresActifs" | "definitionsCalculs" | "source"> & {
+export type ReglagesProjet = Pick<
+  EtatPersiste,
+  "choisies" | "rapport" | "graphiquesEpingles" | "filtresActifs" | "definitionsCalculs" | "source" | "relations" | "mesures"
+> & {
   /** Mini graphique repris dans l'image d'aperçu du lien partagé (valeurs agrégées uniquement). */
   apercu?: ApercuGraphique | null;
 };
@@ -14,6 +19,8 @@ export type ReglagesProjet = Pick<EtatPersiste, "choisies" | "rapport" | "graphi
 export interface DonneesProjet {
   v: 1;
   sources: { entetes: string[]; corps: Cellule[][] };
+  /** Tables de référence du modèle de données (absentes des projets plus anciens). */
+  tables?: TableReference[];
 }
 
 /** Limite d'envoi d'un fichier sur l'offre gratuite de Supabase (50 Mo), avec une marge. */
@@ -27,6 +34,8 @@ export function extraireReglages(etat: EtatPersiste, apercu: ApercuGraphique | n
     filtresActifs: etat.filtresActifs,
     definitionsCalculs: etat.definitionsCalculs,
     source: etat.source ?? null,
+    relations: etat.relations ?? [],
+    mesures: etat.mesures ?? [],
     apercu,
   };
   // Passage par JSON : on n'envoie que ce qui se relira à l'identique
@@ -52,6 +61,9 @@ export function assemblerEtat(nomFichier: string, donnees: unknown, reglages: un
     filtresActifs: liste(r.filtresActifs),
     definitionsCalculs: liste(r.definitionsCalculs),
     source: normaliserSource(r.source),
+    tablesReference: normaliserTables(d.tables),
+    relations: normaliserRelations(r.relations),
+    mesures: normaliserMesures(r.mesures),
   };
 }
 

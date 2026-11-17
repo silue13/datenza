@@ -13,6 +13,7 @@ import TestsStatistiques from "../components/TestsStatistiques";
 import PanneauRecette from "../components/PanneauRecette";
 import AnalysesMetier from "../components/AnalysesMetier";
 import { formaterP } from "../../lib/analyse/inference";
+import ModeleDonnees from "../components/ModeleDonnees";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
 import { useData } from "../context/DataContext";
@@ -1150,6 +1151,8 @@ Ne mets ni introduction ni conclusion.`;
         <BarreOutilsDonnees />
         <PanneauRecette />
       </div>
+
+      <ModeleDonnees />
 
       {/* BARRE D'ACCÈS RAPIDE */}
       <nav
