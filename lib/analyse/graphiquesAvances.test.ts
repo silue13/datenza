@@ -144,3 +144,27 @@ describe("analyse/imageGraphique", () => {
     expect(nomFichierImage("///")).toBe("graphique.png");
   });
 });
+
+import { calculerSerie } from "./graphique";
+import { CalculateurMesures } from "./formules";
+describe("analyse/graphique — mesures personnalisées", () => {
+  const entetes = ["Region", "Ventes", "Couts"];
+  const corps = [
+    ["A", 100, 50],
+    ["A", 100, 30],
+    ["B", 50, 40],
+    ["C", 10, 1],
+    ["D", 10, 9],
+  ];
+  const taux = { id: "t", nom: "Taux", formule: "(SOMME([Ventes]) - SOMME([Couts])) / SOMME([Ventes])", format: "pourcentage" as const };
+  const calc = new CalculateurMesures(entetes, corps, [taux]);
+  const evaluer = (l: (string | number)[][]) => calc.calculer(taux, l);
+  it("calcule la mesure par groupe et recalcule « Autres » sur ses lignes", () => {
+    const s = calculerSerie(entetes, corps, "Region", null, { agregation: "Somme", evaluer, limite: 2, tri: "libelle" });
+    expect(s.points.map((p) => p.label)).toEqual(["A", "B", "Autres (2)"]);
+    expect(s.points[0].valeur).toBe(0.6);
+    expect(s.points[1].valeur).toBe(0.2);
+    // (20 - 10) / 20, et non 0,9 + 0,1
+    expect(s.points[2].valeur).toBe(0.5);
+  });
+});

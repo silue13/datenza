@@ -69,7 +69,7 @@ export async function enregistrerProjet(etat: EtatPersiste, nom: string, idExist
   const id = idExistant ?? crypto.randomUUID();
   const chemin = `${userId}/${id}.json.gz`;
 
-  const blob = await compresserDonnees({ v: 1, sources: etat.sources });
+  const blob = await compresserDonnees({ v: 1, sources: etat.sources, tables: etat.tablesReference ?? [] });
   if (blob.size > TAILLE_MAX_OCTETS) {
     throw new Error(`Ce fichier pèse ${formaterTaille(blob.size)} une fois compressé : la limite d'enregistrement en ligne est de ${formaterTaille(TAILLE_MAX_OCTETS)}.`);
   }

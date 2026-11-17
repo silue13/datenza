@@ -9,6 +9,7 @@ import GraphiqueGenerateur from "../components/GraphiqueGenerateur";
 import TableauCroiseDynamique from "../components/TableauCroiseDynamique";
 import BarreOutilsDonnees from "../components/BarreOutilsDonnees";
 import BandeauSource from "../components/BandeauSource";
+import ModeleDonnees from "../components/ModeleDonnees";
 import { exporterRapportPowerPoint } from "../../lib/analyse/exportPptx";
 import { exporterExcelExecutive } from "../../lib/analyse/exportExcel";
 import { useData } from "../context/DataContext";
@@ -1106,6 +1107,8 @@ Ne mets ni introduction ni conclusion.`;
       <div className="print:hidden">
         <BarreOutilsDonnees />
       </div>
+
+      <ModeleDonnees />
 
       {/* BARRE D'ACCÈS RAPIDE */}
       <nav
