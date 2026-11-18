@@ -17,6 +17,7 @@ import {
   type ProjetResume,
 } from "../../lib/projets/depot";
 import { formaterTaille, nomParDefaut } from "../../lib/projets/format";
+import PartageReseaux from "../components/PartageReseaux";
 
 type Retour = { type: "ok" | "erreur"; texte: string } | null;
 
@@ -441,6 +442,7 @@ export default function ProjetsPage() {
                       </>
                     )}
                   </div>
+                  {p.partage_id && <PartageReseaux url={lienPartage(p)} nomProjet={p.nom} />}
                   {p.partage_id && (
                     <p className="text-[11px] text-slate-500">
                       Toute personne disposant de ce lien voit le projet en lecture seule, sans compte, tel qu&apos;à sa dernière mise à jour.
