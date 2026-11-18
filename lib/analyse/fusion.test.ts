@@ -94,6 +94,19 @@ describe("analyse/fusion", () => {
 });
 
 describe("analyse/comparaison", () => {
+  it("rapproche les colonnes synonymes dans la comparaison rapide", () => {
+    const r = assemblerComparaison([
+      { nom: "a.xlsx", entetes: ["Ville", "CA"], corps: [["Man", 1]] },
+      { nom: "b.xlsx", entetes: ["Localité", "Chiffre d'affaires"], corps: [["Daloa", 2]] },
+    ])!;
+    expect(r.entetes).toEqual(["Fichier Source", "Ville", "CA"]);
+    expect(r.corps[1]).toEqual(["b.xlsx", "Daloa", 2]);
+    expect(r.colonnesAlignees).toEqual([
+      { nomFinal: "Ville", variantes: ["Ville", "Localité"] },
+      { nomFinal: "CA", variantes: ["CA", "Chiffre d'affaires"] },
+    ]);
+  });
+
   it("aligne les colonnes écrites différemment et signale celles écartées", () => {
     const r = assemblerComparaison([
       { nom: "2024.xlsx", entetes: ["Région", "Montant", "Commentaire"], corps: [["Poro", 10]] },

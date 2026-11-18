@@ -73,7 +73,7 @@ export function ReglagesComparaisonMulti({ fichiers, ordre, onOrdre, cles, onCle
         <p className="text-[10px] uppercase font-bold text-slate-400">Colonnes à comparer</p>
         {colonnes.length === 0 ? (
           <p className="text-[11px] text-amber-700 dark:text-amber-400">
-            Aucune colonne ne porte le même nom dans au moins deux fichiers : seules les présences et absences seront comparées.
+            Aucune colonne n&apos;est rapprochée entre les fichiers : seules les présences et absences seront comparées. Indiquez les colonnes qui se correspondent dans « Correspondance des colonnes », sous la liste des fichiers.
           </p>
         ) : (
           <div className="flex flex-wrap gap-1.5">

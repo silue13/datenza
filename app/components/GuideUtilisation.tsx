@@ -191,7 +191,7 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
       "Fichier obtenu analysable directement (graphiques, carte, prévisions, exports, projets)",
     ],
     arbitrageDirection:
-      "Pour comparer des valeurs, donnez le même nom aux colonnes à confronter dans les deux fichiers (par exemple « Montant ») : seules les colonnes de même nom sont comparées.",
+      "Vérifiez la « Correspondance des colonnes » : les colonnes qui désignent la même chose sous des noms différents (« CA » et « Chiffre d'affaires ») y sont rapprochées automatiquement, et vous pouvez corriger ou compléter.",
   },
   {
     id: "parametres",

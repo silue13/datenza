@@ -1,6 +1,7 @@
 // lib/analyse/comparaison.ts — assemble plusieurs fichiers pour les comparer (mode « benchmark » de l'analyse).
 import { estValeurVide, parseNombre, type Cellule } from "./utils";
 import { normaliserCle, normaliserCleColonne, valeursEquivalentes } from "./fusion";
+import { appliquerCorrespondance, suggererCorrespondance } from "./correspondance";
 
 export interface FichierAComparer {
   nom: string;
@@ -24,8 +25,24 @@ export interface ResultatComparaison {
  * Les noms de colonnes sont rapprochés sans tenir compte de la casse, des accents, des espaces ni de la ponctuation.
  * Renvoie null si aucune colonne n'est commune à tous les fichiers.
  */
-export function assemblerComparaison(fichiers: FichierAComparer[]): ResultatComparaison | null {
-  if (fichiers.length < 2) return null;
+export function assemblerComparaison(fichiersBruts: FichierAComparer[], rapprocherSynonymes = true): ResultatComparaison | null {
+  if (fichiersBruts.length < 2) return null;
+  // Colonnes de même sens sous un autre nom (« CA » / « Chiffre d'affaires ») : renommées comme dans le premier fichier
+  const synonymes: { nomFinal: string; variantes: string[] }[] = [];
+  const fichiers = rapprocherSynonymes
+    ? fichiersBruts.map((f, i) => {
+        if (i === 0) return f;
+        const corr = suggererCorrespondance(fichiersBruts[0], f);
+        Object.entries(corr).forEach(([ref, col]) => {
+          if (col && col !== ref) {
+            const e = synonymes.find((x) => x.nomFinal === ref);
+            if (e) e.variantes.push(col);
+            else synonymes.push({ nomFinal: ref, variantes: [ref, col] });
+          }
+        });
+        return appliquerCorrespondance(f, corr);
+      })
+    : fichiersBruts;
   const cles = (f: FichierAComparer) => new Map(f.entetes.filter((h) => h !== "Fichier Source").map((h, i) => [normaliserCleColonne(h) || `#${i}`, h]));
   const parFichier = fichiers.map(cles);
   const communes = [...parFichier[0].keys()].filter((k) => parFichier.every((m) => m.has(k)));
@@ -33,7 +50,11 @@ export function assemblerComparaison(fichiers: FichierAComparer[]): ResultatComp
 
   const nomsFinaux = communes.map((k) => parFichier[0].get(k) as string);
   const colonnesAlignees = communes
-    .map((k, i) => ({ nomFinal: nomsFinaux[i], variantes: [...new Set(parFichier.map((m) => m.get(k) as string))] }))
+    .map((k, i) => {
+      const variantes = new Set(parFichier.map((m) => m.get(k) as string));
+      synonymes.find((x) => x.nomFinal === nomsFinaux[i])?.variantes.forEach((v) => variantes.add(v));
+      return { nomFinal: nomsFinaux[i], variantes: [...variantes] };
+    })
     .filter((c) => c.variantes.length > 1);
   const ignorees = new Set<string>();
   parFichier.forEach((m) => m.forEach((nom, k) => !communes.includes(k) && ignorees.add(nom)));

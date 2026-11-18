@@ -20,7 +20,7 @@ export function interpreterFusion(r: RapportNettoyage, nomA: string, nomB: strin
       complements.push({ titre: "Formats corrigés", texte: `${nf(r.nombresHarmonises)} nombre(s) et ${nf(r.datesHarmonisees)} date(s) remis au même format.` });
     const resume = `${r.nbFichiers} fichiers réunis : ${nf(r.lignesFinales)} lignes au final sur ${nf(r.lignesInitialesTotal)} au départ${r.doublonsSupprimes ? `, après retrait de ${nf(r.doublonsSupprimes)} doublon(s)` : ""}.`;
     pistes.push("Lancez l'analyse : elle comparera automatiquement les fichiers entre eux grâce à la colonne « Fichier Source ».");
-    if (r.colonnesFusionnees.length === 0) pistes.push("Si des colonnes identiques portent des noms très différents (ex. « CA » et « Chiffre d'affaires »), renommez-les avant la fusion pour qu'elles soient réunies.");
+    if (r.colonnesFusionnees.length === 0) pistes.push("Si des colonnes identiques portent des noms différents (ex. « CA » et « Chiffre d'affaires »), rapprochez-les dans « Correspondance des colonnes » puis relancez la fusion.");
     return { guide, complements, resume, pistes };
   }
 
@@ -45,8 +45,8 @@ export function interpreterFusion(r: RapportNettoyage, nomA: string, nomB: strin
     const diff = r.nbDifferentes ?? 0;
     const colonnes = r.colonnesComparees ?? [];
     if (!colonnes.length) {
-      resume = "Aucune colonne ne porte le même nom dans les deux fichiers : seules les présences et absences de clés ont pu être comparées.";
-      pistes.push("Pour comparer des valeurs, donnez le même nom aux colonnes à comparer dans les deux fichiers (ex. « Montant »).");
+      resume = "Aucune colonne n'a été rapprochée entre les deux fichiers : seules les présences et absences de clés ont pu être comparées.";
+      pistes.push("Pour comparer des valeurs, indiquez les colonnes qui se correspondent dans « Correspondance des colonnes », sous la liste des fichiers.");
     } else {
       resume = `Sur ${nf(ident + diff)} clé(s) présentes dans les deux fichiers, ${nf(ident)} ont exactement les mêmes valeurs et ${nf(diff)} présentent au moins un écart. ${nf(orphA)} sont absentes de « ${nomB} » et ${nf(orphB)} absentes de « ${nomA} ».`;
       complements.push({ titre: "Colonnes comparées", texte: colonnes.map((c) => `« ${c} »`).join(", ") + "." });

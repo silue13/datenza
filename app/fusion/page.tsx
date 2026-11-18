@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import BlocInterpretation from "../components/BlocInterpretation";
+import CorrespondanceColonnes from "../components/CorrespondanceColonnes";
+import { appliquerCorrespondance, suggererCorrespondance } from "../../lib/analyse/correspondance";
 import { BoutonAnalyseComparee, ReglagesComparaisonMulti, ResultatsComparaisonMulti } from "../components/ComparaisonMulti";
 import { assemblerComparaison, colonnesCommunesMulti, comparerPlusieursFichiers, type ResultatMultiComparaison } from "../../lib/analyse/comparaison";
 import { interpreterFusion } from "../../lib/analyse/interpretationFusion";
@@ -72,6 +74,8 @@ export default function FusionNettoyagePage() {
   const [ordreMulti, setOrdreMulti] = useState<number[]>([]);
   const [clesMultiChoisies, setClesMultiChoisies] = useState<Record<string, string>>({});
   const [colonnesExcluesMulti, setColonnesExcluesMulti] = useState<string[]>([]);
+  // Correspondances corrigées à la main, par couple « référence>fichier » : colonne de référence -> colonne choisie (null = aucune)
+  const [correspChoisies, setCorrespChoisies] = useState<Record<string, Record<string, string | null>>>({});
   const setModeAssemblage = (m: ModeAssemblage | "multi") => {
     setModeAssemblageBrut(m);
     setResultat(null);
@@ -130,10 +134,6 @@ export default function FusionNettoyagePage() {
     return prio || colonnesB[0] || "";
   }, [colonnesB, cleChoisieB, cleActiveA, suggestion]);
 
-  const comparables = useMemo(
-    () => (tableA && tableB && tableA !== tableB ? colonnesComparables(tableA, tableB, cleActiveA, cleActiveB) : []),
-    [tableA, tableB, cleActiveA, cleActiveB]
-  );
 
   // Aperçu du rapprochement avant de lancer
   const apercu = useMemo(
@@ -162,7 +162,61 @@ export default function FusionNettoyagePage() {
       return colonneCorrespondante(premier, cle0, f) ?? f.entetes[0];
     });
   }, [fichiersOrdonnes, clesMultiChoisies]);
-  const colonnesMulti = useMemo(() => (fichiersOrdonnes.length >= 2 ? colonnesCommunesMulti(fichiersOrdonnes, clesMulti) : []), [fichiersOrdonnes, clesMulti]);
+
+  // Correspondance des colonnes : un fichier de référence, et pour chacun des autres la colonne qui désigne la même chose
+  const indexRef = modeAssemblage === "jointure" ? idxTableA : modeAssemblage === "multi" ? (ordre[0] ?? 0) : 0;
+  const indicesAutres = useMemo(
+    () => (modeAssemblage === "jointure" ? [idxTableB] : ordre.filter((i) => i !== indexRef)).filter((i) => i < fichiersBruts.length && i !== indexRef),
+    [modeAssemblage, idxTableB, ordre, indexRef, fichiersBruts.length]
+  );
+  const cleDuFichier = useCallback(
+    (i: number): string | undefined =>
+      modeAssemblage === "jointure" ? (i === idxTableA ? cleActiveA : i === idxTableB ? cleActiveB : undefined) : modeAssemblage === "multi" ? clesMulti[ordre.indexOf(i)] : undefined,
+    [modeAssemblage, idxTableA, idxTableB, cleActiveA, cleActiveB, clesMulti, ordre]
+  );
+  const correspondances = useMemo(() => {
+    const ref = fichiersBruts[indexRef];
+    const res: Record<number, Record<string, string | null>> = {};
+    if (!ref) return res;
+    const exclusRef = [cleDuFichier(indexRef)].filter(Boolean) as string[];
+    for (const i of indicesAutres) {
+      const autre = fichiersBruts[i];
+      const exclus = [cleDuFichier(i)].filter(Boolean) as string[];
+      const proposee = suggererCorrespondance(ref, autre, exclusRef, exclus);
+      const choisie = correspChoisies[`${indexRef}>${i}`] ?? {};
+      const fusion: Record<string, string | null> = {};
+      for (const c of Object.keys(proposee)) {
+        const v = c in choisie ? choisie[c] : proposee[c];
+        fusion[c] = v && autre.entetes.includes(v) && !exclus.includes(v) ? v : null;
+      }
+      // Une même colonne ne peut correspondre qu'à une seule colonne de référence (le choix manuel l'emporte)
+      const vues = new Set<string>();
+      for (const c of [...Object.keys(choisie), ...Object.keys(fusion)]) {
+        const v = fusion[c];
+        if (!v) continue;
+        if (vues.has(v)) fusion[c] = null;
+        else vues.add(v);
+      }
+      res[i] = fusion;
+    }
+    return res;
+  }, [fichiersBruts, indexRef, indicesAutres, cleDuFichier, correspChoisies]);
+  // Fichiers avec les colonnes rapprochées renommées : c'est sur eux que portent comparaison, fusion et analyse comparée
+  const fichiersEffectifs = useMemo(
+    () => fichiersBruts.map((f, i) => (correspondances[i] ? appliquerCorrespondance(f, correspondances[i]) : f)),
+    [fichiersBruts, correspondances]
+  );
+  const tableAEff = fichiersEffectifs[idxTableA] || fichiersEffectifs[0];
+  const tableBEff = fichiersEffectifs[idxTableB] || fichiersEffectifs[1];
+  const fichiersOrdonnesEff = useMemo(() => ordre.map((i) => fichiersEffectifs[i]), [ordre, fichiersEffectifs]);
+  const comparables = useMemo(
+    () => (tableAEff && tableBEff && idxTableA !== idxTableB ? colonnesComparables(tableAEff, tableBEff, cleActiveA, cleActiveB) : []),
+    [tableAEff, tableBEff, idxTableA, idxTableB, cleActiveA, cleActiveB]
+  );
+  const colonnesMulti = useMemo(
+    () => (fichiersOrdonnesEff.length >= 2 ? colonnesCommunesMulti(fichiersOrdonnesEff, clesMulti) : []),
+    [fichiersOrdonnesEff, clesMulti]
+  );
 
   const telechargerTableau = (entetes: string[], corps: unknown[][], nom: string) => {
     const classeur = XLSX.utils.book_new();
@@ -229,7 +283,7 @@ export default function FusionNettoyagePage() {
     if (fichiersBruts.length < 2) return;
     if (modeAssemblage === "multi") {
       setResultat(null);
-      setResultatMulti(comparerPlusieursFichiers(fichiersOrdonnes, clesMulti, colonnesMulti.filter((c) => !colonnesExcluesMulti.includes(c))));
+      setResultatMulti(comparerPlusieursFichiers(fichiersOrdonnesEff, clesMulti, colonnesMulti.filter((c) => !colonnesExcluesMulti.includes(c))));
       return;
     }
     setResultatMulti(null);
@@ -250,7 +304,7 @@ export default function FusionNettoyagePage() {
       ...options,
     };
 
-    const res = fusionnerEtNettoyer(fichiersBruts, optionsCompletes);
+    const res = fusionnerEtNettoyer(fichiersEffectifs, optionsCompletes);
     setResultat(res);
   };
 
@@ -285,6 +339,7 @@ export default function FusionNettoyagePage() {
 
   const supprimerFichier = (index: number) => {
     setFichiersBruts((prev) => prev.filter((_, i) => i !== index));
+    setCorrespChoisies({});
     setOrdreMulti([]);
     setResultat(null);
     setResultatMulti(null);
@@ -381,6 +436,17 @@ export default function FusionNettoyagePage() {
                 ))}
               </div>
             </div>
+          )}
+        {fichiersBruts.length >= 2 && fichiersBruts[indexRef] && indicesAutres.length > 0 && (
+            <CorrespondanceColonnes
+              reference={fichiersBruts[indexRef]}
+              exclusRef={[cleDuFichier(indexRef)].filter(Boolean) as string[]}
+              autres={indicesAutres.map((i) => ({ index: i, fichier: fichiersBruts[i], exclus: [cleDuFichier(i)].filter(Boolean) as string[] }))}
+              correspondances={correspondances}
+              onChange={(i, colRef, col) =>
+                setCorrespChoisies((c) => ({ ...c, [`${indexRef}>${i}`]: { ...(c[`${indexRef}>${i}`] ?? {}), [colRef]: col } }))
+              }
+            />
           )}
         </div>
 
@@ -561,7 +627,7 @@ export default function FusionNettoyagePage() {
                         <p className="text-[10px] uppercase font-bold text-slate-400">Colonnes à comparer</p>
                         {comparables.length === 0 ? (
                           <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                            Aucune colonne ne porte le même nom dans les deux fichiers : seules les clés présentes ou absentes seront comparées. Renommez les colonnes à comparer pour qu&apos;elles aient le même nom.
+                            Aucune colonne n&apos;est rapprochée entre les deux fichiers : seules les clés présentes ou absentes seront comparées. Indiquez les colonnes qui se correspondent dans « Correspondance des colonnes », sous la liste des fichiers.
                           </p>
                         ) : (
                           <>
@@ -708,7 +774,7 @@ export default function FusionNettoyagePage() {
             chargerEtAnalyser(`Comparaison de ${resultatMulti.bilan.fichiers.length} fichiers (${resultatMulti.bilan.fichiers.join(", ")})`.slice(0, 120), resultatMulti.entetes, resultatMulti.corps);
             router.push("/analyse");
           }}
-          onAnalyseComparee={() => lancerAnalyseComparee(fichiersOrdonnes)}
+          onAnalyseComparee={() => lancerAnalyseComparee(fichiersOrdonnesEff)}
         />
       )}
 
@@ -852,8 +918,8 @@ export default function FusionNettoyagePage() {
               Télécharger le résultat Excel (.xlsx)
             </button>
 
-            {resultat.rapport.mode === "jointure" && tableA && tableB && (
-              <BoutonAnalyseComparee nb={2} onClick={() => lancerAnalyseComparee([tableA, tableB])} />
+            {resultat.rapport.mode === "jointure" && tableAEff && tableBEff && (
+              <BoutonAnalyseComparee nb={2} onClick={() => lancerAnalyseComparee([tableAEff, tableBEff])} />
             )}
 
             <button
