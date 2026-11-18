@@ -660,3 +660,29 @@ export function colonnesComparables(tableA: FichierEntree, tableB: FichierEntree
   const nomsB = new Set(tableB.entetes.filter((c) => c !== cleB && c !== "Fichier Source").map(normaliserCleColonne));
   return tableA.entetes.filter((c) => c !== cleA && c !== "Fichier Source" && nomsB.has(normaliserCleColonne(c)));
 }
+
+/**
+ * Dans `autre`, la colonne dont les valeurs recouvrent le mieux celles de la colonne `cleRef` du fichier de référence
+ * (pour proposer la clé de chaque fichier d'une comparaison à plusieurs). Null si aucune valeur commune.
+ */
+export function colonneCorrespondante(ref: FichierEntree, cleRef: string, autre: FichierEntree): string | null {
+  const iRef = ref.entetes.indexOf(cleRef);
+  if (iRef === -1) return null;
+  const valeursRef = valeursDistinctes(ref, iRef).valeurs;
+  let meilleure: { col: string; score: number } | null = null;
+  autre.entetes.forEach((col, i) => {
+    if (col === "Fichier Source") return;
+    const { valeurs, nbLignes } = valeursDistinctes(autre, i);
+    if (!valeurs.size) return;
+    let communs = 0;
+    valeurs.forEach((v) => {
+      if (valeursRef.has(v)) communs++;
+    });
+    if (!communs) return;
+    const score =
+      (communs / Math.min(valeurs.size, valeursRef.size)) * (0.4 + 0.6 * (valeurs.size / Math.max(1, nbLignes))) +
+      (normaliserCleColonne(col) === normaliserCleColonne(cleRef) ? 0.15 : 0);
+    if (!meilleure || score > meilleure.score) meilleure = { col, score };
+  });
+  return meilleure ? (meilleure as { col: string; score: number }).col : null;
+}

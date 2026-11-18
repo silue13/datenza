@@ -1,6 +1,7 @@
 // lib/analyse/interpretationFusion.ts — bilan en clair d'une fusion ou d'une réconciliation de fichiers.
 import type { Interpretation, LigneInterpretation } from "./interpretation";
 import type { RapportNettoyage } from "./fusion";
+import type { BilanMultiComparaison } from "./comparaison";
 
 const nf = (x: number) => x.toLocaleString("fr-FR");
 const pct = (x: number, total: number) => (total ? `${(Math.round((x / total) * 1000) / 10).toLocaleString("fr-FR")} %` : "0 %");
@@ -70,5 +71,33 @@ export function interpreterFusion(r: RapportNettoyage, nomA: string, nomB: strin
 
   if (totalA && corr / totalA < 0.2)
     pistes.unshift("Très peu de lignes rapprochées : vérifiez que les deux clés choisies contiennent bien le même type d'information (même code, même format).");
+  return { guide, complements, resume, pistes };
+}
+
+/** Bilan en clair d'une comparaison ligne à ligne de plusieurs fichiers. */
+export function interpreterMultiComparaison(b: BilanMultiComparaison): Interpretation {
+  const premier = b.fichiers[0];
+  const dernier = b.fichiers[b.fichiers.length - 1];
+  const guide = `Chaque ligne du tableau est une clé (client, produit, facture…) retrouvée dans au moins un des ${b.fichiers.length} fichiers. Les colonnes « Dans … » indiquent dans quels fichiers elle figure. « Apparue » : absente du premier fichier (${premier}) mais présente dans le dernier (${dernier}) ; « Disparue » : l'inverse. Les fichiers sont lus dans l'ordre de la liste : mettez-les dans l'ordre chronologique pour suivre une évolution. Les colonnes de même nom sont comparées d'un fichier à l'autre, au format près.`;
+  const complements: LigneInterpretation[] = [
+    { titre: "Présentes dans tous les fichiers", texte: `${nf(b.partout)} sur ${nf(b.nbCles)} (${pct(b.partout, b.nbCles)}).` },
+    { titre: "Apparues / disparues", texte: `${nf(b.apparues)} apparue(s) et ${nf(b.disparues)} disparue(s) entre « ${premier} » et « ${dernier} ».` },
+  ];
+  const uniques = b.uniques.filter((u) => u.nb > 0);
+  if (uniques.length) complements.push({ titre: "Présentes dans un seul fichier", texte: uniques.map((u) => `« ${u.fichier} » : ${nf(u.nb)}`).join(" ; ") + "." });
+  if (b.colonnes.length) complements.push({ titre: "Colonnes comparées", texte: b.colonnes.map((c) => `« ${c} »`).join(", ") + "." });
+  if (b.changementsParColonne.length)
+    complements.push({ titre: "Valeurs qui changent", texte: b.changementsParColonne.map((c) => `« ${c.colonne} » : ${nf(c.nb)} clé(s)`).join(" ; ") + "." });
+  if (b.clesEnDouble) complements.push({ titre: "Clés en double", texte: `${nf(b.clesEnDouble)} ligne(s) répètent une clé déjà vue dans le même fichier : seule la première est comparée.` });
+
+  const resume =
+    `Sur ${nf(b.nbCles)} clé(s), ${pct(b.partout, b.nbCles)} figurent dans les ${b.fichiers.length} fichiers. ` +
+    (b.apparues || b.disparues ? `Entre « ${premier} » et « ${dernier} », ${nf(b.apparues)} sont apparues et ${nf(b.disparues)} ont disparu.` : `Aucune clé n'est apparue ni n'a disparu entre le premier et le dernier fichier.`);
+
+  const pistes: string[] = [];
+  if (b.disparues) pistes.push("Les clés « Disparue » sont en tête des absences : clients perdus, produits retirés, agents partis… à vérifier une par une.");
+  if (b.changementsParColonne.length) pistes.push(`Les clés dont les valeurs changent sont en tête du tableau ; commencez par « ${b.changementsParColonne[0].colonne} ».`);
+  pistes.push("Pour comparer les totaux et les tendances de chaque fichier (graphiques, prévisions par fichier), utilisez « Analyse comparée des fichiers ».");
+  if (b.partout / Math.max(1, b.nbCles) < 0.2) pistes.push("Très peu de clés communes : vérifiez que la colonne choisie dans chaque fichier contient bien le même identifiant.");
   return { guide, complements, resume, pistes };
 }

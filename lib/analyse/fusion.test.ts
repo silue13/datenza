@@ -107,3 +107,29 @@ describe("analyse/comparaison", () => {
     expect(assemblerComparaison([{ nom: "a", entetes: ["X"], corps: [] }, { nom: "b", entetes: ["Y"], corps: [] }])).toBeNull();
   });
 });
+
+describe("analyse/comparaison à plusieurs fichiers", () => {
+  const jan = { nom: "janvier.xlsx", entetes: ["Code", "Client", "Montant"], corps: [["C1", "Awa", 100], ["C2", "Koffi", 200], ["C3", "Yao", 50]] };
+  const fev = { nom: "fevrier.xlsx", entetes: ["code client", "Montant"], corps: [["c1", 120], ["C2", "200"], ["C4", 80]] };
+  const mar = { nom: "mars.csv", entetes: ["Code", "Montant"], corps: [["C1", 150], ["C4", 90], ["C5", 10]] };
+
+  it("indique la présence de chaque clé et l'évolution des valeurs", async () => {
+    const { comparerPlusieursFichiers, colonnesCommunesMulti } = await import("./comparaison");
+    expect(colonnesCommunesMulti([jan, fev, mar], ["Code", "code client", "Code"])).toEqual(["Montant"]);
+    const r = comparerPlusieursFichiers([jan, fev, mar], ["Code", "code client", "Code"]);
+    expect(r.bilan).toMatchObject({ fichiers: ["janvier", "fevrier", "mars"], nbCles: 5, partout: 1, apparues: 2, disparues: 2 });
+    expect(r.bilan.uniques).toEqual([{ fichier: "janvier", nb: 1 }, { fichier: "fevrier", nb: 0 }, { fichier: "mars", nb: 1 }]);
+    expect(r.bilan.changementsParColonne).toEqual([{ colonne: "Montant", nb: 2 }]);
+    const c1 = r.corps.find((l) => l[0] === "C1")!;
+    expect(c1.slice(1, 7)).toEqual(["Partout", 3, "Oui", "Oui", "Oui", "Montant"]);
+    expect(c1[r.entetes.indexOf("Montant : évolution (mars − janvier)")]).toBe(50);
+    expect(r.corps.find((l) => l[0] === "C2")![1]).toBe("Disparue");
+    expect(r.corps.find((l) => l[0] === "C5")![1]).toBe("Seulement dans mars");
+    expect(r.corps[0][0]).toBe("C1");
+  });
+
+  it("propose la clé correspondante dans un autre fichier", async () => {
+    const { colonneCorrespondante } = await import("./fusion");
+    expect(colonneCorrespondante(jan, "Code", fev)).toBe("code client");
+  });
+});

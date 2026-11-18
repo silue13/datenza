@@ -19,9 +19,12 @@ import {
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import BlocInterpretation from "../components/BlocInterpretation";
+import { BoutonAnalyseComparee, ReglagesComparaisonMulti, ResultatsComparaisonMulti } from "../components/ComparaisonMulti";
+import { assemblerComparaison, colonnesCommunesMulti, comparerPlusieursFichiers, type ResultatMultiComparaison } from "../../lib/analyse/comparaison";
 import { interpreterFusion } from "../../lib/analyse/interpretationFusion";
 import {
   apercuCorrespondance,
+  colonneCorrespondante,
   colonnesComparables,
   suggererCles,
   fusionnerEtNettoyer,
@@ -63,7 +66,17 @@ export default function FusionNettoyagePage() {
   const [resultat, setResultat] = useState<ResultatFusionNettoyage | null>(null);
 
   // Configuration de l'assemblage
-  const [modeAssemblage, setModeAssemblage] = useState<ModeAssemblage>("jointure");
+  const [modeAssemblage, setModeAssemblageBrut] = useState<ModeAssemblage | "multi">("jointure");
+  const [resultatMulti, setResultatMulti] = useState<ResultatMultiComparaison | null>(null);
+  // Comparaison à plusieurs : ordre des fichiers, clé choisie par fichier (par nom de fichier), colonnes décochées
+  const [ordreMulti, setOrdreMulti] = useState<number[]>([]);
+  const [clesMultiChoisies, setClesMultiChoisies] = useState<Record<string, string>>({});
+  const [colonnesExcluesMulti, setColonnesExcluesMulti] = useState<string[]>([]);
+  const setModeAssemblage = (m: ModeAssemblage | "multi") => {
+    setModeAssemblageBrut(m);
+    setResultat(null);
+    setResultatMulti(null);
+  };
   const [idxTableA, setIdxTableA] = useState<number>(0);
   const [idxTableB, setIdxTableB] = useState<number>(1);
   const [cleChoisieA, setCleChoisieA] = useState<string>("");
@@ -128,6 +141,44 @@ export default function FusionNettoyagePage() {
     [tableA, tableB, cleActiveA, cleActiveB]
   );
 
+  // Ordre effectif : celui choisi, complété des fichiers ajoutés depuis
+  const ordre = useMemo(() => {
+    const valides = ordreMulti.filter((i) => i < fichiersBruts.length);
+    return [...valides, ...fichiersBruts.map((_, i) => i).filter((i) => !valides.includes(i))];
+  }, [ordreMulti, fichiersBruts]);
+  const fichiersOrdonnes = useMemo(() => ordre.map((i) => fichiersBruts[i]), [ordre, fichiersBruts]);
+  // Clé de chaque fichier : choisie, sinon proposée d'après les valeurs communes avec le premier fichier
+  const clesMulti = useMemo(() => {
+    if (fichiersOrdonnes.length < 2) return [];
+    const premier = fichiersOrdonnes[0];
+    const cle0 =
+      (premier.entetes.includes(clesMultiChoisies[premier.nom]) && clesMultiChoisies[premier.nom]) ||
+      suggererCles(premier, fichiersOrdonnes[1])?.cleA ||
+      premier.entetes[0];
+    return fichiersOrdonnes.map((f, pos) => {
+      if (pos === 0) return cle0;
+      const choisie = clesMultiChoisies[f.nom];
+      if (choisie && f.entetes.includes(choisie)) return choisie;
+      return colonneCorrespondante(premier, cle0, f) ?? f.entetes[0];
+    });
+  }, [fichiersOrdonnes, clesMultiChoisies]);
+  const colonnesMulti = useMemo(() => (fichiersOrdonnes.length >= 2 ? colonnesCommunesMulti(fichiersOrdonnes, clesMulti) : []), [fichiersOrdonnes, clesMulti]);
+
+  const telechargerTableau = (entetes: string[], corps: unknown[][], nom: string) => {
+    const classeur = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(classeur, XLSX.utils.aoa_to_sheet([entetes, ...corps]), nom.slice(0, 31));
+    XLSX.writeFile(classeur, `datenza_${nom.toLowerCase().replace(/[^a-z0-9]+/g, "_")}.xlsx`);
+  };
+
+  /** Analyse comparée : les fichiers sont empilés sur leurs colonnes communes avec « Fichier Source », ce qui active la comparaison dans l'analyse. */
+  const lancerAnalyseComparee = (liste: FichierEntree[]) => {
+    const assemble = assemblerComparaison(liste);
+    if (!assemble) return;
+    const court = (n: string) => n.replace(/\.[^/.]+$/, "");
+    chargerEtAnalyser(`Analyse comparée (${liste.map((f) => court(f.nom)).join(" vs ")})`.slice(0, 120), assemble.entetes, assemble.corps);
+    router.push("/analyse");
+  };
+
   // Extraction universelle Excel et CSV
   const traiterFichiersDeposes = useCallback(async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
@@ -176,9 +227,15 @@ export default function FusionNettoyagePage() {
 
   const executerOperation = () => {
     if (fichiersBruts.length < 2) return;
+    if (modeAssemblage === "multi") {
+      setResultat(null);
+      setResultatMulti(comparerPlusieursFichiers(fichiersOrdonnes, clesMulti, colonnesMulti.filter((c) => !colonnesExcluesMulti.includes(c))));
+      return;
+    }
+    setResultatMulti(null);
 
     const optionsCompletes: OptionsNettoyage = {
-      mode: modeAssemblage,
+      mode: modeAssemblage as ModeAssemblage,
       jointure:
         modeAssemblage === "jointure"
           ? {
@@ -228,7 +285,9 @@ export default function FusionNettoyagePage() {
 
   const supprimerFichier = (index: number) => {
     setFichiersBruts((prev) => prev.filter((_, i) => i !== index));
+    setOrdreMulti([]);
     setResultat(null);
+    setResultatMulti(null);
   };
 
   return (
@@ -334,33 +393,45 @@ export default function FusionNettoyagePage() {
             </h3>
 
             {/* Sélecteur de Mode : Empilement vs Jointure */}
-            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setModeAssemblage("empilement")}
-                className={`py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition ${
-                  modeAssemblage === "empilement"
-                    ? "bg-white dark:bg-slate-900 text-purple-600 shadow-xs"
-                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                Fusionner (empiler)
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setModeAssemblage("jointure")}
-                className={`py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition ${
-                  modeAssemblage === "jointure"
-                    ? "bg-white dark:bg-slate-900 text-purple-600 shadow-xs"
-                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                }`}
-              >
-                <GitMerge className="w-3.5 h-3.5" />
-                Comparer 2 fichiers
-              </button>
+            <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-[11px] font-bold">
+              {(
+                [
+                  { id: "jointure", libelle: "Comparer 2 fichiers", Icone: GitMerge },
+                  { id: "multi", libelle: "Comparer plusieurs", Icone: Files },
+                  { id: "empilement", libelle: "Fusionner (empiler)", Icone: Layers },
+                ] as const
+              ).map(({ id, libelle, Icone }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setModeAssemblage(id)}
+                  className={`py-2 px-1.5 rounded-lg flex flex-col items-center justify-center gap-1 text-center leading-tight transition ${
+                    modeAssemblage === id ? "bg-white dark:bg-slate-900 text-purple-600 shadow-xs" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Icone className="w-3.5 h-3.5" />
+                  {libelle}
+                </button>
+              ))}
             </div>
+
+            {modeAssemblage === "multi" &&
+              (fichiersBruts.length < 2 ? (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/60">
+                  Ajoutez au moins 2 fichiers (idéalement 3 ou plus) pour les comparer.
+                </p>
+              ) : (
+                <ReglagesComparaisonMulti
+                  fichiers={fichiersBruts}
+                  ordre={ordre}
+                  onOrdre={setOrdreMulti}
+                  cles={clesMulti}
+                  onCle={(iF, cle) => setClesMultiChoisies((c) => ({ ...c, [fichiersBruts[iF].nom]: cle }))}
+                  colonnes={colonnesMulti}
+                  colonnesExclues={colonnesExcluesMulti}
+                  onBasculerColonne={(c) => setColonnesExcluesMulti((l) => (l.includes(c) ? l.filter((x) => x !== c) : [...l, c]))}
+                />
+              ))}
 
             {/* CONFIGURATION DE LA JOINTURE RELATIONNELLE */}
             {modeAssemblage === "jointure" && (
@@ -526,7 +597,7 @@ export default function FusionNettoyagePage() {
             )}
 
             {/* RÈGLES DE NETTOYAGE MUTUELLES */}
-            <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs">
+            <div className={`space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs ${modeAssemblage === "multi" ? "hidden" : ""}`}>
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input
                   type="checkbox"
@@ -623,11 +694,23 @@ export default function FusionNettoyagePage() {
               className="w-full py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
-              {modeAssemblage === "jointure" ? "Lancer la comparaison" : "Lancer la fusion"}
+              {modeAssemblage === "empilement" ? "Lancer la fusion" : "Lancer la comparaison"}
             </button>
           </div>
         </div>
       </div>
+
+      {resultatMulti && (
+        <ResultatsComparaisonMulti
+          resultat={resultatMulti}
+          onTelecharger={() => telechargerTableau(resultatMulti.entetes, resultatMulti.corps, "Comparaison_plusieurs_fichiers")}
+          onAnalyserTableau={() => {
+            chargerEtAnalyser(`Comparaison de ${resultatMulti.bilan.fichiers.length} fichiers (${resultatMulti.bilan.fichiers.join(", ")})`.slice(0, 120), resultatMulti.entetes, resultatMulti.corps);
+            router.push("/analyse");
+          }}
+          onAnalyseComparee={() => lancerAnalyseComparee(fichiersOrdonnes)}
+        />
+      )}
 
       {/* RÉSULTATS DU TRAITEMENT & SORTIES */}
       {resultat && (
@@ -768,6 +851,10 @@ export default function FusionNettoyagePage() {
               <Download className="w-4 h-4 text-emerald-400" />
               Télécharger le résultat Excel (.xlsx)
             </button>
+
+            {resultat.rapport.mode === "jointure" && tableA && tableB && (
+              <BoutonAnalyseComparee nb={2} onClick={() => lancerAnalyseComparee([tableA, tableB])} />
+            )}
 
             <button
               onClick={() => ouvrirResultat("accueil")}
