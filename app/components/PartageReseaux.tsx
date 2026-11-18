@@ -1,8 +1,8 @@
 "use client";
 // app/components/PartageReseaux.tsx — boutons pour publier le lien d'un projet partagé sur les réseaux sociaux et messageries.
 
-import { useSyncExternalStore, type ReactNode } from "react";
-import { Mail, MessageCircle, Send, Share2 } from "lucide-react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { Check, Link2, Mail, MessageCircle, Send, Share2 } from "lucide-react";
 import { RESEAUX, lienReseau, texteDePartage, type Reseau } from "../../lib/projets/partageReseaux";
 
 const STYLE: Record<Reseau, { couleur: string; icone: ReactNode }> = {
@@ -19,8 +19,16 @@ const BOUTON =
 
 const ignorer = () => () => {};
 
-export default function PartageReseaux({ url, nomProjet }: { url: string; nomProjet: string }) {
-  const texte = texteDePartage(nomProjet);
+type Props = {
+  url: string;
+  nomProjet: string;
+  /** Visiteur d'un lien partagé : texte neutre et bouton « Copier le lien » intégré. */
+  visiteur?: boolean;
+};
+
+export default function PartageReseaux({ url, nomProjet, visiteur = false }: Props) {
+  const texte = texteDePartage(nomProjet, visiteur);
+  const [copie, setCopie] = useState<"ok" | "echec" | null>(null);
   // Menu de partage du téléphone (WhatsApp Business, Messenger, SMS…) : proposé seulement là où le navigateur le permet
   const partageNatif = useSyncExternalStore(
     ignorer,
@@ -34,6 +42,16 @@ export default function PartageReseaux({ url, nomProjet }: { url: string; nomPro
     } catch {
       // Fenêtre fermée par l'utilisateur : rien à signaler
     }
+  }
+
+  async function copierLien() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopie("ok");
+    } catch {
+      setCopie("echec");
+    }
+    setTimeout(() => setCopie(null), 2500);
   }
 
   return (
@@ -57,6 +75,16 @@ export default function PartageReseaux({ url, nomProjet }: { url: string; nomPro
         <button type="button" onClick={() => void partagerNatif()} className={`${BOUTON} bg-blue-600 hover:bg-blue-700`}>
           <Share2 className="w-3.5 h-3.5" />
           Autres applis
+        </button>
+      )}
+      {visiteur && (
+        <button
+          type="button"
+          onClick={() => void copierLien()}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-white/60 dark:hover:bg-slate-800 transition cursor-pointer"
+        >
+          {copie === "ok" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Link2 className="w-3.5 h-3.5" />}
+          {copie === "ok" ? "Lien copié" : copie === "echec" ? "Copie impossible" : "Copier le lien"}
         </button>
       )}
     </div>

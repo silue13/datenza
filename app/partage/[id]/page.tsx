@@ -7,6 +7,7 @@ import { Eye } from "lucide-react";
 import { DataProvider, useData } from "../../context/DataContext";
 import AnalysePage from "../../analyse/page";
 import { chargerPartage, type ProjetPartage } from "../../../lib/projets/depot";
+import PartageReseaux from "../../components/PartageReseaux";
 
 /** L'analyse s'affiche une fois le projet partagé chargé dans son propre contexte de données. */
 function Contenu() {
@@ -76,6 +77,9 @@ function ProjetPartageVue() {
           {majLe && !isNaN(majLe.getTime()) ? `, mis à jour le ${majLe.toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}` : ""}.
           Vous pouvez filtrer et explorer : rien n&apos;est modifié chez son propriétaire, et vos propres fichiers ne sont pas touchés.
         </p>
+      </div>
+      <div className="max-w-6xl mx-auto print:hidden px-1">
+        <PartageReseaux url={`${window.location.origin}/partage/${id}`} nomProjet={projet.nom} visiteur />
       </div>
       {/* Contexte de données isolé : la session du visiteur n'est ni lue ni écrasée */}
       <DataProvider key={id} etatInitial={projet.etat} lectureSeule>

@@ -7,6 +7,7 @@ describe("projets/partageReseaux", () => {
   it("propose un texte avec le nom du projet, ou générique sans nom", () => {
     expect(texteDePartage("  Ventes 2026 ")).toBe("Découvrez mon analyse « Ventes 2026 » réalisée avec DATENZA");
     expect(texteDePartage("   ")).toBe("Découvrez mon analyse réalisée avec DATENZA");
+    expect(texteDePartage("Ventes", true)).toBe("Découvrez l'analyse « Ventes » réalisée avec DATENZA");
   });
   it("encode le lien dans l'adresse de chaque réseau", () => {
     for (const { id } of RESEAUX) {

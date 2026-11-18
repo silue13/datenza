@@ -11,10 +11,11 @@ export const RESEAUX: { id: Reseau; nom: string }[] = [
   { id: "email", nom: "E-mail" },
 ];
 
-/** Texte d'accompagnement proposé avec le lien. */
-export function texteDePartage(nomProjet: string): string {
+/** Texte d'accompagnement proposé avec le lien : « mon analyse » pour le propriétaire, « l'analyse » pour un visiteur qui repartage. */
+export function texteDePartage(nomProjet: string, visiteur = false): string {
   const nom = nomProjet.trim();
-  return nom ? `Découvrez mon analyse « ${nom} » réalisée avec DATENZA` : "Découvrez mon analyse réalisée avec DATENZA";
+  const analyse = visiteur ? "l'analyse" : "mon analyse";
+  return nom ? `Découvrez ${analyse} « ${nom} » réalisée avec DATENZA` : `Découvrez ${analyse} réalisée avec DATENZA`;
 }
 
 /** Adresse qui ouvre la fenêtre de publication du réseau, pré-remplie avec le lien (et le texte quand le réseau l'accepte). */
