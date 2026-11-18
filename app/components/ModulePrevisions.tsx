@@ -35,7 +35,7 @@ import {
 } from "@/lib/analyse/utils";
 import { useData, type GraphiqueEpingle } from "../context/DataContext";
 import BoutonImage from "./BoutonImage";
-import type { Chart, ChartDataset, LegendItem, TooltipItem } from "chart.js";
+import type { Chart, ChartDataset, LegendItem, Plugin, TooltipItem } from "chart.js";
 
 /** Jeu de données d'une courbe de prévision ; indexDerniereDonnee situe la dernière valeur observée. */
 type JeuPrevision = ChartDataset<"line", (number | null)[]> & { label: string; indexDerniereDonnee?: number };
@@ -80,9 +80,9 @@ function hashChaineEnNombre(str: string): number {
  * Trait vertical entre la dernière donnée observée et la première projection, avec les mentions « observé » et « prévu ».
  * La position est lue sur le premier jeu de données (indexDerniereDonnee) pour suivre les changements de série.
  */
-const MARQUEUR_PREVISION = {
+const MARQUEUR_PREVISION: Plugin<"line"> = {
   id: "marqueurPrevision",
-  afterDatasetsDraw(chart: Chart) {
+  afterDatasetsDraw(chart: Chart<"line">) {
     const index = (chart.data?.datasets as JeuPrevision[] | undefined)?.find((d) => typeof d.indexDerniereDonnee === "number")?.indexDerniereDonnee;
     if (typeof index !== "number" || index < 0 || !chart.scales?.x || !chart.chartArea) return;
     const x = chart.scales.x.getPixelForValue(index);

@@ -71,7 +71,8 @@ export async function rendreGraphiques(graphiques: GraphiqueEpingle[]): Promise<
             })),
           }
         : { labels: g.labels, datasets: g.datasets.map((d) => ({ ...d, fill: g.type === "Aires" ? true : d.fill })) };
-    let graphique: InstanceType<typeof Chart> | null = null;
+    // Seule la destruction est utilisée : un type minimal évite les incompatibilités entre versions des types de Chart.js
+    let graphique: { destroy: () => void } | null = null;
     try {
       graphique = new Chart(canvas, {
         type,
