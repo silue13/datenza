@@ -18,6 +18,8 @@ import {
   FileText,
 } from "lucide-react";
 import BoutonImage from "./BoutonImage";
+import BlocInterpretation from "./BlocInterpretation";
+import { interpreterGraphique } from "../../lib/analyse/interpretation";
 import CarteGeographique from "./CarteGeographique";
 import "./chartSetup";
 import {
@@ -1549,6 +1551,8 @@ function ExplicationDetailleeGraphique({
 
   // Constats calculés sur les valeurs dessinées (fonction testée dans lib/analyse/graphique.ts)
   const analyse = useMemo(() => expliquerGraphique(graphique), [graphique]);
+  // Lecture pédagogique : comment lire, tendance, écarts, résumé et pistes (lib/analyse/interpretation.ts)
+  const interpretation = useMemo(() => interpreterGraphique(graphique), [graphique]);
 
   async function genererSyntheseApprofondie() {
     setChargement(true);
@@ -1583,7 +1587,7 @@ function ExplicationDetailleeGraphique({
         type: graphique.type,
         nombre_de_points: graphique.nuage?.nbPoints ?? labels.length,
         donnees: resumePoints,
-        constats_deja_calcules: (analyse?.lignes ?? []).map((l) => `${l.titre} : ${l.texte}`),
+        constats_deja_calcules: [...(analyse?.lignes ?? []), ...(interpretation?.complements ?? [])].map((l) => `${l.titre} : ${l.texte}`),
       });
 
       const question = `Rédige une lecture concise de ce graphique intitulé "${graphique.titre}" :
@@ -1656,16 +1660,12 @@ N'invente aucun chiffre, aucune cause et aucun contexte absents des données ; n
         </button>
       </div>
 
-      <div className="space-y-1">
-        {analyse.lignes.map((l) => (
-          <div key={l.titre} className="flex items-start gap-1.5">
-            <span className="font-bold text-blue-600">•</span>
-            <p className="text-slate-700 dark:text-slate-300">
-              <strong>{l.titre} :</strong> {l.texte}
-            </p>
-          </div>
-        ))}
-      </div>
+      <BlocInterpretation
+        guide={interpretation?.guide}
+        constats={[...analyse.lignes, ...(interpretation?.complements ?? [])]}
+        resume={interpretation?.resume}
+        pistes={interpretation?.pistes}
+      />
 
       {syntheseDecisionnelle && (
         <div className="mt-2.5 pt-2.5 border-t border-slate-200 dark:border-slate-800 space-y-1.5">

@@ -9,6 +9,8 @@ import { useData, type GraphiqueEpingle } from "../context/DataContext";
 import type { Feature } from "geojson";
 import type { Layer, Path } from "leaflet";
 import BoutonImage from "./BoutonImage";
+import BlocInterpretation from "./BlocInterpretation";
+import { guideLecture, interpreterGraphique } from "../../lib/analyse/interpretation";
 import { capturerCarte } from "../../lib/analyse/imageCarte";
 import { telechargerVisuelEnImage } from "../../lib/analyse/imageGraphique";
 
@@ -456,6 +458,22 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     return texte;
   }, [points, agregation]);
 
+  // Lecture détaillée : écarts à la moyenne, répartition, résumé et pistes (mêmes règles que les graphiques)
+  const interpretationCarte = useMemo(() => {
+    const liste = enZones ? (resultatZones?.zones ?? []).map((z) => ({ nom: z.zone, v: z.valeur })) : points.map((p) => ({ nom: p.nom, v: p.totalGlobal }));
+    if (liste.length < 2) return null;
+    const tries = [...liste].sort((a, b) => b.v - a.v);
+    return interpreterGraphique({
+      titre: agregation === "Moyenne" ? "Moyenne" : agregation,
+      type: "Barres",
+      temporel: false,
+      interactif: false,
+      motCategorie: enZones ? "zone" : "localité",
+      labels: tries.map((t) => t.nom),
+      datasets: [{ label: agregation === "Nombre" ? "Nombre de lignes" : estFormatMatriciel ? "la valeur" : colonneMesure, data: tries.map((t) => t.v) }],
+    });
+  }, [enZones, resultatZones, points, agregation, estFormatMatriciel, colonneMesure]);
+
   // 4. GÉOCODAGE NOMINATIM
   useEffect(() => {
     if (estFormatMatriciel) return;
@@ -861,9 +879,13 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             </span>
           </div>
           {lectureZones && (
-            <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
-              <strong>Ce que montre la carte :</strong> {lectureZones}
-            </p>
+            <BlocInterpretation
+              titreGuide="Comment lire cette carte ?"
+              guide={guideLecture("carte")}
+              constats={[{ titre: "Ce que montre la carte", texte: lectureZones }, ...(interpretationCarte?.complements ?? [])]}
+              resume={interpretationCarte?.resume}
+              pistes={interpretationCarte?.pistes}
+            />
           )}
           {lieuxNonRattaches.length > 0 && (
             <p className="text-amber-700 dark:text-amber-400 leading-relaxed">
@@ -892,9 +914,13 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       {!enZones && points.length > 0 && (
         <div className="space-y-1.5 pt-1 text-xs">
           {lectureCarte && (
-            <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
-              <strong>Ce que montre la carte :</strong> {lectureCarte}
-            </p>
+            <BlocInterpretation
+              titreGuide="Comment lire cette carte ?"
+              guide={guideLecture("carte")}
+              constats={[{ titre: "Ce que montre la carte", texte: lectureCarte }, ...(interpretationCarte?.complements ?? [])]}
+              resume={interpretationCarte?.resume}
+              pistes={interpretationCarte?.pistes}
+            />
           )}
           {lieuxNonPlaces.length > 0 && (
             <p className="text-amber-700 dark:text-amber-400 leading-relaxed">

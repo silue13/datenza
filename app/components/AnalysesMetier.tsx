@@ -4,9 +4,12 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Bar, Line } from "react-chartjs-2";
 import "./chartSetup";
 import BoutonImage from "./BoutonImage";
+import BlocInterpretation from "./BlocInterpretation";
+import { interpreterCohortes, interpreterEvolution, interpreterPareto, interpreterRFM } from "../../lib/analyse/interpretationMetier";
 import { useData } from "../context/DataContext";
 import { AlertTriangle, Download, TrendingDown, TrendingUp } from "lucide-react";
 import type { Cellule } from "../../lib/analyse/utils";
+import type { Interpretation } from "../../lib/analyse/interpretation";
 import {
   analyserCohortes,
   analyserEvolution,
@@ -60,6 +63,16 @@ function Selecteur({ libelle, valeur, options, onChange, optionnel }: { libelle:
         ))}
       </select>
     </label>
+  );
+}
+
+/** Bloc « Interprétation détaillée » commun aux onglets. */
+function Lecture({ i, titreGuide }: { i: Interpretation; titreGuide: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60 p-3.5 space-y-2">
+      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">Interprétation détaillée</p>
+      <BlocInterpretation guide={i.guide} titreGuide={titreGuide} constats={i.complements} resume={i.resume} pistes={i.pistes} />
+    </div>
   );
 }
 
@@ -160,6 +173,7 @@ function OngletPareto({ entetes, corps, dimensions, mesures, dimDefaut, mesureDe
             <strong>Classe A :</strong> {r.valeur.elements.filter((e) => e.classe === "A").slice(0, 12).map((e) => `${e.nom} (${pct(e.part)})`).join(", ")}
             {r.valeur.classes.A.nb > 12 ? "…" : ""}
           </p>
+          <Lecture i={interpreterPareto(r.valeur, dim, mes)} titreGuide="Comment lire l'analyse Pareto ?" />
         </>
       )}
     </div>
@@ -249,6 +263,7 @@ function OngletEvolution({ entetes, corps, dates, mesures, dimensions, dateDefau
             </div>
             </div>
           )}
+          <Lecture i={interpreterEvolution(p, mes)} titreGuide="Comment lire cette évolution ?" />
         </>
       )}
     </div>
@@ -339,6 +354,7 @@ function OngletRFM({ entetes, corps, clients, dates, mesures, clientDefaut, date
             <Download className="w-3.5 h-3.5" />
             Liste des clients avec leur segment (CSV)
           </button>
+          <Lecture i={interpreterRFM(r.valeur)} titreGuide="Comment lire les segments RFM ?" />
         </>
       )}
     </div>
@@ -396,6 +412,7 @@ function OngletCohortes({ entetes, corps, clients, dates, clientDefaut, dateDefa
           <p className="text-[11px] text-slate-500">
             Chaque ligne suit les clients selon le mois de leur premier achat : % encore actifs 1, 2, 3… mois plus tard. Une diagonale qui pâlit vite signale un problème de fidélisation.
           </p>
+          <Lecture i={interpreterCohortes(r.valeur)} titreGuide="Comment lire le tableau des cohortes ?" />
         </>
       )}
     </div>

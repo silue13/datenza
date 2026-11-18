@@ -1,5 +1,6 @@
 "use client";
 
+import BlocInterpretation from "./BlocInterpretation";
 import { useState } from "react";
 import { CheckCircle2, CircleSlash, Info, Link2 } from "lucide-react";
 import { formaterP, type ResumeGroupe } from "../../lib/analyse/inference";
@@ -146,6 +147,11 @@ export default function TestsStatistiques({ tests }: { tests: TestStatistique[] 
           {AVERTISSEMENT_TESTS.fr}
         </span>
       </p>
+
+      <BlocInterpretation
+        titreGuide="Comment lire ces tests ?"
+        guide="Chaque carte répond à une question simple : l'écart que l'on voit entre les groupes (ou le lien entre deux colonnes) est-il réel, ou pourrait-il venir du hasard ? Le badge donne la réponse. « Démontré » : l'écart est trop net pour être dû au hasard, vous pouvez vous appuyer dessus. « Réel mais faible » : l'écart existe mais compte peu en pratique. « Non démontré » : ces données ne permettent pas d'affirmer une différence (ce qui ne prouve pas non plus que les groupes sont identiques). « Redondant » : les deux colonnes disent presque la même chose (par exemple une ville et sa région), ce lien n'apprend rien de nouveau. La boîte à moustaches montre, pour chaque groupe, où se trouve la moitié centrale des valeurs (la boîte), la valeur du milieu (le trait) et la moyenne (le point orange) : des boîtes qui ne se chevauchent pas indiquent des groupes vraiment différents. Attention : un lien démontré ne prouve pas que l'un cause l'autre."
+      />
 
       {comparaisons.length > 0 && (
         <div className="space-y-2">
