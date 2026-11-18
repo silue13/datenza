@@ -61,9 +61,9 @@ export function interpreterFusion(r: RapportNettoyage, nomA: string, nomB: strin
     resume = `${nf(orphB)} ligne(s) de « ${nomB} » n'ont aucune correspondance dans « ${nomA} » : c'est la liste ci-dessous.`;
     pistes.push("Exemple : si A = factures et B = paiements, ce sont les paiements sans facture connue.");
   } else if (r.typeJointure === "gauche_externe") {
-    resume = `Toutes les lignes de « ${nomA} » sont conservées ; ${pct(corr, totalA)} ont été complétées avec les colonnes de « ${nomB} ».`;
+    resume = `Toutes les lignes de « ${nomA} » sont conservées ; ${pct(corr, totalA)} ont été complétées avec les colonnes de « ${nomB} ». La colonne « Origine » distingue les lignes complétées des autres.`;
   } else if (r.typeJointure === "externe_complete") {
-    resume = `Toutes les lignes des deux fichiers sont conservées : ${nf(corr)} rapprochées, ${nf(orphA)} propres à « ${nomA} », ${nf(orphB)} propres à « ${nomB} ». La colonne « Fichier Source » indique l'origine de chaque ligne.`;
+    resume = `Toutes les lignes des deux fichiers sont conservées : ${nf(corr)} rapprochées, ${nf(orphA)} propres à « ${nomA} », ${nf(orphB)} propres à « ${nomB} ». La colonne « Origine » indique pour chaque ligne si elle est dans les deux fichiers ou dans un seul.`;
   } else {
     resume = `${pct(corr, totalA)} des lignes de « ${nomA} » ont été retrouvées dans « ${nomB} ». Seules ces lignes communes sont gardées.`;
   }

@@ -24,7 +24,7 @@ const navigation = [
   { name: "Accueil", href: "/", icon: Home },
   { name: "Analyse", href: "/analyse", icon: BarChart2 },
   { name: "Assistant IA", href: "/assistant-ia", icon: Sparkles },
-  { name: "Fusion", href: "/fusion", icon: Layers },
+  { name: "Comparer / Fusionner", court: "Comparer", href: "/fusion", icon: Layers },
   { name: "Projets", href: "/projets", icon: FolderOpen },
   { name: "Paramètres", href: "/parametres", icon: Settings },
 ];
@@ -181,7 +181,7 @@ export default function Sidebar() {
               }`}
             >
               <Icon className={`w-5 h-5 ${isActive ? "text-blue-400" : "text-slate-400"}`} />
-              <span className="text-[10px] tracking-tight truncate max-w-full">{item.name}</span>
+              <span className="text-[10px] tracking-tight truncate max-w-full">{"court" in item ? item.court : item.name}</span>
             </Link>
           );
         })}

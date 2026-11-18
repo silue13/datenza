@@ -4,7 +4,6 @@ import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import { lireFichier, EXTENSIONS_ACCEPTEES } from "../../lib/import/lecture";
-import type { BlocRapport } from "../../lib/analyse/rapport";
 import {
   Files,
   Upload,
@@ -32,7 +31,6 @@ import {
   type ModeAssemblage,
   type TypeJointure,
 } from "../../lib/analyse/fusion";
-import { analyserColonnes } from "../../lib/analyse/analyse";
 
 const STYLE_STATUT: Record<string, string> = {
   Identique: "font-bold text-emerald-600 dark:text-emerald-400",
@@ -57,7 +55,7 @@ const TYPES_JOINTURE: { id: TypeJointure; titre: string; libelle: string; descri
 
 export default function FusionNettoyagePage() {
   const router = useRouter();
-  const { chargerDonnees } = useData();
+  const { chargerEtAnalyser } = useData();
 
   const [fichiersBruts, setFichiersBruts] = useState<FichierEntree[]>([]);
   const [chargement, setChargement] = useState(false);
@@ -209,80 +207,23 @@ export default function FusionNettoyagePage() {
     XLSX.writeFile(classeur, `datenza_${nomFeuille.toLowerCase()}.xlsx`);
   };
 
-  // Bascule vers l'analyse unifiée
-  const basculerVersAnalyse = () => {
+  /** Nom du fichier obtenu, tel qu'il apparaîtra dans l'analyse, les exports et les projets. */
+  const nomResultat = () => {
+    const court = (n?: string) => (n ?? "").replace(/\.[^/.]+$/, "");
+    if (!resultat) return "";
+    if (resultat.rapport.mode === "empilement") return `Fusion de ${resultat.rapport.nbFichiers} fichiers (${fichiersBruts.map((f) => court(f.nom)).join(", ")})`.slice(0, 120);
+    const libelle = TYPES_JOINTURE.find((t) => t.id === resultat.rapport.typeJointure)?.libelle ?? "Rapprochement";
+    return `${libelle} — ${court(tableA?.nom)} et ${court(tableB?.nom)}`.slice(0, 120);
+  };
+
+  /**
+   * Le fichier obtenu devient le fichier actif, exactement comme un fichier importé (même nettoyage, même analyse).
+   * « analyser » ouvre directement l'analyse ; sinon l'accueil montre l'aperçu et le choix des colonnes.
+   */
+  const ouvrirResultat = (destination: "analyser" | "accueil") => {
     if (!resultat) return;
-
-    const analyseStat = analyserColonnes(resultat.entetes, resultat.corps, resultat.entetes);
-    const rapportDynamique: BlocRapport[] = [];
-
-    if (resultat.rapport.mode === "jointure") {
-      const typeLabel = TYPES_JOINTURE.find((t) => t.id === typeJointure)?.libelle ?? typeJointure;
-
-      rapportDynamique.push({
-        type: "intro",
-        texte: `Réconciliation ${typeLabel} terminée : ${resultat.corps.length.toLocaleString("fr-FR")} lignes extraites sur les clés « ${cleActiveA} » et « ${cleActiveB} ».`,
-      });
-
-      if (resultat.rapport.nbCorrespondances !== undefined) {
-        rapportDynamique.push({
-          type: "qualite",
-          texte: `Bilan relationnel : ${resultat.rapport.nbCorrespondances} paire(s) réconciliée(s), ${resultat.rapport.nbOrphelinsA} orphelin(s) dans le premier fichier et ${resultat.rapport.nbOrphelinsB} dans le second.`,
-        });
-      }
-    } else {
-      rapportDynamique.push({
-        type: "intro",
-        texte: `Consolidation terminée : ${resultat.rapport.nbFichiers} fichiers combinés pour un total de ${resultat.corps.length.toLocaleString("fr-FR")} lignes exploitables.`,
-      });
-    }
-
-    // Statistiques de forme variable selon le type de colonne : seuls les champs lus ici sont décrits
-    type StatsLues = {
-      max?: number | null;
-      moyenne?: number | null;
-      topValeurs?: { valeur: string; pourcentage: number; effectif: number }[];
-      distincts?: number;
-      unicite?: number;
-    };
-    Object.entries(analyseStat.statistiques).forEach(([nomCol, info]) => {
-      const s = info.stats as StatsLues;
-      if (info.type === "numerique" && s) {
-        const valMax = s.max != null ? s.max.toLocaleString("fr-FR") : "—";
-        const valMoy = s.moyenne != null ? s.moyenne.toLocaleString("fr-FR") : "—";
-        rapportDynamique.push({
-          type: "numerique",
-          texte: `Performance « ${nomCol} » : Moyenne constatée de ${valMoy} (avec un pic culminant à ${valMax}).`,
-        });
-      }
-
-      if (info.type === "categorielle" && s && s.topValeurs && s.topValeurs.length > 0) {
-        const top = s.topValeurs[0];
-        rapportDynamique.push({
-          type: "categorie",
-          texte: `Pôle dominant sur « ${nomCol} » : « ${top.valeur} » représente ${top.pourcentage} % des enregistrements (${top.effectif.toLocaleString("fr-FR")} occurrences).`,
-        });
-      }
-
-      if (info.type === "identifiant" && s) {
-        rapportDynamique.push({
-          type: "qualite",
-          texte: `Répertoire « ${nomCol} » : ${(s.distincts ?? 0).toLocaleString("fr-FR")} entité(s) distincte(s) répertoriée(s) (unicité de ${s.unicite} %).`,
-        });
-      }
-    });
-
-    chargerDonnees(
-      modeAssemblage === "jointure"
-        ? `Jointure ${typeJointure} (${tableA.nom} ↔ ${tableB.nom})`
-        : `Consolidation (${resultat.rapport.nbFichiers} fichiers)`,
-      resultat.entetes,
-      resultat.corps,
-      analyseStat,
-      rapportDynamique
-    );
-
-    router.push("/analyse");
+    chargerEtAnalyser(nomResultat(), resultat.entetes, resultat.corps);
+    router.push(destination === "analyser" ? "/analyse" : "/");
   };
 
   const supprimerFichier = (index: number) => {
@@ -297,14 +238,19 @@ export default function FusionNettoyagePage() {
         <div className="space-y-2">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-xs font-bold uppercase tracking-wider">
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            Consolidation & Réconciliation Avancée
+            Comparer · Rapprocher · Fusionner
           </div>
           <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">
-            Fusion, Réconciliation & Audit des Données
+            Comparer et fusionner des fichiers
           </h1>
-          <p className="text-xs md:text-sm text-slate-300 max-w-2xl leading-relaxed">
-            Combinez vos tableaux Excel et CSV par empilement vertical ou réalisez des jointures relationnelles (Inter, Anti-gauche, Anti-droite) pour traquer les écarts et les correspondances.
-          </p>
+          <div className="grid gap-2 sm:grid-cols-2 max-w-3xl pt-1 text-xs md:text-sm text-slate-300 leading-relaxed">
+            <p>
+              <strong className="text-white">Comparer ou rapprocher 2 fichiers</strong> : factures et paiements, stock théorique et inventaire, liste de l&apos;an dernier et de cette année… Trouvez ce qui manque, ce qui est en trop et les valeurs qui diffèrent.
+            </p>
+            <p>
+              <strong className="text-white">Fusionner plusieurs fichiers</strong> de même structure (un par mois, par agence, par région) en un seul tableau, puis l&apos;analyser comme un fichier normal.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -384,7 +330,7 @@ export default function FusionNettoyagePage() {
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm">
             <h3 className="font-bold text-xs uppercase tracking-wider text-slate-600 dark:text-slate-300 flex items-center gap-2">
               <Settings2 className="w-4 h-4 text-indigo-600" />
-              Mode d&apos;assemblage des données
+              Que voulez-vous faire ?
             </h3>
 
             {/* Sélecteur de Mode : Empilement vs Jointure */}
@@ -399,7 +345,7 @@ export default function FusionNettoyagePage() {
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                Empilement
+                Fusionner (empiler)
               </button>
 
               <button
@@ -412,7 +358,7 @@ export default function FusionNettoyagePage() {
                 }`}
               >
                 <GitMerge className="w-3.5 h-3.5" />
-                Jointure relationnelle
+                Comparer 2 fichiers
               </button>
             </div>
 
@@ -429,7 +375,7 @@ export default function FusionNettoyagePage() {
                     <div className="space-y-2">
                       <div>
                         <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
-                          Table A (Gauche) & Clé
+                          Fichier A et colonne qui identifie chaque ligne
                         </label>
                         <div className="grid grid-cols-2 gap-1.5">
                           <select
@@ -460,7 +406,7 @@ export default function FusionNettoyagePage() {
 
                       <div>
                         <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
-                          Table B (Droite) & Clé
+                          Fichier B et colonne correspondante
                         </label>
                         <div className="grid grid-cols-2 gap-1.5">
                           <select
@@ -677,7 +623,7 @@ export default function FusionNettoyagePage() {
               className="w-full py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
-              {modeAssemblage === "jointure" ? "Lancer la Réconciliation" : "Lancer la Fusion & Nettoyage"}
+              {modeAssemblage === "jointure" ? "Lancer la comparaison" : "Lancer la fusion"}
             </button>
           </div>
         </div>
@@ -811,6 +757,9 @@ export default function FusionNettoyagePage() {
           </div>
 
           {/* Boutons d'actions */}
+          <p className="text-[11px] text-slate-500 text-right">
+            Le fichier obtenu s&apos;utilise comme n&apos;importe quel fichier importé : analyse complète, graphiques, carte, prévisions, exports, et enregistrement dans vos projets.
+          </p>
           <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
             <button
               onClick={telechargerExcelConsolide}
@@ -821,11 +770,19 @@ export default function FusionNettoyagePage() {
             </button>
 
             <button
-              onClick={basculerVersAnalyse}
+              onClick={() => ouvrirResultat("accueil")}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold text-xs rounded-xl border border-slate-300 dark:border-slate-700 shadow-xs transition cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-purple-600" />
+              L&apos;ouvrir comme fichier (aperçu, choix des colonnes)
+            </button>
+
+            <button
+              onClick={() => ouvrirResultat("analyser")}
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-lg hover:shadow-purple-500/25 transition cursor-pointer"
             >
               <BarChart2 className="w-4 h-4" />
-              Lancer l&apos;Analyse Datenza
+              Analyser ce fichier
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>

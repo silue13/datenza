@@ -155,43 +155,43 @@ const REFERENTIEL_DATENZA: ModuleGuide[] = [
   },
   {
     id: "fusion",
-    nomMenu: "Fusion",
+    nomMenu: "Comparer / Fusionner",
     route: "/fusion",
-    badge: "Phase 4 · Consolidation Multi-Bases",
-    titre: "Rapprochement & Analyse Comparative",
+    badge: "Phase 4 · Plusieurs fichiers",
+    titre: "Comparer et fusionner des fichiers",
     finaliteMetier:
-      "Harmoniser plusieurs fichiers d'origines ou de millésimes distincts (ex. RGPH 2014 vs 2021) pour quantifier l'évolution des indicateurs par rapport à un étalon.",
+      "Confronter deux fichiers (factures et paiements, stock théorique et inventaire, liste de l'an dernier et de cette année) pour trouver ce qui manque, ce qui est en trop et les valeurs qui diffèrent ; ou réunir plusieurs fichiers de même structure (un par mois, par agence) en un seul tableau.",
     icone: Layers,
     protocole: [
       {
-        etape: "Sélection des référentiels",
-        description: "Importer les différentes bases devant faire l'objet du rapprochement comparatif.",
+        etape: "Déposer les fichiers",
+        description: "Ajoutez au moins deux fichiers Excel ou CSV dans la page « Comparer / Fusionner ».",
       },
       {
-        etape: "Définition de l'étalon",
-        description: "Désigner expressément le fichier servant de référence pivot pour le calcul des variations.",
+        etape: "Choisir l'objectif",
+        description: "« Comparer 2 fichiers » pour rapprocher les lignes une à une, ou « Fusionner (empiler) » pour mettre les fichiers à la suite.",
       },
       {
-        etape: "Cartographie des clés",
-        description: "Valider la table de concordance des champs dimensionnels communs.",
+        etape: "Vérifier la colonne de rapprochement",
+        description: "La colonne qui identifie chaque ligne (numéro de facture, code client…) est proposée automatiquement, avec le pourcentage de lignes qui se correspondent.",
       },
       {
-        etape: "Export de consolidation",
-        description: "Générer la base fusionnée taguée avec l'origine de chaque enregistrement.",
+        etape: "Analyser le résultat",
+        description: "Lisez le bilan « Ce qu'il faut retenir », téléchargez le résultat en Excel ou analysez-le comme n'importe quel fichier.",
       },
     ],
     standardsEtRegles: [
-      "Rapprochement insensible aux variations de casse ou d'accents sur les dénominations géographiques.",
-      "Calcul des deltas (Δ = Cible - Réf) et des variations relatives systématiquement documentés.",
-      "Conservation de la traçabilité intégrale de la source sur chaque ligne consolidée.",
+      "Les clés sont rapprochées sans tenir compte des majuscules, des accents, des espaces en trop ni des zéros devant un numéro.",
+      "Les valeurs sont comparées au format près : « 1 000 » = 1000, « 05/01/2024 » = « 2024-01-05 ».",
+      "Chaque ligne garde la trace de son origine (fichier source, ou présence dans un seul fichier ou dans les deux).",
     ],
     livrables: [
-      "Matrice comparative multi-sources consolidée",
-      "Tableau de bord de variance avec classement des progressions et reculs",
-      "Fichier consolidé réinjectable directement dans le moteur d'analyse",
+      "Liste des lignes identiques, différentes ou absentes, avec l'écart chiffré",
+      "Fichier fusionné et nettoyé, téléchargeable en Excel",
+      "Fichier obtenu analysable directement (graphiques, carte, prévisions, exports, projets)",
     ],
     arbitrageDirection:
-      "Assurez-vous que l'étalon choisi corresponde bien à la situation de base la plus stable afin de garantir la pertinence des deltas calculés.",
+      "Pour comparer des valeurs, donnez le même nom aux colonnes à confronter dans les deux fichiers (par exemple « Montant ») : seules les colonnes de même nom sont comparées.",
   },
   {
     id: "parametres",

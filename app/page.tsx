@@ -8,6 +8,7 @@ import { genererRapport } from "../lib/analyse/rapport";
 import { type Cellule } from "../lib/analyse/utils";
 import { assemblerComparaison } from "../lib/analyse/comparaison";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import BoutonInstallerApp from "./components/BoutonInstallerApp";
 import GuideUtilisation from "./components/GuideUtilisation";
 import BandeauSource from "./components/BandeauSource";
@@ -380,6 +381,21 @@ export default function HomePage() {
         </p>
       </form>
 
+      {/* Accès à la comparaison et à la fusion de fichiers */}
+      <Link
+        href="/fusion"
+        className="group flex items-center gap-3 rounded-2xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/60 dark:bg-purple-950/20 p-3.5 sm:p-4 text-xs hover:bg-purple-50 dark:hover:bg-purple-950/40 transition"
+      >
+        <span className="w-9 h-9 rounded-xl bg-purple-600 text-white flex items-center justify-center shrink-0">
+          <Scale className="w-4 h-4" />
+        </span>
+        <span className="flex-1 text-slate-700 dark:text-slate-200">
+          <strong className="block text-slate-900 dark:text-white">Vous avez deux fichiers à comparer, ou plusieurs à fusionner ?</strong>
+          Factures et paiements, stock et inventaire, un fichier par mois… Trouvez les écarts et les lignes manquantes, ou réunissez-les en un seul.
+        </span>
+        <span className="font-bold text-purple-700 dark:text-purple-300 whitespace-nowrap group-hover:underline">Comparer / Fusionner →</span>
+      </Link>
+
       {/* Message d'erreur */}
       {erreurImport && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-900/50 p-3.5 sm:p-4 text-xs font-semibold text-rose-800 dark:text-rose-300 flex items-center gap-2.5">
@@ -404,7 +420,8 @@ export default function HomePage() {
                 Fichiers importés ({fichiers.length})
               </h3>
               <p className="text-[11px] sm:text-xs text-slate-400">
-                Touchez un fichier pour l&apos;activer ou cochez les cases pour comparer
+                Touchez un fichier pour l&apos;activer, ou cochez-en plusieurs pour comparer leurs chiffres côte à côte. Pour rapprocher deux fichiers ligne à ligne, utilisez{" "}
+                <Link href="/fusion" className="text-purple-600 dark:text-purple-400 font-semibold hover:underline">Comparer / Fusionner</Link>.
               </p>
             </div>
 

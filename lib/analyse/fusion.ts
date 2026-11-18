@@ -265,19 +265,28 @@ export function fusionnerEtNettoyer(
 
     let entetesFinaux: string[] = [];
     const lignesBrutesJointes: Cellule[][] = [];
-    const sourceCommune = `${tableA.nom} + ${tableB.nom}`;
     let bilanComparaison: Pick<RapportNettoyage, "nbIdentiques" | "nbDifferentes" | "ecartsParColonne" | "colonnesComparees"> = {};
 
-    if (typeJointure === "inter" || typeJointure === "gauche_externe" || typeJointure === "externe_complete") {
-      entetesFinaux = ["Fichier Source", ...colsA, ...entetesColsBAjoutees];
+    // Colonne « Origine » quand le résultat mélange des lignes rapprochées et des lignes propres à un fichier.
+    // Elle ne s'appelle pas « Fichier Source » : l'analyse la traite comme une catégorie ordinaire, pas comme une comparaison de fichiers.
+    const ORIGINE_LES_DEUX = "Dans les deux fichiers";
+    const origineA = `Seulement dans ${tableA.nom}`;
+    const origineB = `Seulement dans ${tableB.nom}`;
+
+    if (typeJointure === "inter") {
+      entetesFinaux = [...colsA, ...entetesColsBAjoutees];
       for (const ligneA of tableA.corps) {
         const cleA = idxCleA === -1 ? "" : normaliserCle(ligneA[idxCleA]);
         const matchs = cleA ? indexB.map.get(cleA) : undefined;
-        if (matchs) {
-          for (const ligneB of matchs) lignesBrutesJointes.push([sourceCommune, ...valeursA(ligneA), ...valeursB(ligneB)]);
-        } else if (typeJointure !== "inter") {
-          lignesBrutesJointes.push([tableA.nom, ...valeursA(ligneA), ...videsB()]);
-        }
+        if (matchs) for (const ligneB of matchs) lignesBrutesJointes.push([...valeursA(ligneA), ...valeursB(ligneB)]);
+      }
+    } else if (typeJointure === "gauche_externe" || typeJointure === "externe_complete") {
+      entetesFinaux = ["Origine", ...colsA, ...entetesColsBAjoutees];
+      for (const ligneA of tableA.corps) {
+        const cleA = idxCleA === -1 ? "" : normaliserCle(ligneA[idxCleA]);
+        const matchs = cleA ? indexB.map.get(cleA) : undefined;
+        if (matchs) for (const ligneB of matchs) lignesBrutesJointes.push([ORIGINE_LES_DEUX, ...valeursA(ligneA), ...valeursB(ligneB)]);
+        else lignesBrutesJointes.push([origineA, ...valeursA(ligneA), ...videsB()]);
       }
       if (typeJointure === "externe_complete") {
         // Lignes de B sans correspondance : la clé est reportée dans la colonne clé de A
@@ -287,14 +296,14 @@ export function fusionnerEtNettoyer(
           if (cleB && indexA.map.has(cleB)) continue;
           const partieA: Cellule[] = new Array(colsA.length).fill("");
           if (posCleA !== -1) partieA[posCleA] = ligneB[idxCleB] ?? "";
-          lignesBrutesJointes.push([tableB.nom, ...partieA, ...valeursB(ligneB)]);
+          lignesBrutesJointes.push([origineB, ...partieA, ...valeursB(ligneB)]);
         }
       }
     } else if (typeJointure === "anti_gauche") {
-      entetesFinaux = ["Fichier Source", ...colsA];
+      entetesFinaux = [...colsA];
       for (const ligneA of tableA.corps) {
         const cleA = idxCleA === -1 ? "" : normaliserCle(ligneA[idxCleA]);
-        if (cleA && !indexB.map.has(cleA)) lignesBrutesJointes.push([tableA.nom, ...valeursA(ligneA)]);
+        if (cleA && !indexB.map.has(cleA)) lignesBrutesJointes.push(valeursA(ligneA));
       }
     } else if (typeJointure === "anti_droite") {
       const indicesColsB: number[] = [];
@@ -305,10 +314,10 @@ export function fusionnerEtNettoyer(
           indicesColsB.push(idx);
         }
       });
-      entetesFinaux = ["Fichier Source", ...colsB];
+      entetesFinaux = [...colsB];
       for (const ligneB of tableB.corps) {
         const cleB = idxCleB === -1 ? "" : normaliserCle(ligneB[idxCleB]);
-        if (cleB && !indexA.map.has(cleB)) lignesBrutesJointes.push([tableB.nom, ...indicesColsB.map((i) => ligneB[i] ?? "")]);
+        if (cleB && !indexA.map.has(cleB)) lignesBrutesJointes.push(indicesColsB.map((i) => ligneB[i] ?? ""));
       }
     } else if (typeJointure === "comparaison") {
       const resultat = comparerValeurs(tableA, tableB, idxCleA, idxCleB, indexA.map, indexB.map, options.jointure.colonnesAComparer);

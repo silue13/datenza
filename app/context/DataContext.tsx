@@ -1,7 +1,8 @@
 "use client";
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import type { BlocRapport } from "../../lib/analyse/rapport";
-import type { analyserColonnes } from "../../lib/analyse/analyse";
+import { analyserColonnes } from "../../lib/analyse/analyse";
+import { genererRapport } from "../../lib/analyse/rapport";
 import {
   type Cellule,
   type LigneObjet,
@@ -116,6 +117,11 @@ interface DataContextType {
     nouveauRapport?: BlocRapport[],
     source?: SourceDistante | null
   ) => void;
+  /**
+   * Charge un tableau produit dans l'application (fusion, comparaison…) exactement comme un fichier importé :
+   * même nettoyage, puis analyse complète et rapport standard sur toutes les colonnes.
+   */
+  chargerEtAnalyser: (nom: string, entetes: string[], corps: Cellule[][]) => void;
   /** Source en direct du fichier actif (Google Sheets, adresse web) ; null pour un fichier déposé. */
   source: SourceDistante | null;
   actualisation: EtatActualisation;
@@ -318,6 +324,12 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
     setRapport(nouveauRapport ?? []);
     setResultat(nouveauResultat ?? null);
     setGraphiquesEpingles([]);
+  }
+
+  function chargerEtAnalyser(nom: string, entetesData: string[], corpsData: Cellule[][]) {
+    const propre = nettoyerImport(entetesData, corpsData);
+    const res = analyserColonnes(propre.entetes, propre.corps, propre.entetes);
+    chargerDonnees(nom, propre.entetes, propre.corps, res, genererRapport(res));
   }
 
   /**
@@ -688,6 +700,7 @@ export function DataProvider({ children, etatInitial, lectureSeule = false }: Da
         basculerExclusionGraphique,
         filtresActifs,
         chargerDonnees,
+        chargerEtAnalyser,
         source,
         actualisation,
         actualiserSource,

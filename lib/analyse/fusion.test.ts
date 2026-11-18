@@ -51,7 +51,9 @@ describe("analyse/fusion", () => {
     const r = fusionnerEtNettoyer([A, B], options("externe_complete"));
     // 2 correspondances + 2 lignes propres à A (dont celle sans clé) + 1 propre à B
     expect(r.corps).toHaveLength(5);
-    const ligneB = r.corps.find((l) => l[0] === "paiements.csv")!;
+    expect(r.entetes[0]).toBe("Origine");
+    expect(r.entetes).not.toContain("Fichier Source");
+    const ligneB = r.corps.find((l) => l[0] === "Seulement dans paiements.csv")!;
     expect(String(ligneB[r.entetes.indexOf("Ref")])).toBe("999");
   });
 
