@@ -373,7 +373,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     return [...parLieu.values()];
   }, [estFormatMatriciel, colonnesEnTetesGeographiques, entetes, corps, periodeChoisie, colonneGeo, colonneMesure]);
 
-  const { niveau, nbDirects } = useMemo(() => detecterNiveau(lieuxAgreges.map((l) => l.nom)), [lieuxAgreges]);
+  const { niveau } = useMemo(() => detecterNiveau(lieuxAgreges.map((l) => l.nom)), [lieuxAgreges]);
 
   // Contours des zones : chargés une fois par découpage, seulement si le fichier contient des lieux
   const [contours, setContours] = useState<Partial<Record<NiveauZone, ContoursZones>>>({});
@@ -403,8 +403,8 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
 
   const zonesDisponibles = !!resultatZones && resultatZones.zones.length >= 2;
   const [modeChoisi, setModeChoisi] = useState<"cercles" | "zones" | null>(null);
-  // Une colonne qui cite directement des régions s'ouvre en carte colorée ; une colonne de villes reste en cercles
-  const mode: "cercles" | "zones" = !zonesDisponibles ? "cercles" : modeChoisi ?? (nbDirects >= 3 ? "zones" : "cercles");
+  // Carte colorée par zones dès qu'elle est possible (villes regroupées dans leur région) ; les cercles restent au choix
+  const mode: "cercles" | "zones" = !zonesDisponibles ? "cercles" : modeChoisi ?? "zones";
   const enZones = mode === "zones" && !!resultatZones && !!contoursActifs;
 
   const classesZones = useMemo(() => classerValeurs((resultatZones?.zones ?? []).map((z) => z.valeur)), [resultatZones]);
@@ -433,7 +433,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     if (additif) texte += `, soit ${nb(Math.round((premier.valeur / total) * 1000) / 10)} % du total des ${zones.length} ${mots.des} renseigné${niveau === "regions" ? "e" : ""}s`;
     texte += `. La valeur la plus faible est celle de « ${dernier.zone} » (${nb(dernier.valeur)}).`;
     const sansDonnee = contoursActifs.features.length - zones.length;
-    if (sansDonnee > 0) texte += ` ${sansDonnee} ${sansDonnee > 1 ? mots.des : mots.un} sur ${contoursActifs.features.length} sans donnée (en gris).`;
+    if (sansDonnee > 0) texte += ` ${sansDonnee} ${sansDonnee > 1 ? mots.des : mots.un} sur ${contoursActifs.features.length} sans donnée (non colorées).`;
     if (agregation === "Moyenne") texte += ` Il s'agit de moyennes par ${mots.un} : elles ne s'additionnent pas.`;
     return texte;
   }, [resultatZones, contoursActifs, niveau, agregation]);
@@ -643,7 +643,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
                 couleur: c.couleur,
                 libelle: c.min === c.max ? c.min.toLocaleString("fr-FR") : `${c.min.toLocaleString("fr-FR")} – ${c.max.toLocaleString("fr-FR")}`,
               })),
-              { couleur: COULEUR_SANS_DONNEE, libelle: "Sans donnée" },
+              { couleur: "#f8fafc", libelle: "Sans donnée (transparent)" },
             ],
           }
         : undefined;
@@ -805,12 +805,16 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
               <leafletReady.GeoJSON
                 key={`zones-${niveau}-${signatureZones}`}
                 data={contoursActifs}
-                style={(zone?: Feature) => ({
-                  fillColor: couleurPour(valeursZones.get(String(zone?.properties?.nom ?? "")), classesZones),
-                  fillOpacity: 0.88,
+                style={(zone?: Feature) => {
+                  const valeur = valeursZones.get(String(zone?.properties?.nom ?? ""));
+                  return {
+                  fillColor: couleurPour(valeur, classesZones),
+                  // Zones sans donnée presque transparentes : elles ne se confondent plus avec la classe la plus faible
+                  fillOpacity: valeur === undefined ? 0.18 : 0.88,
                   color: "#ffffff",
                   weight: 1.5,
-                })}
+                  };
+                }}
                 onEachFeature={(zone: Feature, calque: Layer) => {
                   // Chaque zone d'un contour GeoJSON est dessinée comme un tracé Leaflet
                   const couche = calque as Path;
@@ -890,8 +894,8 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
               </span>
             ))}
             <span className="inline-flex items-center gap-1.5">
-              <span className="w-3.5 h-3.5 rounded-sm border border-slate-300 dark:border-slate-600" style={{ backgroundColor: COULEUR_SANS_DONNEE }} />
-              Sans donnée
+              <span className="w-3.5 h-3.5 rounded-sm border border-dashed border-slate-400" style={{ backgroundColor: `${COULEUR_SANS_DONNEE}40` }} />
+              Sans donnée (transparent)
             </span>
           </div>
           {lectureZones && (
