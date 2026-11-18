@@ -8,6 +8,9 @@ import { parseNombre, type Cellule, estValeurVide, arrondir } from "../../lib/an
 import { useData, type GraphiqueEpingle } from "../context/DataContext";
 import type { Feature } from "geojson";
 import type { Layer, Path } from "leaflet";
+import BoutonImage from "./BoutonImage";
+import { capturerCarte } from "../../lib/analyse/imageCarte";
+import { telechargerVisuelEnImage } from "../../lib/analyse/imageGraphique";
 
 /** Composants Leaflet chargés à la demande (types seulement : le chargement reste différé). */
 interface ModulesCarte {
@@ -80,7 +83,7 @@ function estDansFrontieresCI(lat: number, lng: number): boolean {
 }
 
 export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Props) {
-  const { graphiquesEpingles, epinglerGraphique } = useData();
+  const { graphiquesEpingles, epinglerGraphique, nomFichier } = useData();
 
   // État stockant les composants Leaflet une fois le navigateur prêt
   const [leafletReady, setLeafletReady] = useState<ModulesCarte | null>(null);
@@ -587,8 +590,34 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     );
   }
 
+  const titreCarte = estFormatMatriciel
+    ? `Cartographie des Stations (${colonnesEnTetesGeographiques.length} pôles)`
+    : `Carte géographique — ${colonneGeo}`;
+
+  /** Image de la carte telle qu'affichée, avec la légende des zones quand la carte est colorée. */
+  const telechargerImageCarte = async (bloc: HTMLElement) => {
+    const conteneur = bloc.querySelector<HTMLElement>(".leaflet-container");
+    if (!conteneur) throw new Error("La carte n'est pas encore affichée.");
+    const { canvas, largeurCss } = await capturerCarte(conteneur);
+    const quoi = agregation === "Nombre" ? "Nombre de lignes" : `${agregation} de ${estFormatMatriciel ? "la valeur" : colonneMesure}`;
+    const titre = enZones ? `${quoi} par ${NOMS_NIVEAU[niveau].un}` : estFormatMatriciel ? titreCarte : `${quoi} par ${colonneGeo}`;
+    const legende =
+      enZones && classesZones.length
+        ? {
+            elements: [
+              ...classesZones.map((c) => ({
+                couleur: c.couleur,
+                libelle: c.min === c.max ? c.min.toLocaleString("fr-FR") : `${c.min.toLocaleString("fr-FR")} – ${c.max.toLocaleString("fr-FR")}`,
+              })),
+              { couleur: COULEUR_SANS_DONNEE, libelle: "Sans donnée" },
+            ],
+          }
+        : undefined;
+    await telechargerVisuelEnImage(canvas, largeurCss, titre, { source: nomFichier, legende, credit: "© OpenStreetMap" });
+  };
+
   return (
-    <div className="bloc-carte-print print-eviter-coupure bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4 shadow-sm">
+    <div data-carte-graphique className="bloc-carte-print print-eviter-coupure bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4 shadow-sm">
       {/* En-tête */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
         <div className="flex items-center gap-2.5">
@@ -597,9 +626,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
           </div>
           <div>
             <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-              {estFormatMatriciel
-                ? `Cartographie des Stations (${colonnesEnTetesGeographiques.length} pôles)`
-                : `Carte géographique — ${colonneGeo}`}
+              {titreCarte}
             </h3>
             <p className="text-[11px] sm:text-xs text-slate-400">
               {estFormatMatriciel
@@ -698,6 +725,8 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             </select>
           )}
 
+          {leafletReady && (points.length > 0 || enZones) && <BoutonImage titre={titreCarte} generer={telechargerImageCarte} />}
+
           <button
             onClick={preparerExportPptx}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
@@ -732,6 +761,8 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             <leafletReady.TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              // Tuiles chargées en CORS : la carte peut être exportée en image
+              crossOrigin="anonymous"
             />
 
             <leafletReady.AjusterVue points={enZones ? CADRE_CI : points} />

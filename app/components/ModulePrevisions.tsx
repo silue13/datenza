@@ -34,6 +34,7 @@ import {
   estColonneTemporelle,
 } from "@/lib/analyse/utils";
 import { useData, type GraphiqueEpingle } from "../context/DataContext";
+import BoutonImage from "./BoutonImage";
 import type { Chart, ChartDataset, LegendItem, TooltipItem } from "chart.js";
 
 /** Jeu de données d'une courbe de prévision ; indexDerniereDonnee situe la dernière valeur observée. */
@@ -113,6 +114,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
     epinglerGraphique,
     filtresActifs,
     reinitialiserFiltres,
+    nomFichier,
   } = useData();
 
   const actionEpingler = onEpingler || epinglerGraphique;
@@ -864,8 +866,16 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
       {/* Rendu graphique épuré */}
       {estPrevisionPossible && (
         <>
-          <div className="h-60 sm:h-80 w-full p-2 bg-gradient-to-b from-slate-50/50 to-white dark:from-slate-800/30 dark:to-slate-900 rounded-xl">
-            <Line data={chartData} options={options} plugins={[MARQUEUR_PREVISION]} />
+          <div data-carte-graphique className="space-y-2">
+            <div className="flex justify-end">
+              <BoutonImage
+                titre={`${estBenchmarkActif ? "Benchmark prévisionnel" : "Prévision"} : ${colonneMesure} par ${colonneTemps} (+${horizon} périodes)`}
+                source={nomFichier}
+              />
+            </div>
+            <div className="h-60 sm:h-80 w-full p-2 bg-gradient-to-b from-slate-50/50 to-white dark:from-slate-800/30 dark:to-slate-900 rounded-xl">
+              <Line data={chartData} options={options} plugins={[MARQUEUR_PREVISION]} />
+            </div>
           </div>
 
           {/* Section benchmark comparatif */}

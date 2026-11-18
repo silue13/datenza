@@ -3,6 +3,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Bar, Line } from "react-chartjs-2";
 import "./chartSetup";
+import BoutonImage from "./BoutonImage";
+import { useData } from "../context/DataContext";
 import { AlertTriangle, Download, TrendingDown, TrendingUp } from "lucide-react";
 import type { Cellule } from "../../lib/analyse/utils";
 import {
@@ -82,6 +84,7 @@ function useChoix(defaut: string | null, disponibles: string[]): [string, (v: st
 function OngletPareto({ entetes, corps, dimensions, mesures, dimDefaut, mesureDefaut }: { entetes: string[]; corps: Cellule[][]; dimensions: string[]; mesures: string[]; dimDefaut: string | null; mesureDefaut: string | null }) {
   const [dim, setDim] = useChoix(dimDefaut, dimensions);
   const [mes, setMes] = useChoix(mesureDefaut, mesures);
+  const { nomFichier } = useData();
   const r = useMemo(() => (dim && mes ? analyserPareto(entetes, corps, dim, mes) : null), [entetes, corps, dim, mes]);
 
   if (!dimensions.length || !mesures.length) return <Indisponible>Il faut une colonne de catégories (produits, clients, régions…) et une colonne de montants.</Indisponible>;
@@ -96,6 +99,10 @@ function OngletPareto({ entetes, corps, dimensions, mesures, dimDefaut, mesureDe
       {r?.ok && (
         <>
           <p className="text-sm text-slate-800 dark:text-slate-100">{phrasePareto(r.valeur, dim, mes)}</p>
+          <div data-carte-graphique className="space-y-2">
+          <div className="flex justify-end">
+            <BoutonImage titre={`Pareto : ${mes} par ${dim}`} source={nomFichier} />
+          </div>
           <div className="h-64 sm:h-72">
             <Bar
               data={{
@@ -132,6 +139,7 @@ function OngletPareto({ entetes, corps, dimensions, mesures, dimDefaut, mesureDe
                 },
               }}
             />
+          </div>
           </div>
           {r.valeur.elements.length > visibles.length && (
             <p className="text-[11px] text-slate-400">Graphique limité aux 30 premiers ; le tableau ci-dessous compte tous les éléments.</p>
@@ -198,6 +206,7 @@ function OngletEvolution({ entetes, corps, dates, mesures, dimensions, dateDefau
   const [date, setDate] = useChoix(dateDefaut, dates);
   const [mes, setMes] = useChoix(mesureDefaut, mesures);
   const [dim, setDim] = useChoix(dimDefaut, dimensions);
+  const { nomFichier } = useData();
   const r = useMemo(() => (date && mes ? analyserEvolution(entetes, corps, date, mes, dim || undefined) : null), [entetes, corps, date, mes, dim]);
 
   if (!dates.length || !mesures.length) return <Indisponible>Il faut une colonne de dates (ou de mois, d&apos;années) et une colonne de montants.</Indisponible>;
@@ -228,11 +237,16 @@ function OngletEvolution({ entetes, corps, dates, mesures, dimensions, dateDefau
             <CarteComparaison titre="Vs un an plus tôt" c={p.anneePrecedente} granularite={p.granularite} />
           </div>
           {p.serie.length >= 3 && (
+            <div data-carte-graphique className="space-y-2">
+            <div className="flex justify-end">
+              <BoutonImage titre={`Évolution : ${mes}${p.granularite === "annee" ? " par année" : " par mois"}`} source={nomFichier} />
+            </div>
             <div className="h-48">
               <Line
                 data={{ labels: p.serie.map((s) => s.libelle), datasets: [{ label: mes, data: p.serie.map((s) => s.valeur), borderColor: "#2563eb", backgroundColor: "#2563eb", pointRadius: 2, tension: 0.2 }] }}
                 options={{ locale: "fr-FR", maintainAspectRatio: false, plugins: { ...sansEtiquettes, legend: { display: false } }, scales: { x: { ticks: { font: { size: 10 } } }, y: { ticks: { font: { size: 10 } } } } }}
               />
+            </div>
             </div>
           )}
         </>
