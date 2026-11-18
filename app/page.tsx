@@ -6,6 +6,7 @@ import { useData } from "./context/DataContext";
 import { analyserColonnes } from "../lib/analyse/analyse";
 import { genererRapport } from "../lib/analyse/rapport";
 import { type Cellule } from "../lib/analyse/utils";
+import { assemblerComparaison } from "../lib/analyse/comparaison";
 import { useRouter } from "next/navigation";
 import BoutonInstallerApp from "./components/BoutonInstallerApp";
 import GuideUtilisation from "./components/GuideUtilisation";
@@ -56,6 +57,7 @@ export default function HomePage() {
 
   const [pageIndex, setPageIndex] = useState<number>(0);
   const [erreurImport, setErreurImport] = useState<string>("");
+  const [infoComparaison, setInfoComparaison] = useState<string>("");
   const [enChargement, setEnChargement] = useState<boolean>(false);
   const [estSurvole, setEstSurvole] = useState<boolean>(false);
   const [modeVue, setModeVue] = useState<"tableau" | "fiches">("tableau");
@@ -178,6 +180,7 @@ export default function HomePage() {
 
   function lancerComparaison() {
     setErreurImport("");
+    setInfoComparaison("");
     const selection = fichiers.filter((f) => fichiersSelectionnesPourComparaison.includes(f.id));
 
     if (selection.length < 2) {
@@ -185,29 +188,18 @@ export default function HomePage() {
       return;
     }
 
-    let colonnesCommunes = selection[0].entetes;
-    for (let i = 1; i < selection.length; i++) {
-      colonnesCommunes = colonnesCommunes.filter((col) => selection[i].entetes.includes(col));
-    }
-
-    if (colonnesCommunes.length === 0) {
+    const comparaison = assemblerComparaison(selection);
+    if (!comparaison) {
       setErreurImport("Ces fichiers ne partagent aucune colonne en commun : comparaison impossible.");
       return;
     }
-
-    const entetesComparatifs = ["Fichier Source", ...colonnesCommunes];
-    const corpsComparatif: Cellule[][] = [];
-
-    selection.forEach((f) => {
-      f.corps.forEach((ligne) => {
-        const nouvelleLigne: Cellule[] = [f.nom];
-        colonnesCommunes.forEach((col) => {
-          const idx = f.entetes.indexOf(col);
-          nouvelleLigne.push(idx !== -1 ? ligne[idx] : "");
-        });
-        corpsComparatif.push(nouvelleLigne);
-      });
-    });
+    const { entetes: entetesComparatifs, corps: corpsComparatif } = comparaison;
+    const notes: string[] = [];
+    if (comparaison.colonnesAlignees.length)
+      notes.push(`Colonnes reconnues malgré une écriture différente : ${comparaison.colonnesAlignees.map((c) => c.variantes.join(" = ")).join(" ; ")}.`);
+    if (comparaison.colonnesIgnorees.length)
+      notes.push(`Colonnes écartées car absentes d'au moins un fichier : ${comparaison.colonnesIgnorees.join(", ")}.`);
+    setInfoComparaison(notes.join(" "));
 
     const titreComparatif = `Comparatif (${selection.map((f) => f.nom).join(" vs ")})`;
     chargerDonnees(titreComparatif, entetesComparatifs, corpsComparatif);
@@ -393,6 +385,13 @@ export default function HomePage() {
         <div className="rounded-2xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-900/50 p-3.5 sm:p-4 text-xs font-semibold text-rose-800 dark:text-rose-300 flex items-center gap-2.5">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{erreurImport}</span>
+        </div>
+      )}
+
+      {infoComparaison && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900/50 p-3.5 sm:p-4 text-xs text-blue-900 dark:text-blue-200 flex items-start gap-2.5">
+          <Scale className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{infoComparaison}</span>
         </div>
       )}
 

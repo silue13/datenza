@@ -19,7 +19,12 @@ import {
   GitMerge,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
+import BlocInterpretation from "../components/BlocInterpretation";
+import { interpreterFusion } from "../../lib/analyse/interpretationFusion";
 import {
+  apercuCorrespondance,
+  colonnesComparables,
+  suggererCles,
   fusionnerEtNettoyer,
   type FichierEntree,
   type OptionsNettoyage,
@@ -28,6 +33,27 @@ import {
   type TypeJointure,
 } from "../../lib/analyse/fusion";
 import { analyserColonnes } from "../../lib/analyse/analyse";
+
+const STYLE_STATUT: Record<string, string> = {
+  Identique: "font-bold text-emerald-600 dark:text-emerald-400",
+  "Différent": "font-bold text-rose-600 dark:text-rose-400",
+  "Absent de A": "font-bold text-amber-600 dark:text-amber-400",
+  "Absent de B": "font-bold text-amber-600 dark:text-amber-400",
+};
+
+const TYPES_JOINTURE: { id: TypeJointure; titre: string; libelle: string; description: string }[] = [
+  {
+    id: "comparaison",
+    titre: "Comparer les valeurs (A ↔ B)",
+    libelle: "Comparaison des valeurs",
+    description: "Pour chaque clé, indique si les colonnes de même nom ont les mêmes valeurs dans A et B, et chiffre les écarts (ex. montant facturé ≠ montant payé).",
+  },
+  { id: "inter", titre: "Lignes communes (Interne)", libelle: "Correspondances communes", description: "Garde uniquement les lignes présentes à la fois dans A et B, avec les colonnes des deux fichiers." },
+  { id: "anti_gauche", titre: "Présentes seulement dans A", libelle: "Lignes propres à A", description: "Lignes de A sans correspondance dans B (ex. factures non payées)." },
+  { id: "anti_droite", titre: "Présentes seulement dans B", libelle: "Lignes propres à B", description: "Lignes de B sans correspondance dans A (ex. paiements sans facture)." },
+  { id: "gauche_externe", titre: "Compléter A avec B", libelle: "Enrichissement de A", description: "Garde toutes les lignes de A et y ajoute les colonnes de B quand la clé existe." },
+  { id: "externe_complete", titre: "Tout garder (A + B)", libelle: "Jointure complète", description: "Toutes les lignes des deux fichiers, rapprochées quand c'est possible ; rien n'est perdu." },
+];
 
 export default function FusionNettoyagePage() {
   const router = useRouter();
@@ -44,7 +70,9 @@ export default function FusionNettoyagePage() {
   const [idxTableB, setIdxTableB] = useState<number>(1);
   const [cleChoisieA, setCleChoisieA] = useState<string>("");
   const [cleChoisieB, setCleChoisieB] = useState<string>("");
-  const [typeJointure, setTypeJointure] = useState<TypeJointure>("inter");
+  const [typeJointure, setTypeJointure] = useState<TypeJointure>("comparaison");
+  // Colonnes décochées pour la comparaison (toutes cochées par défaut)
+  const [colonnesExclues, setColonnesExclues] = useState<string[]>([]);
 
   // Options de nettoyage
   const [options, setOptions] = useState<{
@@ -72,19 +100,35 @@ export default function FusionNettoyagePage() {
   const colonnesA = useMemo(() => tableA?.entetes || [], [tableA]);
   const colonnesB = useMemo(() => tableB?.entetes || [], [tableB]);
 
+  // Clés proposées d'après les valeurs réellement communes aux deux fichiers
+  const suggestion = useMemo(() => (tableA && tableB && tableA !== tableB ? suggererCles(tableA, tableB) : null), [tableA, tableB]);
+
   const cleActiveA = useMemo(() => {
     if (colonnesA.includes(cleChoisieA)) return cleChoisieA;
+    if (suggestion && colonnesA.includes(suggestion.cleA)) return suggestion.cleA;
     const prio = colonnesA.find((h) => /(id|code|ref|matricule|numero)/i.test(h));
     return prio || colonnesA[0] || "";
-  }, [colonnesA, cleChoisieA]);
+  }, [colonnesA, cleChoisieA, suggestion]);
 
   const cleActiveB = useMemo(() => {
     if (colonnesB.includes(cleChoisieB)) return cleChoisieB;
+    if (suggestion && suggestion.cleA === cleActiveA && colonnesB.includes(suggestion.cleB)) return suggestion.cleB;
     const prioCommune = colonnesB.find((h) => h.toLowerCase() === cleActiveA.toLowerCase());
     if (prioCommune) return prioCommune;
     const prio = colonnesB.find((h) => /(id|code|ref|matricule|numero)/i.test(h));
     return prio || colonnesB[0] || "";
-  }, [colonnesB, cleChoisieB, cleActiveA]);
+  }, [colonnesB, cleChoisieB, cleActiveA, suggestion]);
+
+  const comparables = useMemo(
+    () => (tableA && tableB && tableA !== tableB ? colonnesComparables(tableA, tableB, cleActiveA, cleActiveB) : []),
+    [tableA, tableB, cleActiveA, cleActiveB]
+  );
+
+  // Aperçu du rapprochement avant de lancer
+  const apercu = useMemo(
+    () => (tableA && tableB && tableA !== tableB ? apercuCorrespondance(tableA, tableB, cleActiveA, cleActiveB) : null),
+    [tableA, tableB, cleActiveA, cleActiveB]
+  );
 
   // Extraction universelle Excel et CSV
   const traiterFichiersDeposes = useCallback(async (files: FileList | File[] | null) => {
@@ -145,6 +189,7 @@ export default function FusionNettoyagePage() {
               cleFichierA: cleActiveA,
               cleFichierB: cleActiveB,
               typeJointure,
+              colonnesAComparer: comparables.filter((c) => !colonnesExclues.includes(c)),
             }
           : undefined,
       ...options,
@@ -172,21 +217,14 @@ export default function FusionNettoyagePage() {
     const rapportDynamique: BlocRapport[] = [];
 
     if (resultat.rapport.mode === "jointure") {
-      const typeLabel =
-        typeJointure === "inter"
-          ? "Correspondances communes (Inter)"
-          : typeJointure === "anti_gauche"
-          ? "Lignes propres à A (Anti-gauche)"
-          : typeJointure === "anti_droite"
-          ? "Lignes propres à B (Anti-droite)"
-          : "Enrichissement (Gauche externe)";
+      const typeLabel = TYPES_JOINTURE.find((t) => t.id === typeJointure)?.libelle ?? typeJointure;
 
       rapportDynamique.push({
         type: "intro",
         texte: `Réconciliation ${typeLabel} terminée : ${resultat.corps.length.toLocaleString("fr-FR")} lignes extraites sur les clés « ${cleActiveA} » et « ${cleActiveB} ».`,
       });
 
-      if (typeJointure === "inter" && resultat.rapport.nbCorrespondances !== undefined) {
+      if (resultat.rapport.nbCorrespondances !== undefined) {
         rapportDynamique.push({
           type: "qualite",
           texte: `Bilan relationnel : ${resultat.rapport.nbCorrespondances} paire(s) réconciliée(s), ${resultat.rapport.nbOrphelinsA} orphelin(s) dans le premier fichier et ${resultat.rapport.nbOrphelinsB} dans le second.`,
@@ -397,7 +435,7 @@ export default function FusionNettoyagePage() {
                           <select
                             value={idxTableA}
                             onChange={(e) => setIdxTableA(Number(e.target.value))}
-                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold truncate"
+                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold truncate !min-w-0 w-full"
                           >
                             {fichiersBruts.map((f, i) => (
                               <option key={i} value={i} disabled={i === idxTableB}>
@@ -409,7 +447,7 @@ export default function FusionNettoyagePage() {
                           <select
                             value={cleActiveA}
                             onChange={(e) => setCleChoisieA(e.target.value)}
-                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-bold text-purple-700 dark:text-purple-300 truncate"
+                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-bold text-purple-700 dark:text-purple-300 truncate !min-w-0 w-full"
                           >
                             {colonnesA.map((h) => (
                               <option key={h} value={h}>
@@ -428,7 +466,7 @@ export default function FusionNettoyagePage() {
                           <select
                             value={idxTableB}
                             onChange={(e) => setIdxTableB(Number(e.target.value))}
-                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold truncate"
+                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold truncate !min-w-0 w-full"
                           >
                             {fichiersBruts.map((f, i) => (
                               <option key={i} value={i} disabled={i === idxTableA}>
@@ -440,7 +478,7 @@ export default function FusionNettoyagePage() {
                           <select
                             value={cleActiveB}
                             onChange={(e) => setCleChoisieB(e.target.value)}
-                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-bold text-purple-700 dark:text-purple-300 truncate"
+                            className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-bold text-purple-700 dark:text-purple-300 truncate !min-w-0 w-full"
                           >
                             {colonnesB.map((h) => (
                               <option key={h} value={h}>
@@ -452,109 +490,90 @@ export default function FusionNettoyagePage() {
                       </div>
                     </div>
 
-                    {/* Types de jointures Power Query */}
+                    {/* Aperçu du rapprochement */}
+                    {apercu && (
+                      <div
+                        className={`p-2.5 rounded-lg border text-[11px] leading-relaxed ${
+                          apercu.partA < 0.2
+                            ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-900/60 dark:text-amber-300"
+                            : "bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-900/60 dark:text-emerald-300"
+                        }`}
+                      >
+                        <strong>{Math.round(apercu.partA * 100)} %</strong> des lignes de A retrouvent leur clé dans B, et{" "}
+                        <strong>{Math.round(apercu.partB * 100)} %</strong> des lignes de B dans A.
+                        {apercu.partA < 0.2 && " Très peu de correspondances : ces deux colonnes ne contiennent sans doute pas la même information."}
+                        {suggestion && suggestion.cleA === cleActiveA && suggestion.cleB === cleActiveB && (
+                          <span className="block text-[10px] opacity-80 mt-0.5">Clés proposées automatiquement d&apos;après les valeurs communes aux deux fichiers.</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Types de réconciliation */}
                     <div>
                       <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1.5">
-                        Type de réconciliation
+                        Que voulez-vous obtenir ?
                       </label>
                       <div className="grid grid-cols-1 gap-1.5">
-                        <label
-                          className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2.5 transition ${
-                            typeJointure === "inter"
-                              ? "border-purple-600 bg-purple-50/60 dark:bg-purple-950/40"
-                              : "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="typeJointure"
-                            checked={typeJointure === "inter"}
-                            onChange={() => setTypeJointure("inter")}
-                            className="text-purple-600 mt-0.5"
-                          />
-                          <div>
-                            <span className="font-bold text-slate-800 dark:text-slate-100 block">
-                              Interne (Inter)
-                            </span>
-                            <span className="text-[10px] text-slate-500">
-                              Conserve uniquement les lignes communes présentes à la fois dans A et B.
-                            </span>
-                          </div>
-                        </label>
-
-                        <label
-                          className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2.5 transition ${
-                            typeJointure === "anti_gauche"
-                              ? "border-purple-600 bg-purple-50/60 dark:bg-purple-950/40"
-                              : "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="typeJointure"
-                            checked={typeJointure === "anti_gauche"}
-                            onChange={() => setTypeJointure("anti_gauche")}
-                            className="text-purple-600 mt-0.5"
-                          />
-                          <div>
-                            <span className="font-bold text-slate-800 dark:text-slate-100 block">
-                              Anti-gauche (Écarts propres à A)
-                            </span>
-                            <span className="text-[10px] text-slate-500">
-                              Isole les lignes du fichier A qui n&apos;ont aucune correspondance dans B (ex. impayés, manques).
-                            </span>
-                          </div>
-                        </label>
-
-                        <label
-                          className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2.5 transition ${
-                            typeJointure === "anti_droite"
-                              ? "border-purple-600 bg-purple-50/60 dark:bg-purple-950/40"
-                              : "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="typeJointure"
-                            checked={typeJointure === "anti_droite"}
-                            onChange={() => setTypeJointure("anti_droite")}
-                            className="text-purple-600 mt-0.5"
-                          />
-                          <div>
-                            <span className="font-bold text-slate-800 dark:text-slate-100 block">
-                              Anti-droite (Écarts propres à B)
-                            </span>
-                            <span className="text-[10px] text-slate-500">
-                              Isole les lignes du fichier B absentes de A (ex. nouveaux arrivants, orphelins).
-                            </span>
-                          </div>
-                        </label>
-
-                        <label
-                          className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2.5 transition ${
-                            typeJointure === "gauche_externe"
-                              ? "border-purple-600 bg-purple-50/60 dark:bg-purple-950/40"
-                              : "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="typeJointure"
-                            checked={typeJointure === "gauche_externe"}
-                            onChange={() => setTypeJointure("gauche_externe")}
-                            className="text-purple-600 mt-0.5"
-                          />
-                          <div>
-                            <span className="font-bold text-slate-800 dark:text-slate-100 block">
-                              Gauche externe (Enrichissement)
-                            </span>
-                            <span className="text-[10px] text-slate-500">
-                              Conserve l&apos;intégralité de A et y rattache les colonnes de B lorsqu&apos;elles existent.
-                            </span>
-                          </div>
-                        </label>
+                        {TYPES_JOINTURE.map((t) => (
+                          <label
+                            key={t.id}
+                            className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2.5 transition ${
+                              typeJointure === t.id
+                                ? "border-purple-600 bg-purple-50/60 dark:bg-purple-950/40"
+                                : "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="typeJointure"
+                              checked={typeJointure === t.id}
+                              onChange={() => setTypeJointure(t.id)}
+                              className="text-purple-600 mt-0.5"
+                            />
+                            <div>
+                              <span className="font-bold text-slate-800 dark:text-slate-100 block">{t.titre}</span>
+                              <span className="text-[10px] text-slate-500">{t.description}</span>
+                            </div>
+                          </label>
+                        ))}
                       </div>
                     </div>
+
+                    {typeJointure === "comparaison" && (
+                      <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
+                        <p className="text-[10px] uppercase font-bold text-slate-400">Colonnes à comparer</p>
+                        {comparables.length === 0 ? (
+                          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                            Aucune colonne ne porte le même nom dans les deux fichiers : seules les clés présentes ou absentes seront comparées. Renommez les colonnes à comparer pour qu&apos;elles aient le même nom.
+                          </p>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap gap-1.5">
+                              {comparables.map((c) => {
+                                const coche = !colonnesExclues.includes(c);
+                                return (
+                                  <label
+                                    key={c}
+                                    className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] cursor-pointer ${
+                                      coche ? "border-purple-300 bg-purple-50 text-purple-800 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-200" : "border-slate-200 text-slate-500 dark:border-slate-700"
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={coche}
+                                      onChange={() => setColonnesExclues((l) => (coche ? [...l, c] : l.filter((x) => x !== c)))}
+                                      className="rounded text-purple-600"
+                                    />
+                                    {c}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            <p className="text-[10px] text-slate-500">Décochez les colonnes qui n&apos;ont pas à être identiques (par exemple une date de facture et une date de paiement).</p>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -681,31 +700,29 @@ export default function FusionNettoyagePage() {
             </div>
 
             {resultat.rapport.mode === "jointure" ? (
-              <>
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
-                  <span className="text-[10px] font-bold text-purple-600 uppercase">Correspondances</span>
-                  <p className="text-xl font-black text-purple-700 dark:text-purple-300 mt-1">
-                    {(resultat.rapport.nbCorrespondances || 0).toLocaleString("fr-FR")}
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">Paires clés réconciliées</p>
+              (resultat.rapport.typeJointure === "comparaison"
+                ? [
+                    { titre: "Identiques", valeur: resultat.rapport.nbIdentiques ?? 0, detail: "Mêmes valeurs dans A et B", couleur: "text-emerald-600 dark:text-emerald-400" },
+                    { titre: "Différentes", valeur: resultat.rapport.nbDifferentes ?? 0, detail: "Au moins une valeur diffère", couleur: "text-rose-600 dark:text-rose-400" },
+                    {
+                      titre: "Absentes",
+                      valeur: (resultat.rapport.nbOrphelinsA ?? 0) + (resultat.rapport.nbOrphelinsB ?? 0),
+                      detail: `${(resultat.rapport.nbOrphelinsA ?? 0).toLocaleString("fr-FR")} seulement dans A · ${(resultat.rapport.nbOrphelinsB ?? 0).toLocaleString("fr-FR")} seulement dans B`,
+                      couleur: "text-amber-600 dark:text-amber-400",
+                    },
+                  ]
+                : [
+                    { titre: "Rapprochées", valeur: resultat.rapport.nbCorrespondances ?? 0, detail: "Lignes de A retrouvées dans B", couleur: "text-purple-700 dark:text-purple-300" },
+                    { titre: "Seulement dans A", valeur: resultat.rapport.nbOrphelinsA ?? 0, detail: tableA?.nom ?? "", couleur: "text-amber-600 dark:text-amber-400" },
+                    { titre: "Seulement dans B", valeur: resultat.rapport.nbOrphelinsB ?? 0, detail: tableB?.nom ?? "", couleur: "text-indigo-600 dark:text-indigo-400" },
+                  ]
+              ).map((c) => (
+                <div key={c.titre} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">{c.titre}</span>
+                  <p className={`text-xl font-black mt-1 ${c.couleur}`}>{c.valeur.toLocaleString("fr-FR")}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5 truncate">{c.detail}</p>
                 </div>
-
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
-                  <span className="text-[10px] font-bold text-amber-500 uppercase">Écarts A (Orphelins)</span>
-                  <p className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1">
-                    {(resultat.rapport.nbOrphelinsA || 0).toLocaleString("fr-FR")}
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">Absents du second fichier</p>
-                </div>
-
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
-                  <span className="text-[10px] font-bold text-indigo-500 uppercase">Colonnes Finales</span>
-                  <p className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
-                    {resultat.entetes.length} colonnes
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">Structure de sortie</p>
-                </div>
-              </>
+              ))
             ) : (
               <>
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
@@ -737,11 +754,28 @@ export default function FusionNettoyagePage() {
             )}
           </div>
 
+          {/* Bilan en clair */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-2 shadow-sm">
+            <p className="text-xs font-bold text-slate-800 dark:text-slate-200">Ce qu&apos;il faut retenir</p>
+            {(() => {
+              const i = interpreterFusion(resultat.rapport, tableA?.nom ?? "A", tableB?.nom ?? "B");
+              return (
+                <BlocInterpretation
+                  guide={i.guide}
+                  titreGuide={resultat.rapport.mode === "jointure" ? "Comment fonctionne la réconciliation ?" : "Comment fonctionne l'empilement ?"}
+                  constats={i.complements}
+                  resume={i.resume}
+                  pistes={i.pistes}
+                />
+              );
+            })()}
+          </div>
+
           {/* Tableau d'aperçu */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
             <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/40">
               <span className="font-bold text-xs text-slate-700 dark:text-slate-300">
-                Aperçu des 10 premières lignes résultantes
+                Aperçu des 10 premières lignes{resultat.rapport.typeJointure === "comparaison" ? " (les écarts en premier)" : ""}
               </span>
               <span className="text-[11px] text-slate-400">Total : {resultat.corps.length} enregistrements</span>
             </div>
@@ -758,7 +792,14 @@ export default function FusionNettoyagePage() {
                   {resultat.corps.slice(0, 10).map((row, rIdx) => (
                     <tr key={rIdx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       {row.map((cell, cIdx) => (
-                        <td key={cIdx} className="p-3 whitespace-nowrap text-slate-700 dark:text-slate-300">
+                        <td
+                          key={cIdx}
+                          className={`p-3 whitespace-nowrap ${
+                            cIdx === 0 && resultat.rapport.typeJointure === "comparaison"
+                              ? STYLE_STATUT[String(cell)] ?? "text-slate-700 dark:text-slate-300"
+                              : "text-slate-700 dark:text-slate-300"
+                          }`}
+                        >
                           {String(cell ?? "—")}
                         </td>
                       ))}
