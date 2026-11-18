@@ -532,10 +532,17 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     return m || 1;
   }, [points]);
 
+  // Cercles : la SURFACE est proportionnelle à la valeur (rayon en racine carrée), et la taille maximale diminue
+  // quand il y a beaucoup de lieux, pour qu'ils ne se recouvrent pas. La couleur, par classes, rend lisibles
+  // des écarts que la taille seule ne montre pas quand les valeurs sont proches.
+  const rayonMax = points.length > 25 ? 13 : points.length > 12 ? 17 : 22;
   const rayonPoint = (val: number) => {
     const ratio = Math.max(0, val / maxValMesure);
-    return Math.round(9 + ratio * 24);
+    return Math.round(5 + Math.sqrt(ratio) * (rayonMax - 5));
   };
+  const classesPoints = useMemo(() => classerValeurs(points.map((p) => p.totalGlobal)), [points]);
+  // Les plus gros d'abord : les petits cercles restent visibles par-dessus
+  const pointsDessin = useMemo(() => [...points].sort((a, b) => b.totalGlobal - a.totalGlobal), [points]);
 
   const centreCI: [number, number] = [7.54, -5.55];
   const zoomCI = 6.8;
@@ -619,6 +626,15 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
     const { canvas, largeurCss } = await capturerCarte(conteneur);
     const quoi = agregation === "Nombre" ? "Nombre de lignes" : `${agregation} de ${estFormatMatriciel ? "la valeur" : colonneMesure}`;
     const titre = enZones ? `${quoi} par ${NOMS_NIVEAU[niveau].un}` : estFormatMatriciel ? titreCarte : `${quoi} par ${colonneGeo}`;
+    const legendeCercles =
+      !enZones && classesPoints.length > 1
+        ? {
+            elements: classesPoints.map((c) => ({
+              couleur: c.couleur,
+              libelle: c.min === c.max ? c.min.toLocaleString("fr-FR") : `${c.min.toLocaleString("fr-FR")} – ${c.max.toLocaleString("fr-FR")}`,
+            })),
+          }
+        : undefined;
     const legende =
       enZones && classesZones.length
         ? {
@@ -631,7 +647,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
             ],
           }
         : undefined;
-    await telechargerVisuelEnImage(canvas, largeurCss, titre, { source: nomFichier, legende, credit: "© OpenStreetMap" });
+    await telechargerVisuelEnImage(canvas, largeurCss, titre, { source: nomFichier, legende: legende ?? legendeCercles, credit: "© OpenStreetMap" });
   };
 
   return (
@@ -817,7 +833,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
               />
             )}
 
-            {!enZones && points.map((p) => {
+            {!enZones && pointsDessin.map((p) => {
               const r = rayonPoint(p.totalGlobal);
 
               return (
@@ -826,10 +842,10 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
                   center={[p.lat, p.lng]}
                   radius={r}
                   pathOptions={{
-                    fillColor: "#2563eb",
-                    color: "#1d4ed8",
-                    weight: 2,
-                    fillOpacity: 0.65,
+                    fillColor: couleurPour(p.totalGlobal, classesPoints),
+                    color: "#1e3a8a",
+                    weight: 1,
+                    fillOpacity: 0.85,
                   }}
                 >
                   <leafletReady.Tooltip direction="top" offset={[0, -r - 2]} opacity={0.95}>
@@ -913,6 +929,20 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       {/* Ruban des zones localisées */}
       {!enZones && points.length > 0 && (
         <div className="space-y-1.5 pt-1 text-xs">
+          {classesPoints.length > 1 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+              <span className="font-bold">
+                {agregation === "Nombre" ? "Nombre de lignes" : `${agregation === "Moyenne" ? "Moyenne" : "Somme"} de ${estFormatMatriciel ? "la valeur" : colonneMesure}`} :
+              </span>
+              {classesPoints.map((c) => (
+                <span key={`${c.min}-${c.max}`} className="inline-flex items-center gap-1.5">
+                  <span className="w-3.5 h-3.5 rounded-full border border-slate-400" style={{ backgroundColor: c.couleur }} />
+                  {c.min === c.max ? c.min.toLocaleString("fr-FR") : `${c.min.toLocaleString("fr-FR")} – ${c.max.toLocaleString("fr-FR")}`}
+                </span>
+              ))}
+              <span className="text-slate-400">· plus le cercle est grand et foncé, plus la valeur est élevée</span>
+            </div>
+          )}
           {lectureCarte && (
             <BlocInterpretation
               titreGuide="Comment lire cette carte ?"
