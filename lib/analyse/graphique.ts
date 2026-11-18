@@ -1,5 +1,6 @@
 // lib/analyse/graphique.ts — calcul des séries d'un graphique, séparé de l'affichage pour être testable.
 import { arrondir, estValeurVide, parseNombre, percentile, type Cellule } from "./utils";
+import { ordonnerMesures } from "./mesures";
 import { clePeriode, convertirDate, detecterOrdreDate, estAnnee, trierChronologiquement, type OrdreDate } from "./dates";
 
 export type AgregationGraphique =
@@ -481,8 +482,7 @@ export function recommanderGraphiques(
   const additives = mesures.filter((m) => operation(m) === "somme");
   const moyennes = mesures.filter((m) => operation(m) === "moyenne");
   // Mesure principale : un total explicite d'abord, sinon le premier volume, sinon la première mesure
-  const norm = (x: string) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const principale = additives.find((m) => /(total|global|ensemble)/.test(norm(m))) ?? additives[0] ?? mesures[0] ?? null;
+  const principale = ordonnerMesures(additives)[0] ?? ordonnerMesures(mesures)[0] ?? null;
 
   // Dimensions avec leur nombre de catégories
   const dims = colonnes.categorielles

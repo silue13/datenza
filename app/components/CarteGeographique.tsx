@@ -9,6 +9,7 @@ import { useData, type GraphiqueEpingle } from "../context/DataContext";
 import type { Feature } from "geojson";
 import type { Layer, Path } from "leaflet";
 import BoutonImage from "./BoutonImage";
+import { ordonnerMesures } from "../../lib/analyse/mesures";
 import BlocInterpretation from "./BlocInterpretation";
 import { guideLecture, interpreterGraphique } from "../../lib/analyse/interpretation";
 import { capturerCarte } from "../../lib/analyse/imageCarte";
@@ -201,7 +202,7 @@ export default function CarteGeographique({ entetes, corps, onAjouterPptx }: Pro
       });
   }, [entetes, corps]);
 
-  const [colonneMesure, setColonneMesure] = useState<string>(colonnesNumeriques[0] || "");
+  const [colonneMesure, setColonneMesure] = useState<string>(ordonnerMesures(colonnesNumeriques)[0] || "");
   const [agregation, setAgregation] = useState<AgregationCarte>("Somme");
   const [externes, setExternes] = useState<Record<string, { lat: number; lng: number } | null>>({});
   const demandes = useRef(new Set<string>());

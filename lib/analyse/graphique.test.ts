@@ -107,6 +107,13 @@ describe("analyse/graphique", () => {
     const s = recommanderGraphiques(e, c, { temporelles: [], mesurables: [], categorielles: ["Departement"] }, op, () => false);
     expect(s.map((x) => [x.type, x.agregation])).toEqual([["Anneau", "Nombre"]]);
   });
+  it("préfère un montant à une quantité comme mesure principale", async () => {
+    const { ordonnerMesures } = await import("./mesures");
+    expect(ordonnerMesures(["Quantité", "Prix unitaire", "Montant", "Marge"])).toEqual(["Montant", "Quantité", "Prix unitaire", "Marge"]);
+    expect(ordonnerMesures(["Hommes", "Population_totale", "CA 2025"])).toEqual(["Population_totale", "CA 2025", "Hommes"]);
+    expect(ordonnerMesures(["Capacité", "Cacao (t)"])).toEqual(["Capacité", "Cacao (t)"]);
+    expect(ordonnerMesures(["Population", "Points de vente", "CA 2025 (FCFA)"])[0]).toBe("CA 2025 (FCFA)");
+  });
   it("explique un classement sans compter les vides comme des zéros ni citer « Autres »", () => {
     const e = expliquerGraphique({
       titre: "Somme — Montant selon Region",

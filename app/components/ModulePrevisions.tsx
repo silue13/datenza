@@ -35,6 +35,7 @@ import {
 } from "@/lib/analyse/utils";
 import { useData, type GraphiqueEpingle } from "../context/DataContext";
 import BoutonImage from "./BoutonImage";
+import { ordonnerMesures } from "../../lib/analyse/mesures";
 import type { Chart, ChartDataset, LegendItem, Plugin, TooltipItem } from "chart.js";
 
 /** Jeu de données d'une courbe de prévision ; indexDerniereDonnee situe la dernière valeur observée. */
@@ -182,7 +183,7 @@ export default function ModulePrevisions({ entetes, corps, onEpingler }: ModuleP
 
   const defautTemps = colonnesDisponibles.temporelles[0] || "";
   const defautMesure =
-    colonnesDisponibles.mesurables.find((c) => c !== defautTemps) ||
+    ordonnerMesures(colonnesDisponibles.mesurables).find((c) => c !== defautTemps) ||
     colonnesDisponibles.mesurables[0] ||
     "";
 

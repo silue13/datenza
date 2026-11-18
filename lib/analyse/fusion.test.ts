@@ -146,3 +146,17 @@ describe("analyse/comparaison à plusieurs fichiers", () => {
     expect(colonneCorrespondante(jan, "Code", fev)).toBe("code client");
   });
 });
+
+describe("analyse/fusion — empilement", () => {
+  const base = { mode: "empilement" as const, supprimerDoublons: true, harmoniserFormatsNumeriques: true, harmoniserDates: true, nettoyerEspaces: true, remplirValeursVides: false, valeurRemplacementVide: "", alignerColonnesSimilaires: true };
+  const f1 = { nom: "abidjan.xlsx", entetes: ["Mois", "CA"], corps: [["2024-01", 100], ["2024-01", 100], ["2024-02", 50]] };
+  const f2 = { nom: "bouake.xlsx", entetes: ["Mois", "CA"], corps: [["2024-01", 100]] };
+  it("ne retire que les doublons d'un même fichier par défaut", () => {
+    const r = fusionnerEtNettoyer([f1, f2], base);
+    expect(r.corps).toHaveLength(3);
+    expect(r.rapport.doublonsSupprimes).toBe(1);
+  });
+  it("retire aussi les doublons entre fichiers si on le demande", () => {
+    expect(fusionnerEtNettoyer([f1, f2], { ...base, doublonsEntreFichiers: true }).corps).toHaveLength(2);
+  });
+});

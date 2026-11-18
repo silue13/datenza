@@ -25,6 +25,11 @@ export interface OptionsNettoyage {
   mode: ModeAssemblage;
   jointure?: ConfigurationJointure;
   supprimerDoublons: boolean;
+  /**
+   * Empilement : retire aussi une ligne identique venant d'un AUTRE fichier (même export en double).
+   * Par défaut, seuls les doublons à l'intérieur d'un même fichier sont retirés : deux agences peuvent avoir les mêmes chiffres.
+   */
+  doublonsEntreFichiers?: boolean;
   harmoniserFormatsNumeriques: boolean;
   harmoniserDates: boolean;
   nettoyerEspaces: boolean;
@@ -435,7 +440,7 @@ export function fusionnerEtNettoyer(
 
       if (options.supprimerDoublons) {
         const empreinte = lignePropre
-          .filter((_, idx) => entetesFinaux[idx] !== "Fichier Source")
+          .filter((_, idx) => options.doublonsEntreFichiers ? entetesFinaux[idx] !== "Fichier Source" : true)
           .map((v) => String(v ?? "").toLowerCase().trim())
           .join("§");
 

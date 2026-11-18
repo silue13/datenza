@@ -92,6 +92,7 @@ export default function FusionNettoyagePage() {
   // Options de nettoyage
   const [options, setOptions] = useState<{
     supprimerDoublons: boolean;
+    doublonsEntreFichiers: boolean;
     harmoniserFormatsNumeriques: boolean;
     harmoniserDates: boolean;
     nettoyerEspaces: boolean;
@@ -100,6 +101,7 @@ export default function FusionNettoyagePage() {
     alignerColonnesSimilaires: boolean;
   }>({
     supprimerDoublons: true,
+    doublonsEntreFichiers: false,
     harmoniserFormatsNumeriques: true,
     harmoniserDates: true,
     nettoyerEspaces: true,
@@ -191,7 +193,8 @@ export default function FusionNettoyagePage() {
       }
       // Une même colonne ne peut correspondre qu'à une seule colonne de référence (le choix manuel l'emporte)
       const vues = new Set<string>();
-      for (const c of [...Object.keys(choisie), ...Object.keys(fusion)]) {
+      // Chaque colonne de référence n'est examinée qu'une fois : les choix manuels d'abord, puis les propositions
+      for (const c of new Set([...Object.keys(choisie).filter((k) => k in fusion), ...Object.keys(fusion)])) {
         const v = fusion[c];
         if (!v) continue;
         if (vues.has(v)) fusion[c] = null;
@@ -305,6 +308,19 @@ export default function FusionNettoyagePage() {
     };
 
     const res = fusionnerEtNettoyer(fichiersEffectifs, optionsCompletes);
+    if (res.rapport.mode === "empilement") {
+      // Colonnes réunies grâce à la correspondance (« CA » = « Chiffre d'affaires ») : ajoutées au bilan
+      const reunies = res.rapport.colonnesFusionnees;
+      Object.values(correspondances).forEach((corr) =>
+        Object.entries(corr).forEach(([ref, col]) => {
+          if (!col || col === ref) return;
+          const e = reunies.find((x) => x.nomFinal === ref);
+          if (e) {
+            if (!e.variantesDetectees.includes(col)) e.variantesDetectees.push(col);
+          } else reunies.push({ nomFinal: ref, variantesDetectees: [ref, col] });
+        })
+      );
+    }
     setResultat(res);
   };
 
@@ -675,9 +691,26 @@ export default function FusionNettoyagePage() {
                   <span className="font-bold text-slate-800 dark:text-slate-200 block">
                     Purger les doublons stricts
                   </span>
-                  <span className="text-[11px] text-slate-400">Élimine les lignes strictement identiques.</span>
+                  <span className="text-[11px] text-slate-400">Élimine les lignes strictement identiques à l&apos;intérieur d&apos;un même fichier.</span>
                 </div>
               </label>
+
+              {modeAssemblage === "empilement" && options.supprimerDoublons && (
+                <label className="flex items-start gap-2.5 cursor-pointer pl-6">
+                  <input
+                    type="checkbox"
+                    checked={options.doublonsEntreFichiers}
+                    onChange={(e) => setOptions({ ...options, doublonsEntreFichiers: e.target.checked })}
+                    className="rounded text-purple-600 mt-0.5"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-800 dark:text-slate-200 block">Aussi entre fichiers différents</span>
+                    <span className="text-[11px] text-slate-400">
+                      À cocher seulement si une même ligne a pu être exportée dans deux fichiers. Laissez décoché pour des agences ou des mois différents : leurs chiffres peuvent être identiques.
+                    </span>
+                  </div>
+                </label>
+              )}
 
               {modeAssemblage === "empilement" && (
                 <label className="flex items-start gap-2.5 cursor-pointer">

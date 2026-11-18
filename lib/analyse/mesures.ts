@@ -154,3 +154,22 @@ export function calculerMesures(
     return { colonne: cand.nom, operation, totalGlobal, repartitions };
   });
 }
+/** Rang d'une colonne comme mesure principale : un total, puis un montant ou un chiffre d'affaires, puis une valeur monétaire, puis le reste. */
+function rangMesure(nom: string): number {
+  const n = ` ${nom.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ")} `;
+  // « Points de vente », « Nombre de ventes » : des comptages, pas des montants
+  if (/ (points? de vente|nombre de ventes|nb ventes)/.test(n)) return 0;
+  // Débuts de mots : « Population_totale », « Montants », « Chiffre d'affaires »
+  if (/ (total|global|ensemble)/.test(n)) return 3;
+  if (/ (montant|chiffre|vente|revenu|recette)/.test(n) || / ca /.test(n)) return 2;
+  if (/ (valeur|cout|depense|budget|salaire|encours|solde|benefice)/.test(n)) return 1;
+  return 0;
+}
+
+/**
+ * Trie des mesures pour choisir celle à montrer par défaut : « Montant » passe devant « Quantité » même s'il vient après dans le fichier.
+ * Le tri est stable : à rang égal, l'ordre du fichier est conservé.
+ */
+export function ordonnerMesures(noms: string[]): string[] {
+  return noms.map((n, i) => ({ n, i, r: rangMesure(n) })).sort((a, b) => b.r - a.r || a.i - b.i).map((x) => x.n);
+}

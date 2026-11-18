@@ -10,6 +10,7 @@
  */
 import { detecterOrdreDate, lireDateOuAnnee } from "./detection";
 import { estValeurVide, versNombre, type Cellule } from "./utils";
+import { ordonnerMesures } from "./mesures";
 
 export type Resultat<T> = { ok: true; valeur: T } | { ok: false; raison: string };
 const echec = <T>(raison: string): Resultat<T> => ({ ok: false, raison });
@@ -432,7 +433,7 @@ export function detecterColonnesMetier(statistiques: Record<string, InfoMinimale
   const client = candidatsClient.find((n) => RE_CLIENT.test(norm(n))) ?? null;
   const nbCat = (n: string) => Number(statistiques[n].stats.nbCategoriesDistinctes ?? 0);
   const explicative = dimensions.filter((n) => n !== client && nbCat(n) <= 20).sort((a, b) => nbCat(a) - nbCat(b))[0] ?? null;
-  return { date: dates[0] ?? null, client, mesure: mesures[0] ?? null, dimensions, explicative, dates, mesures, candidatsClient };
+  return { date: dates[0] ?? null, client, mesure: ordonnerMesures(mesures)[0] ?? null, dimensions, explicative, dates, mesures, candidatsClient };
 }
 
 // ---------------------------------------------------------------------------
