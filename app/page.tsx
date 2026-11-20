@@ -10,6 +10,7 @@ import {
   colonnesCommunes,
   comparerFichiers,
   empilerPourComparaison,
+  descriptionRapprochements,
   nomCourt,
 } from "../lib/analyse/comparaison";
 
@@ -458,7 +459,8 @@ export default function HomePage() {
                 <option value={COMPARAISON_TOTAUX}>Totaux de chaque colonne numérique</option>
                 {communesComparaison.map((c) => (
                   <option key={c.nom} value={c.nom}>
-                    Ligne à ligne par « {c.nom} » ({c.nature === "numerique" ? "nombre" : c.nature})
+                    Ligne à ligne par « {c.variantes.filter((v, i, t) => t.indexOf(v) === i).join(" / ")} » (
+                    {c.nature === "numerique" ? "nombre" : c.nature})
                   </option>
                 ))}
               </select>
@@ -466,6 +468,16 @@ export default function HomePage() {
                 {communesComparaison.length === 0
                   ? "Ces fichiers ne partagent aucune colonne."
                   : `${communesComparaison.length} colonnes communes : ${communesComparaison.filter((c) => c.nature === "numerique").length} numérique(s), ${communesComparaison.filter((c) => c.nature === "date").length} date(s), ${communesComparaison.filter((c) => c.nature === "texte").length} texte. Le ligne à ligne calcule l'écart et la variation de chaque nombre entre fichiers.`}
+              </p>
+              {descriptionRapprochements(communesComparaison).length > 0 && (
+                <p className="text-[11px] text-blue-800 dark:text-blue-300">
+                  <strong>Reconnues malgré des noms différents :</strong>{" "}
+                  {descriptionRapprochements(communesComparaison).join(" · ")}
+                </p>
+              )}
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Pour associer à la main des colonnes impossibles à deviner (« Montant TTC » / « Montant réglé »), utilisez le
+                mode « Comparaison » de la page Fusion.
               </p>
             </div>
           )}

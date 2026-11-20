@@ -1,7 +1,7 @@
 // lib/analyse/fusion.ts
 import { parseNombre, estValeurVide, estColonneIdentifiant, type Cellule } from "./utils";
 import { convertirDate, formaterDateISO } from "./dates";
-import { normaliserValeurCle } from "./comparaison";
+import { normaliserValeurCle, unifierColonnes, type CorrespondancesManuelles } from "./correspondance";
 
 export interface FichierEntree {
   nom: string;
@@ -30,6 +30,8 @@ export interface OptionsNettoyage {
   remplirValeursVides: boolean;
   valeurRemplacementVide: string;
   alignerColonnesSimilaires: boolean;
+  /** Colonnes associées à la main (empilement), par nom de fichier. */
+  correspondances?: CorrespondancesManuelles;
 }
 
 export interface RapportNettoyage {
@@ -58,15 +60,6 @@ export interface ResultatFusionNettoyage {
 /** Clé de jointure : 1001, « 1001 » et « 1 001 » se retrouvent, comme une date Excel et « 05/01/2025 ». */
 function normaliserCle(v: Cellule): string {
   return normaliserValeurCle(v);
-}
-
-function normaliserCleColonne(nom: string): string {
-  return nom
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "")
-    .trim();
 }
 
 const MOTS_PAS_DATE = new Set([
@@ -362,45 +355,30 @@ export function fusionnerEtNettoyer(
   // ==========================================
   // MODE 2 : EMPILEMENT (APPEND)
   // ==========================================
-  const mapNormaliseVersOriginal = new Map<string, string>();
-  const mapVariantes = new Map<string, Set<string>>();
-
-  fichiers.forEach((f) => {
-    f.entetes.forEach((col) => {
-      if (col === "Fichier Source") return;
-      const cle = options.alignerColonnesSimilaires ? normaliserCleColonne(col) : col.trim();
-
-      if (!mapNormaliseVersOriginal.has(cle)) {
-        mapNormaliseVersOriginal.set(cle, col.trim());
-        mapVariantes.set(cle, new Set([col.trim()]));
-      } else {
-        mapVariantes.get(cle)?.add(col.trim());
-      }
-    });
+  // Colonnes rapprochées malgré des noms différents (« CA » = « Chiffre d'affaires » = « Ventes »),
+  // ou sur le nom exact quand l'alignement est désactivé. Les colonnes propres à un fichier sont gardées.
+  const unifiees = unifierColonnes(fichiers, {
+    manuelles: options.correspondances,
+    garderNonAppariees: true,
+    exact: !options.alignerColonnesSimilaires,
   });
+  const entetesFinaux = ["Fichier Source", ...unifiees.map((u) => u.nom)];
 
-  const colonnesDonnees = Array.from(mapNormaliseVersOriginal.values());
-  const entetesFinaux = ["Fichier Source", ...colonnesDonnees];
-
-  const colonnesFusionnees: { nomFinal: string; variantesDetectees: string[] }[] = [];
-  mapVariantes.forEach((variantes, cle) => {
-    if (variantes.size > 1) {
-      colonnesFusionnees.push({
-        nomFinal: mapNormaliseVersOriginal.get(cle) || "",
-        variantesDetectees: Array.from(variantes),
-      });
-    }
-  });
+  const colonnesFusionnees = unifiees
+    .map((u) => ({
+      nomFinal: u.nom,
+      variantesDetectees: u.variantes.filter((v, i, t) => v && t.findIndex((x) => x.trim() === v.trim()) === i).map((v) => v.trim()),
+    }))
+    .filter((c) => c.variantesDetectees.length > 1);
 
   const corpsNettoyeBrut: Cellule[][] = [];
   const empreintesLignes = new Set<string>();
 
-  fichiers.forEach((f) => {
-    const mappingIndex = f.entetes.map((h) => {
-      if (h === "Fichier Source") return -1;
-      const cle = options.alignerColonnesSimilaires ? normaliserCleColonne(h) : h.trim();
-      const nomFinal = mapNormaliseVersOriginal.get(cle);
-      return nomFinal ? entetesFinaux.indexOf(nomFinal) : -1;
+  fichiers.forEach((f, k) => {
+    // Position finale de chaque colonne du fichier
+    const mappingIndex = f.entetes.map((_, i) => {
+      const iu = unifiees.findIndex((u) => u.indices[k] === i);
+      return iu === -1 ? -1 : iu + 1;
     });
 
     f.corps.forEach((ligneOriginale) => {
@@ -420,8 +398,8 @@ export function fusionnerEtNettoyer(
       const lignePropre = assainirLigne(nouvelleLigne, entetesFinaux, options, compteurs);
 
       if (options.supprimerDoublons) {
+        // Doublon = même ligne dans le MÊME fichier : deux agences aux chiffres identiques restent deux lignes
         const empreinte = lignePropre
-          .filter((_, idx) => entetesFinaux[idx] !== "Fichier Source")
           .map((v) => String(v ?? "").toLowerCase().trim())
           .join("§");
 

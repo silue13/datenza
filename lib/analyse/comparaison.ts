@@ -1,116 +1,53 @@
 // lib/analyse/comparaison.ts — comparaison de 2 fichiers ou plus, sur toutes les colonnes (nombres, dates et texte).
 import { parseNombre, estValeurVide, type Cellule } from "./utils";
-import { convertirDate, formaterDateISO } from "./dates";
-import { detecterTypeColonne } from "./detection";
 import { operationPour } from "./mesures";
+import {
+  unifierColonnes,
+  cleNomColonne,
+  normaliserValeurCle,
+  COLONNE_SOURCE,
+  type ColonneUnifiee,
+  type CorrespondancesManuelles,
+  type FichierAComparer,
+  type NatureColonne,
+} from "./correspondance";
 
-export interface FichierAComparer {
-  nom: string;
-  entetes: string[];
-  corps: Cellule[][];
-}
-
-export type NatureColonne = "numerique" | "date" | "texte";
-
-/** Une colonne présente dans tous les fichiers, même écrite différemment (« Montant TTC » / « montant_ttc »). */
-export interface ColonneCommune {
-  nom: string;
-  /** Position de la colonne dans chaque fichier, dans l'ordre des fichiers. */
-  indices: number[];
-  nature: NatureColonne;
-}
-
-export const COLONNE_SOURCE = "Fichier Source";
-
-/** Nom de colonne réduit à l'essentiel pour reconnaître les variantes d'écriture. */
-export function cleNomColonne(nom: string): string {
-  return String(nom ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]/g, "");
-}
+export {
+  colonnesCommunes,
+  cleNomColonne,
+  normaliserValeurCle,
+  proposerCle,
+  evaluerCles,
+  descriptionRapprochements,
+  unifierColonnes,
+  COLONNE_SOURCE,
+} from "./correspondance";
+export type {
+  ColonneUnifiee,
+  CorrespondancesManuelles,
+  FichierAComparer,
+  NatureColonne,
+  PropositionCle,
+} from "./correspondance";
 
 /** Nom de fichier sans extension, pour les en-têtes du tableau comparatif. */
 export function nomCourt(nom: string): string {
   return String(nom ?? "").replace(/\.[^/.]+$/, "").trim() || String(nom ?? "");
 }
 
-const RE_NOMBRE_SEUL = /^[-+−]?\d[\d\s  ]*([.,]\d+)?$/;
-const RE_DATE_COMPLETE = /^(\d{1,2}[/\-.]\d{1,2}[/\-.](\d{4}|\d{2})|\d{4}[/\-]\d{1,2}[/\-]\d{1,2})([ T]\d{1,2}:\d{2}(:\d{2})?)?$/;
-
 /**
- * Valeur de rapprochement d'une cellule, quel que soit son type :
- * - nombres : 1001, « 1001 », « 1 001 » et « 1001,00 » se retrouvent ;
- * - dates : une date Excel, « 05/01/2025 » et « 2025-01-05 » se retrouvent ;
- * - texte : sans casse, sans accents, espaces superflus retirés.
+ * Empile les fichiers sur leurs colonnes communes (rapprochées malgré des noms différents),
+ * avec une colonne « Fichier Source » : c'est le format de l'analyse comparée (une série par fichier).
  */
-export function normaliserValeurCle(v: Cellule | Date): string {
-  if (v === null || v === undefined) return "";
-  if (v instanceof Date) return isNaN(v.getTime()) ? "" : formaterDateISO(v).slice(0, 10);
-  if (typeof v === "number") return Number.isFinite(v) ? `n:${Number(v.toPrecision(15))}` : "";
-  if (typeof v === "boolean") return v ? "vrai" : "faux";
-  const s = String(v).trim();
-  if (!s || estValeurVide(s)) return "";
-  if (RE_NOMBRE_SEUL.test(s)) {
-    const n = parseNombre(s);
-    if (n !== null) return `n:${Number(n.toPrecision(15))}`;
-  }
-  if (RE_DATE_COMPLETE.test(s)) {
-    const d = convertirDate(s);
-    if (d) return formaterDateISO(d).slice(0, 10);
-  }
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/\s+/g, " ");
-}
-
-function natureDe(nom: string, valeurs: Cellule[]): NatureColonne {
-  const { type } = detecterTypeColonne(nom, valeurs);
-  if (type === "numerique") return "numerique";
-  if (type === "date") return "date";
-  return "texte";
-}
-
-/** Colonnes présentes dans tous les fichiers (les variantes d'écriture d'un même nom sont réunies). */
-export function colonnesCommunes(fichiers: FichierAComparer[]): ColonneCommune[] {
-  if (fichiers.length === 0) return [];
-  const resultat: ColonneCommune[] = [];
-  const dejaVues = new Set<string>();
-
-  fichiers[0].entetes.forEach((nom, i0) => {
-    if (nom === COLONNE_SOURCE) return;
-    const cle = cleNomColonne(nom);
-    if (!cle || dejaVues.has(cle)) return;
-    const indices = [i0];
-    for (let k = 1; k < fichiers.length; k++) {
-      const i = fichiers[k].entetes.findIndex((h) => h !== COLONNE_SOURCE && cleNomColonne(h) === cle);
-      if (i === -1) return;
-      indices.push(i);
-    }
-    dejaVues.add(cle);
-    const echantillon: Cellule[] = [];
-    fichiers.forEach((f, k) => {
-      for (const ligne of f.corps.slice(0, 2000)) echantillon.push(ligne[indices[k]]);
-    });
-    resultat.push({ nom: nom.trim(), indices, nature: natureDe(nom, echantillon) });
-  });
-
-  return resultat;
-}
-
-/**
- * Empile les fichiers sur leurs colonnes communes, avec une colonne « Fichier Source » :
- * c'est le format du benchmark (une série par fichier sur chaque mesure).
- */
-export function empilerPourComparaison(fichiers: FichierAComparer[]): {
+export function empilerPourComparaison(
+  fichiers: FichierAComparer[],
+  manuelles?: CorrespondancesManuelles
+): {
   entetes: string[];
   corps: Cellule[][];
-  colonnes: ColonneCommune[];
+  colonnes: ColonneUnifiee[];
 } {
-  const colonnes = colonnesCommunes(fichiers);
+  const colonnes = unifierColonnes(fichiers, { manuelles }).filter((c) => c.indices.every((i) => i !== -1));
   const entetes = [COLONNE_SOURCE, ...colonnes.map((c) => c.nom)];
   const corps: Cellule[][] = [];
   fichiers.forEach((f, k) => {
@@ -128,6 +65,8 @@ export interface OptionsComparaison {
   colonnes?: string[];
   /** Index du fichier de référence pour les écarts (0 par défaut). */
   reference?: number;
+  /** Colonnes associées à la main quand leurs noms ne permettent pas de les deviner. */
+  manuelles?: CorrespondancesManuelles;
 }
 
 export interface SyntheseColonne {
@@ -148,6 +87,8 @@ export interface BilanComparaison {
   incompletes: number;
   /** Lignes d'un même fichier ayant la même clé, regroupées (sommées ou moyennées). */
   lignesRegroupees: number;
+  /** Lignes strictement identiques saisies deux fois dans un même fichier : comptées une seule fois. */
+  doublonsIgnores: { nom: string; nbLignes: number; cles: string[] }[];
   parFichier: { nom: string; nbLignes: number; absentes: number }[];
   colonnesComparees: { nom: string; nature: NatureColonne }[];
   colonnesIgnorees: string[];
@@ -198,13 +139,13 @@ function valeurAgregee(a: Agregat | undefined, operation: "somme" | "moyenne"): 
 export function comparerFichiers(fichiers: FichierAComparer[], options: OptionsComparaison): ResultatComparaison {
   if (fichiers.length < 2) throw new Error("Il faut au moins 2 fichiers pour comparer.");
   const reference = Math.min(Math.max(options.reference ?? 0, 0), fichiers.length - 1);
-  const communes = colonnesCommunes(fichiers);
+  const communes = unifierColonnes(fichiers, { manuelles: options.manuelles }).filter((c) => c.indices.every((i) => i !== -1));
   if (communes.length === 0) throw new Error("Ces fichiers ne partagent aucune colonne : comparaison impossible.");
 
   const parCle = new Map(communes.map((c) => [cleNomColonne(c.nom), c]));
   const cles = options.cles
     .map((nom) => parCle.get(cleNomColonne(nom)))
-    .filter((c): c is ColonneCommune => !!c);
+    .filter((c): c is ColonneUnifiee => !!c);
   const nomsCles = new Set(cles.map((c) => c.nom));
 
   const demandees = options.colonnes?.length
@@ -247,9 +188,9 @@ export function comparerFichiers(fichiers: FichierAComparer[], options: OptionsC
     reference: nomRef,
     cles: cles.map((c) => c.nom),
     colonnesComparees: comparees.map((c) => ({ nom: c.nom, nature: c.nature })),
-    colonnesIgnorees: fichiers.flatMap((f) =>
-      f.entetes.filter((h) => h !== COLONNE_SOURCE && !parCle.has(cleNomColonne(h)))
-    ).filter((h, i, t) => t.indexOf(h) === i),
+    colonnesIgnorees: fichiers
+      .flatMap((f, k) => f.entetes.filter((h, i) => h !== COLONNE_SOURCE && !communes.some((c) => c.indices[k] === i)))
+      .filter((h, i, t) => t.indexOf(h) === i),
   };
 
   // ===== Sans clé : comparaison des totaux =====
@@ -281,6 +222,7 @@ export function comparerFichiers(fichiers: FichierAComparer[], options: OptionsC
         avecEcarts,
         incompletes: 0,
         lignesRegroupees: 0,
+        doublonsIgnores: [],
         parFichier: fichiers.map((f, k) => ({ nom: noms[k], nbLignes: f.corps.length, absentes: 0 })),
       },
     };
@@ -290,12 +232,24 @@ export function comparerFichiers(fichiers: FichierAComparer[], options: OptionsC
   type Groupe = { libelles: Cellule[]; parFichier: (Map<string, Agregat> | null)[] };
   const groupes = new Map<string, Groupe>();
   let lignesRegroupees = 0;
+  const doublonsIgnores: BilanComparaison["doublonsIgnores"] = [];
 
   fichiers.forEach((f, k) => {
+    const empreintes = new Set<string>();
+    const doublons = { nom: noms[k], nbLignes: 0, cles: [] as string[] };
     for (const ligne of f.corps) {
       const valeursCle = cles.map((c) => normaliserValeurCle(ligne[c.indices[k]]));
       if (valeursCle.every((v) => v === "")) continue;
       const cle = valeursCle.join("§");
+      // Une ligne saisie deux fois à l'identique (paiement enregistré en double) ne compte qu'une fois
+      const empreinte = ligne.map((v) => normaliserValeurCle(v)).join("§");
+      if (empreintes.has(empreinte)) {
+        doublons.nbLignes++;
+        const libelle = cles.map((c) => String(ligne[c.indices[k]] ?? "")).join(" + ");
+        if (!doublons.cles.includes(libelle)) doublons.cles.push(libelle);
+        continue;
+      }
+      empreintes.add(empreinte);
       let g = groupes.get(cle);
       if (!g) {
         g = { libelles: cles.map((c) => ligne[c.indices[k]] ?? ""), parFichier: fichiers.map(() => null) };
@@ -325,6 +279,7 @@ export function comparerFichiers(fichiers: FichierAComparer[], options: OptionsC
         }
       }
     }
+    if (doublons.nbLignes) doublonsIgnores.push(doublons);
   });
 
   const entetes: string[] = [...cles.map((c) => c.nom), "Statut", "Présence"];
@@ -409,15 +364,8 @@ export function comparerFichiers(fichiers: FichierAComparer[], options: OptionsC
       avecEcarts,
       incompletes,
       lignesRegroupees,
+      doublonsIgnores,
       parFichier: fichiers.map((f, k) => ({ nom: noms[k], nbLignes: f.corps.length, absentes: absentes[k] })),
     },
   };
-}
-
-/** Clé proposée par défaut : un identifiant commun (code, référence, matricule…), sinon aucune. */
-export function cleParDefaut(colonnes: ColonneCommune[]): string {
-  const id = colonnes.find((c) => /(^|[^a-z])(id|code|ref|reference|matricule|numero|num|sku)([^a-z]|$)/i.test(
-    c.nom.normalize("NFD").replace(/[̀-ͯ]/g, "")
-  ));
-  return id?.nom ?? "";
 }

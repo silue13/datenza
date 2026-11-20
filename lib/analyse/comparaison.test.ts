@@ -4,7 +4,7 @@ import {
   colonnesCommunes,
   empilerPourComparaison,
   normaliserValeurCle,
-  cleParDefaut,
+  proposerCle,
   STATUT_ECART,
   STATUT_IDENTIQUE,
   type FichierAComparer,
@@ -63,7 +63,7 @@ describe("colonnesCommunes", () => {
     expect(nature["Quantité"]).toBe("numerique");
     expect(nature["Montant (FCFA)"]).toBe("numerique");
     expect(nature["Région"]).toBe("texte");
-    expect(cleParDefaut(cols)).toBe("Code");
+    expect(proposerCle([janvier, fevrier], cols)?.colonne.nom).toBe("Code");
   });
 });
 

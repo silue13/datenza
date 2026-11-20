@@ -18,6 +18,9 @@ import {
   Layers,
   GitMerge,
   Scale,
+  ArrowUp,
+  ArrowDown,
+  Link2,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import {
@@ -30,10 +33,14 @@ import {
 } from "../../lib/analyse/fusion";
 import { analyserColonnes } from "../../lib/analyse/analyse";
 import {
-  colonnesCommunes,
   comparerFichiers,
-  cleParDefaut,
   nomCourt,
+  unifierColonnes,
+  evaluerCles,
+  proposerCle,
+  descriptionRapprochements,
+  empilerPourComparaison,
+  type CorrespondancesManuelles,
   type ResultatComparaison,
 } from "../../lib/analyse/comparaison";
 
@@ -86,37 +93,75 @@ export default function FusionNettoyagePage() {
     alignerColonnesSimilaires: true,
   });
 
-  // Déduction automatique des clés par défaut
+  // Colonnes associées à la main quand leurs noms ne permettent pas de les deviner
+  const [manuelles, setManuelles] = useState<CorrespondancesManuelles>({});
+
+  // Déduction automatique des clés par défaut : la colonne dont les valeurs se retrouvent d'un fichier à l'autre
   const tableA = fichiersBruts[idxTableA] || fichiersBruts[0];
   const tableB = fichiersBruts[idxTableB] || fichiersBruts[1];
 
   const colonnesA = useMemo(() => tableA?.entetes || [], [tableA]);
   const colonnesB = useMemo(() => tableB?.entetes || [], [tableB]);
 
+  const cleProposeeJointure = useMemo(() => {
+    if (!tableA || !tableB || tableA === tableB) return null;
+    const paire = [tableA, tableB];
+    return proposerCle(paire, unifierColonnes(paire));
+  }, [tableA, tableB]);
+
   const cleActiveA = useMemo(() => {
     if (colonnesA.includes(cleChoisieA)) return cleChoisieA;
+    if (cleProposeeJointure) return cleProposeeJointure.colonne.variantes[0];
     const prio = colonnesA.find((h) => /(id|code|ref|matricule|numero)/i.test(h));
     return prio || colonnesA[0] || "";
-  }, [colonnesA, cleChoisieA]);
+  }, [colonnesA, cleChoisieA, cleProposeeJointure]);
 
   const cleActiveB = useMemo(() => {
     if (colonnesB.includes(cleChoisieB)) return cleChoisieB;
+    if (cleProposeeJointure && cleProposeeJointure.colonne.variantes[0] === cleActiveA) return cleProposeeJointure.colonne.variantes[1];
     const prioCommune = colonnesB.find((h) => h.toLowerCase() === cleActiveA.toLowerCase());
     if (prioCommune) return prioCommune;
     const prio = colonnesB.find((h) => /(id|code|ref|matricule|numero)/i.test(h));
     return prio || colonnesB[0] || "";
-  }, [colonnesB, cleChoisieB, cleActiveA]);
+  }, [colonnesB, cleChoisieB, cleActiveA, cleProposeeJointure]);
 
-  const communesComparaison = useMemo(
-    () => (fichiersBruts.length >= 2 ? colonnesCommunes(fichiersBruts) : []),
-    [fichiersBruts]
+  /** Toutes les colonnes rapprochées sur celles du premier fichier (automatiquement ou à la main). */
+  const unifiees = useMemo(
+    () => (fichiersBruts.length >= 2 ? unifierColonnes(fichiersBruts, { manuelles }) : []),
+    [fichiersBruts, manuelles]
+  );
+  const communesComparaison = useMemo(() => unifiees.filter((c) => c.indices.every((i) => i !== -1)), [unifiees]);
+  const evaluationsCles = useMemo(
+    () => (communesComparaison.length ? evaluerCles(fichiersBruts, communesComparaison) : []),
+    [fichiersBruts, communesComparaison]
   );
   const cleComparaison = useMemo(() => {
     if (cleComparaisonChoisie === SANS_CLE) return "";
     if (cleComparaisonChoisie && communesComparaison.some((c) => c.nom === cleComparaisonChoisie)) return cleComparaisonChoisie;
-    return cleParDefaut(communesComparaison);
-  }, [cleComparaisonChoisie, communesComparaison]);
+    const meilleure = evaluationsCles[0];
+    return meilleure && Math.min(...meilleure.taux.slice(1)) >= 0.3 ? meilleure.colonne.nom : "";
+  }, [cleComparaisonChoisie, communesComparaison, evaluationsCles]);
+  const evaluationCle = evaluationsCles.find((e) => e.colonne.nom === cleComparaison) ?? null;
   const indexReference = referenceComparaison < fichiersBruts.length ? referenceComparaison : 0;
+
+  const choisirCorrespondance = (nomFichier: string, colonneRef: string, colonne: string | null) => {
+    setManuelles((prev) => ({ ...prev, [nomFichier]: { ...(prev[nomFichier] ?? {}), [colonneRef]: colonne } }));
+    setResultat(null);
+    setComparaison(null);
+  };
+
+  const deplacerFichier = (index: number, sens: -1 | 1) => {
+    const cible = index + sens;
+    if (cible < 0 || cible >= fichiersBruts.length) return;
+    setFichiersBruts((prev) => {
+      const copie = [...prev];
+      [copie[index], copie[cible]] = [copie[cible], copie[index]];
+      return copie;
+    });
+    setReferenceComparaison(0);
+    setResultat(null);
+    setComparaison(null);
+  };
 
   // Extraction universelle Excel et CSV
   const traiterFichiersDeposes = useCallback(async (files: FileList | File[] | null) => {
@@ -177,6 +222,7 @@ export default function FusionNettoyagePage() {
           comparerFichiers(fichiersBruts, {
             cles: cleComparaison ? [cleComparaison] : [],
             reference: indexReference,
+            manuelles,
           })
         );
       } catch (e) {
@@ -200,6 +246,7 @@ export default function FusionNettoyagePage() {
             }
           : undefined,
       ...options,
+      correspondances: manuelles,
     };
 
     const res = fusionnerEtNettoyer(fichiersBruts, optionsCompletes);
@@ -231,6 +278,14 @@ export default function FusionNettoyagePage() {
     const nomFeuille = modeAssemblage === "jointure" ? `Jointure_${typeJointure}` : "Données Consolidées";
     XLSX.utils.book_append_sheet(classeur, feuille, nomFeuille);
     XLSX.writeFile(classeur, `datenza_${nomFeuille.toLowerCase()}.xlsx`);
+  };
+
+  /** Analyse des fichiers côte à côte (une série par fichier), le fichier de référence en premier. */
+  const analyseCompareeFichiers = () => {
+    const ordre = [fichiersBruts[indexReference], ...fichiersBruts.filter((_, i) => i !== indexReference)];
+    const { entetes, corps } = empilerPourComparaison(ordre, manuelles);
+    chargerDonnees(`Comparatif (${ordre.map((f) => nomCourt(f.nom)).join(" vs ")})`, entetes, corps);
+    router.push("/analyse");
   };
 
   const analyserComparaison = () => {
@@ -426,26 +481,133 @@ export default function FusionNettoyagePage() {
               </h3>
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
                 {fichiersBruts.map((f, i) => (
-                  <div key={i} className="py-2.5 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2.5">
+                  <div key={`${f.nom}-${i}`} className="py-2.5 flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-5 h-5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-bold flex items-center justify-center shrink-0">
+                        {i + 1}
+                      </span>
                       <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
-                      <div>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{f.nom}</span>
+                      <div className="min-w-0">
+                        <span className="font-bold text-slate-800 dark:text-slate-200 break-all">{f.nom}</span>
                         <span className="text-[11px] text-slate-400 ml-2">
                           ({f.corps.length.toLocaleString("fr-FR")} lignes · {f.entetes.length} colonnes)
                         </span>
                       </div>
                     </div>
-                    <button
-                      onClick={() => supprimerFichier(i)}
-                      className="text-slate-400 hover:text-rose-600 p-1 rounded-lg transition cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => deplacerFichier(i, -1)}
+                        disabled={i === 0}
+                        title="Monter ce fichier"
+                        aria-label={`Monter ${f.nom}`}
+                        className="text-slate-400 hover:text-purple-600 disabled:opacity-30 p-1 rounded-lg transition cursor-pointer"
+                      >
+                        <ArrowUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deplacerFichier(i, 1)}
+                        disabled={i === fichiersBruts.length - 1}
+                        title="Descendre ce fichier"
+                        aria-label={`Descendre ${f.nom}`}
+                        className="text-slate-400 hover:text-purple-600 disabled:opacity-30 p-1 rounded-lg transition cursor-pointer"
+                      >
+                        <ArrowDown className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => supprimerFichier(i)}
+                        title="Retirer ce fichier"
+                        aria-label={`Retirer ${f.nom}`}
+                        className="text-slate-400 hover:text-rose-600 p-1 rounded-lg transition cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Correspondance des colonnes (comparaison et empilement) */}
+          {fichiersBruts.length >= 2 && modeAssemblage !== "jointure" && (
+            <details className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 group" open>
+              <summary className="cursor-pointer font-bold text-xs uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                <Link2 className="w-4 h-4 text-purple-600" />
+                Correspondance des colonnes
+                <span className="normal-case tracking-normal font-normal text-slate-400">
+                  ({communesComparaison.length} commune{communesComparaison.length > 1 ? "s" : ""} aux {fichiersBruts.length} fichiers)
+                </span>
+              </summary>
+              <p className="text-[11px] text-slate-500 mt-3 leading-relaxed">
+                Les colonnes de « {fichiersBruts[0].nom} » servent de base. Datenza rapproche seul les noms différents
+                (« CA » = « Chiffre d&apos;affaires ») et les colonnes aux mêmes valeurs. Corrigez ou complétez ici ce qu&apos;il
+                n&apos;a pas pu deviner.
+              </p>
+              {descriptionRapprochements(unifiees).length > 0 && (
+                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/50">
+                  Rapprochées malgré des noms différents : {descriptionRapprochements(unifiees).join(" · ")}
+                </p>
+              )}
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="text-[10px] uppercase text-slate-400">
+                      <th className="py-1.5 pr-2 font-bold whitespace-nowrap">{nomCourt(fichiersBruts[0].nom)}</th>
+                      {fichiersBruts.slice(1).map((f, k) => (
+                        <th key={`${f.nom}-${k}`} className="py-1.5 px-1 font-bold whitespace-nowrap">{nomCourt(f.nom)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {unifiees
+                      .filter((u) => u.indices[0] !== -1)
+                      .map((u) => (
+                        <tr key={u.nom}>
+                          <td className="py-1.5 pr-2 font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                            {u.nom}
+                            <span className="ml-1 text-[10px] font-normal text-slate-400">
+                              {u.nature === "numerique" ? "nombre" : u.nature}
+                            </span>
+                          </td>
+                          {fichiersBruts.slice(1).map((f, k) => {
+                            const iFichier = k + 1;
+                            const valeur = u.variantes[iFichier] || "";
+                            return (
+                              <td key={`${f.nom}-${k}`} className="py-1.5 px-1">
+                                <select
+                                  aria-label={`Colonne de ${f.nom} correspondant à ${u.nom}`}
+                                  value={valeur}
+                                  onChange={(e) => choisirCorrespondance(f.nom, u.nom, e.target.value || null)}
+                                  className={`w-full min-w-[8rem] rounded-lg p-1.5 text-xs border ${
+                                    valeur
+                                      ? u.manuelle[iFichier]
+                                        ? "border-purple-400 bg-purple-50 dark:bg-purple-950/30"
+                                        : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                                      : "border-dashed border-amber-300 bg-amber-50/50 dark:bg-amber-950/20 text-slate-400"
+                                  }`}
+                                >
+                                  <option value="">— aucune —</option>
+                                  {f.entetes.map((h) => (
+                                    <option key={h} value={h}>
+                                      {h}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2">
+                Cadre violet : choisi à la main. Pointillés : aucune colonne trouvée, la colonne ne sera pas comparée.
+              </p>
+            </details>
           )}
         </div>
 
@@ -531,10 +693,24 @@ export default function FusionNettoyagePage() {
                         <option value={SANS_CLE}>Aucune clé : comparer les totaux</option>
                         {communesComparaison.map((c) => (
                           <option key={c.nom} value={c.nom}>
-                            {c.nom} ({c.nature === "numerique" ? "nombre" : c.nature})
+                            {c.variantes.filter((v, i, t) => t.indexOf(v) === i).join(" ↔ ")} (
+                            {c.nature === "numerique" ? "nombre" : c.nature})
                           </option>
                         ))}
                       </select>
+                      {evaluationCle && (
+                        <p className="text-[11px] font-semibold text-purple-700 dark:text-purple-300 mt-1.5">
+                          {evaluationCle.taux
+                            .map((t, k) =>
+                              k === 0
+                                ? null
+                                : `${Math.round(t * 100)} % des lignes de « ${nomCourt(fichiersBruts[0].nom)} » retrouvent leur clé dans « ${nomCourt(fichiersBruts[k].nom)} »`
+                            )
+                            .filter(Boolean)
+                            .join(" · ")}
+                          {evaluationCle.unicite < 0.9 && " — valeurs répétées : les lignes seront regroupées par valeur."}
+                        </p>
+                      )}
                       <p className="text-[10px] text-slate-400 mt-1">
                         Un code ou une référence compare ligne à ligne. Une colonne comme « Région » ou « Mois » compare les
                         totaux par groupe.
@@ -646,6 +822,15 @@ export default function FusionNettoyagePage() {
                         </div>
                       </div>
                     </div>
+
+                    {cleProposeeJointure &&
+                      cleProposeeJointure.colonne.variantes[0] === cleActiveA &&
+                      cleProposeeJointure.colonne.variantes[1] === cleActiveB && (
+                        <p className="text-[11px] font-semibold text-purple-700 dark:text-purple-300">
+                          Clé proposée : {cleActiveA} ↔ {cleActiveB} — {Math.round(cleProposeeJointure.taux[1] * 100)} % des lignes de A
+                          retrouvent leur clé dans B.
+                        </p>
+                      )}
 
                     {/* Types de jointures Power Query */}
                     <div>
@@ -918,6 +1103,12 @@ export default function FusionNettoyagePage() {
               un même fichier ont été regroupées : montants et quantités additionnés, prix et taux moyennés.
             </p>
           )}
+          {comparaison.bilan.doublonsIgnores.map((d) => (
+            <p key={d.nom} className="text-[11px] text-amber-700 dark:text-amber-400 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/60">
+              Clés en double dans « {d.nom} » : {d.nbLignes} ligne(s) saisie(s) deux fois à l&apos;identique, comptée(s) une seule
+              fois ({d.cles.slice(0, 6).join(", ")}{d.cles.length > 6 ? "…" : ""}).
+            </p>
+          ))}
           {comparaison.bilan.colonnesIgnorees.length > 0 && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/60">
               Colonnes absentes d&apos;au moins un fichier, non comparées : {comparaison.bilan.colonnesIgnorees.join(", ")}.
@@ -1016,11 +1207,18 @@ export default function FusionNettoyagePage() {
               Télécharger la comparaison (.xlsx)
             </button>
             <button
+              onClick={analyseCompareeFichiers}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 bg-white dark:bg-slate-900 hover:bg-purple-50 dark:hover:bg-purple-950/30 text-purple-700 dark:text-purple-300 font-bold text-xs rounded-xl border border-purple-300 dark:border-purple-800 shadow-sm transition cursor-pointer"
+            >
+              <Scale className="w-4 h-4" />
+              Analyse comparée des fichiers
+            </button>
+            <button
               onClick={analyserComparaison}
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-lg hover:shadow-purple-500/25 transition cursor-pointer"
             >
               <BarChart2 className="w-4 h-4" />
-              Analyser la comparaison
+              Analyser le tableau des écarts
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
