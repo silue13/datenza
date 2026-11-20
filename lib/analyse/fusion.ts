@@ -1,6 +1,7 @@
 // lib/analyse/fusion.ts
 import { parseNombre, estValeurVide, estColonneIdentifiant, type Cellule } from "./utils";
 import { convertirDate, formaterDateISO } from "./dates";
+import { normaliserValeurCle } from "./comparaison";
 
 export interface FichierEntree {
   nom: string;
@@ -54,12 +55,9 @@ export interface ResultatFusionNettoyage {
   rapport: RapportNettoyage;
 }
 
+/** Clé de jointure : 1001, « 1001 » et « 1 001 » se retrouvent, comme une date Excel et « 05/01/2025 ». */
 function normaliserCle(v: Cellule): string {
-  return String(v ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
+  return normaliserValeurCle(v);
 }
 
 function normaliserCleColonne(nom: string): string {

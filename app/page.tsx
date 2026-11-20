@@ -1,11 +1,21 @@
 "use client";
 
-import { useState, type ChangeEvent } from "react";
+import { useMemo, useState, type ChangeEvent } from "react";
 import { lireFichier, EXTENSIONS_ACCEPTEES } from "../lib/import/lecture";
 import { useData } from "./context/DataContext";
 import { analyserColonnes } from "../lib/analyse/analyse";
 import { genererRapport } from "../lib/analyse/rapport";
 import { type Cellule } from "../lib/analyse/utils";
+import {
+  colonnesCommunes,
+  comparerFichiers,
+  empilerPourComparaison,
+  nomCourt,
+} from "../lib/analyse/comparaison";
+
+/** Méthodes de comparaison proposées sur l'accueil (une colonne commune choisie = rapprochement ligne à ligne). */
+const COMPARAISON_ENSEMBLE = "__ensemble__";
+const COMPARAISON_TOTAUX = "__totaux__";
 import { useRouter } from "next/navigation";
 import BoutonInstallerApp from "./components/BoutonInstallerApp";
 import GuideUtilisation from "./components/GuideUtilisation";
@@ -62,6 +72,7 @@ export default function HomePage() {
 
   const [fichiers, setFichiers] = useState<FichierImporte[]>([]);
   const [fichiersSelectionnesPourComparaison, setFichiersSelectionnesPourComparaison] = useState<string[]>([]);
+  const [methodeComparaison, setMethodeComparaison] = useState<string>(COMPARAISON_ENSEMBLE);
 
   const [adresseSource, setAdresseSource] = useState<string>("");
   const [connexionEnCours, setConnexionEnCours] = useState<boolean>(false);
@@ -176,43 +187,54 @@ export default function HomePage() {
     );
   }
 
+  const selectionComparaison = useMemo(
+    () => fichiers.filter((f) => fichiersSelectionnesPourComparaison.includes(f.id)),
+    [fichiers, fichiersSelectionnesPourComparaison]
+  );
+  const communesComparaison = useMemo(
+    () => (selectionComparaison.length >= 2 ? colonnesCommunes(selectionComparaison) : []),
+    [selectionComparaison]
+  );
+  const methodeActive =
+    methodeComparaison === COMPARAISON_ENSEMBLE ||
+    methodeComparaison === COMPARAISON_TOTAUX ||
+    communesComparaison.some((c) => c.nom === methodeComparaison)
+      ? methodeComparaison
+      : COMPARAISON_ENSEMBLE;
+
   function lancerComparaison() {
     setErreurImport("");
-    const selection = fichiers.filter((f) => fichiersSelectionnesPourComparaison.includes(f.id));
+    const selection = selectionComparaison;
 
     if (selection.length < 2) {
       setErreurImport("Veuillez cocher au moins 2 fichiers à comparer.");
       return;
     }
-
-    let colonnesCommunes = selection[0].entetes;
-    for (let i = 1; i < selection.length; i++) {
-      colonnesCommunes = colonnesCommunes.filter((col) => selection[i].entetes.includes(col));
-    }
-
-    if (colonnesCommunes.length === 0) {
+    if (communesComparaison.length === 0) {
       setErreurImport("Ces fichiers ne partagent aucune colonne en commun : comparaison impossible.");
       return;
     }
 
-    const entetesComparatifs = ["Fichier Source", ...colonnesCommunes];
-    const corpsComparatif: Cellule[][] = [];
-
-    selection.forEach((f) => {
-      f.corps.forEach((ligne) => {
-        const nouvelleLigne: Cellule[] = [f.nom];
-        colonnesCommunes.forEach((col) => {
-          const idx = f.entetes.indexOf(col);
-          nouvelleLigne.push(idx !== -1 ? ligne[idx] : "");
+    const noms = selection.map((f) => nomCourt(f.nom)).join(" vs ");
+    try {
+      if (methodeActive === COMPARAISON_ENSEMBLE) {
+        // Toutes les lignes empilées avec leur fichier d'origine : statistiques, graphiques et prévisions par fichier
+        const { entetes: e, corps: c } = empilerPourComparaison(selection);
+        chargerDonnees(`Comparatif (${noms})`, e, c);
+        setChoisies(e);
+      } else {
+        const res = comparerFichiers(selection, {
+          cles: methodeActive === COMPARAISON_TOTAUX ? [] : [methodeActive],
         });
-        corpsComparatif.push(nouvelleLigne);
-      });
-    });
-
-    const titreComparatif = `Comparatif (${selection.map((f) => f.nom).join(" vs ")})`;
-    chargerDonnees(titreComparatif, entetesComparatifs, corpsComparatif);
-    setChoisies(entetesComparatifs);
-    setPageIndex(0);
+        const titre =
+          methodeActive === COMPARAISON_TOTAUX ? `Comparaison des totaux (${noms})` : `Comparaison par ${methodeActive} (${noms})`;
+        chargerDonnees(titre, res.entetes, res.corps);
+        setChoisies(res.entetes);
+      }
+      setPageIndex(0);
+    } catch (e) {
+      setErreurImport(e instanceof Error ? e.message : "Comparaison impossible.");
+    }
   }
 
   function basculer(nom: string) {
@@ -409,17 +431,44 @@ export default function HomePage() {
               </p>
             </div>
 
-            {fichiersSelectionnesPourComparaison.length >= 2 && (
+            {selectionComparaison.length >= 2 && (
               <button
                 type="button"
                 onClick={lancerComparaison}
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 transition cursor-pointer"
               >
                 <Scale className="w-4 h-4" />
-                <span>Comparer ({fichiersSelectionnesPourComparaison.length} cochés)</span>
+                <span>Comparer ({selectionComparaison.length} cochés)</span>
               </button>
             )}
           </div>
+
+          {selectionComparaison.length >= 2 && (
+            <div className="rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20 p-3 space-y-1.5 text-xs">
+              <label htmlFor="methode-comparaison" className="block font-bold text-slate-800 dark:text-slate-200">
+                Méthode de comparaison
+              </label>
+              <select
+                id="methode-comparaison"
+                value={methodeActive}
+                onChange={(e) => setMethodeComparaison(e.target.value)}
+                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold"
+              >
+                <option value={COMPARAISON_ENSEMBLE}>Vue d&apos;ensemble : statistiques et graphiques par fichier</option>
+                <option value={COMPARAISON_TOTAUX}>Totaux de chaque colonne numérique</option>
+                {communesComparaison.map((c) => (
+                  <option key={c.nom} value={c.nom}>
+                    Ligne à ligne par « {c.nom} » ({c.nature === "numerique" ? "nombre" : c.nature})
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {communesComparaison.length === 0
+                  ? "Ces fichiers ne partagent aucune colonne."
+                  : `${communesComparaison.length} colonnes communes : ${communesComparaison.filter((c) => c.nature === "numerique").length} numérique(s), ${communesComparaison.filter((c) => c.nature === "date").length} date(s), ${communesComparaison.filter((c) => c.nature === "texte").length} texte. Le ligne à ligne calcule l'écart et la variation de chaque nombre entre fichiers.`}
+              </p>
+            </div>
+          )}
 
           <div className="max-h-56 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
             {fichiers.map((f) => {

@@ -600,41 +600,76 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
     // Somme pour ce qui s'additionne (montants, quantités), moyenne pour le reste (prix, taux, notes)
     const operation = (col: string): Agregation => (operationPour(col) === "somme" ? "Somme" : "Moyenne");
 
-    // CAS BENCHMARK COMPARATIF (N fichiers) : une série par fichier, alignée sur le même axe
+    // CAS BENCHMARK COMPARATIF (N fichiers) : une série par fichier, alignée sur le même axe,
+    // pour chaque colonne numérique (et pas seulement la première), plus les totaux de chaque fichier.
     if (estModeComparaison && sourcesFichiers.length >= 2) {
-      const colX = colonnesTemporelles[0] || colonnesCategorielles[0] || colonnesSansSource[0];
-      const colY = colonnesMesurables[0] || "";
+      const colX = colonnesTemporelles[0] || colonnesCategorielles[0] || "";
+      const mesuresBench = colonnesMesurables.filter((m) => !estPseudoMesure(m)).slice(0, 4);
+      const listeY: (string | null)[] = mesuresBench.length ? mesuresBench : [null];
+      const couleurs = sourcesFichiers.map((_, sIdx) => PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length]);
 
-      if (colX) {
-        if (colY) mesuresDejaUtilisees.add(colY);
-        const agg: Agregation = colY ? operation(colY) : "Nombre";
-        const series = sourcesFichiers.map((sourceNom) =>
-          calculerSerie(entetes, corps, colX, colY || null, { agregation: agg, regrouperAutres: false }, (l) => String(l[idxSource] ?? "").trim() === sourceNom)
-        );
-        const temporel = series.some((x) => x.temporel);
-        const aligne = alignerSeries(series);
-        const garder = <T,>(liste: T[]) => (temporel ? liste.slice(-60) : liste.slice(0, 30));
-        const labels = garder(aligne.labels).map((l: string) => (series.some((x) => x.granularite) ? libellePeriode(l) : l));
-
-        if (labels.length >= 1) {
+      // Sans axe commun (ni date ni catégorie) : total (ou moyenne) de chaque mesure, fichier par fichier,
+      // un graphique par mesure pour ne pas écraser les petites valeurs sous les grandes.
+      if (!colX) {
+        mesuresBench.forEach((m, k) => {
+          const i = entetes.indexOf(m);
+          const agg = operation(m);
+          const valeurs = sourcesFichiers.map((src) => {
+            const nums = corps
+              .filter((l) => String(l[idxSource] ?? "").trim() === src)
+              .map((l) => versNombre(l[i]))
+              .filter((n): n is number => n !== null);
+            if (!nums.length) return null;
+            const somme = nums.reduce((a, b) => a + b, 0);
+            return agg === "Somme" ? somme : somme / nums.length;
+          });
           resultats.push({
-            id: 930001,
-            titre: `Benchmark (${sourcesFichiers.length} fichiers) : ${colY ? `${LIBELLES_AGREGATION[agg]} de ${colY}` : "Effectif"} selon ${colX}`,
-            type: temporel ? "Courbe" : "Barres",
-            labels,
-            datasets: sourcesFichiers.map((sourceNom, sIdx) => {
-              const couleur = PALETTE_COMPARAISON[sIdx % PALETTE_COMPARAISON.length];
-              return {
-                label: sourceNom,
-                data: garder(aligne.donnees[sIdx]),
-                backgroundColor: couleur.fill,
-                borderColor: couleur.border,
+            id: 930100 + k,
+            titre: `Benchmark (${sourcesFichiers.length} fichiers) : ${LIBELLES_AGREGATION[agg]} de ${nomLisible(m)} par fichier`,
+            type: "Barres",
+            labels: sourcesFichiers,
+            datasets: [
+              {
+                label: `${LIBELLES_AGREGATION[agg]} de ${nomLisible(m)}`,
+                data: valeurs,
+                backgroundColor: couleurs.map((c) => c.fill),
+                borderColor: couleurs[0].border,
                 borderWidth: 2,
                 borderRadius: 4,
-              };
-            }),
+              },
+            ],
           });
-        }
+        });
+      }
+
+      if (colX) {
+        listeY.forEach((colY, k) => {
+          if (colY) mesuresDejaUtilisees.add(colY);
+          const agg: Agregation = colY ? operation(colY) : "Nombre";
+          const series = sourcesFichiers.map((sourceNom) =>
+            calculerSerie(entetes, corps, colX, colY, { agregation: agg, regrouperAutres: false }, (l) => String(l[idxSource] ?? "").trim() === sourceNom)
+          );
+          const temporel = series.some((x) => x.temporel);
+          const aligne = alignerSeries(series);
+          const garder = <T,>(liste: T[]) => (temporel ? liste.slice(-60) : liste.slice(0, 30));
+          const labels = garder(aligne.labels).map((l: string) => (series.some((x) => x.granularite) ? libellePeriode(l) : l));
+          if (labels.length < 1) return;
+
+          resultats.push({
+            id: 930001 + k,
+            titre: `Benchmark (${sourcesFichiers.length} fichiers) : ${colY ? `${LIBELLES_AGREGATION[agg]} de ${nomLisible(colY)}` : "Effectif"} selon ${colX}`,
+            type: temporel ? "Courbe" : "Barres",
+            labels,
+            datasets: sourcesFichiers.map((sourceNom, sIdx) => ({
+              label: sourceNom,
+              data: garder(aligne.donnees[sIdx]),
+              backgroundColor: couleurs[sIdx].fill,
+              borderColor: couleurs[sIdx].border,
+              borderWidth: 2,
+              borderRadius: 4,
+            })),
+          });
+        });
       }
     }
 
@@ -697,7 +732,7 @@ export default function GraphiqueGenerateur({ entetes, corps }: GraphiqueGenerat
     }
 
     return resultats;
-  }, [entetes, corps, colonnesTemporelles, colonnesMesurables, colonnesCategorielles, colonnesSansSource, estModeComparaison, sourcesFichiers, idxSource]);
+  }, [entetes, corps, colonnesTemporelles, colonnesMesurables, colonnesCategorielles, estModeComparaison, sourcesFichiers, idxSource]);
 
   /** Calcule un graphique à partir de ses réglages et des données courantes (filtres compris). */
   function construire(spec: SpecGraphique): { graphique: GraphiqueEpingle | null; erreur?: string; info?: string } {

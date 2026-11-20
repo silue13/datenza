@@ -17,6 +17,7 @@ import {
   Settings2,
   Layers,
   GitMerge,
+  Scale,
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import {
@@ -28,6 +29,20 @@ import {
   type TypeJointure,
 } from "../../lib/analyse/fusion";
 import { analyserColonnes } from "../../lib/analyse/analyse";
+import {
+  colonnesCommunes,
+  comparerFichiers,
+  cleParDefaut,
+  nomCourt,
+  type ResultatComparaison,
+} from "../../lib/analyse/comparaison";
+
+/** Valeur du sélecteur de clé signifiant « comparer les totaux, sans rapprochement ligne à ligne ». */
+const SANS_CLE = "__sans_cle__";
+type ModePage = ModeAssemblage | "comparaison";
+
+const fmtNombre = (v: number | null | undefined) =>
+  v === null || v === undefined ? "—" : v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
 
 export default function FusionNettoyagePage() {
   const router = useRouter();
@@ -39,12 +54,18 @@ export default function FusionNettoyagePage() {
   const [resultat, setResultat] = useState<ResultatFusionNettoyage | null>(null);
 
   // Configuration de l'assemblage
-  const [modeAssemblage, setModeAssemblage] = useState<ModeAssemblage>("jointure");
+  const [modeAssemblage, setModeAssemblage] = useState<ModePage>("jointure");
   const [idxTableA, setIdxTableA] = useState<number>(0);
   const [idxTableB, setIdxTableB] = useState<number>(1);
   const [cleChoisieA, setCleChoisieA] = useState<string>("");
   const [cleChoisieB, setCleChoisieB] = useState<string>("");
   const [typeJointure, setTypeJointure] = useState<TypeJointure>("inter");
+
+  // Comparaison de 2 fichiers ou plus
+  const [cleComparaisonChoisie, setCleComparaisonChoisie] = useState<string | null>(null);
+  const [referenceComparaison, setReferenceComparaison] = useState<number>(0);
+  const [comparaison, setComparaison] = useState<ResultatComparaison | null>(null);
+  const [erreurComparaison, setErreurComparaison] = useState<string>("");
 
   // Options de nettoyage
   const [options, setOptions] = useState<{
@@ -86,6 +107,17 @@ export default function FusionNettoyagePage() {
     return prio || colonnesB[0] || "";
   }, [colonnesB, cleChoisieB, cleActiveA]);
 
+  const communesComparaison = useMemo(
+    () => (fichiersBruts.length >= 2 ? colonnesCommunes(fichiersBruts) : []),
+    [fichiersBruts]
+  );
+  const cleComparaison = useMemo(() => {
+    if (cleComparaisonChoisie === SANS_CLE) return "";
+    if (cleComparaisonChoisie && communesComparaison.some((c) => c.nom === cleComparaisonChoisie)) return cleComparaisonChoisie;
+    return cleParDefaut(communesComparaison);
+  }, [cleComparaisonChoisie, communesComparaison]);
+  const indexReference = referenceComparaison < fichiersBruts.length ? referenceComparaison : 0;
+
   // Extraction universelle Excel et CSV
   const traiterFichiersDeposes = useCallback(async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
@@ -108,6 +140,8 @@ export default function FusionNettoyagePage() {
     }
 
     setFichiersBruts((prev) => [...prev, ...nouveaux]);
+    setResultat(null);
+    setComparaison(null);
     setChargement(false);
   }, []);
 
@@ -134,6 +168,24 @@ export default function FusionNettoyagePage() {
 
   const executerOperation = () => {
     if (fichiersBruts.length < 2) return;
+    setErreurComparaison("");
+
+    if (modeAssemblage === "comparaison") {
+      setResultat(null);
+      try {
+        setComparaison(
+          comparerFichiers(fichiersBruts, {
+            cles: cleComparaison ? [cleComparaison] : [],
+            reference: indexReference,
+          })
+        );
+      } catch (e) {
+        setComparaison(null);
+        setErreurComparaison(e instanceof Error ? e.message : "Comparaison impossible.");
+      }
+      return;
+    }
+    setComparaison(null);
 
     const optionsCompletes: OptionsNettoyage = {
       mode: modeAssemblage,
@@ -155,6 +207,23 @@ export default function FusionNettoyagePage() {
   };
 
   const telechargerExcelConsolide = () => {
+    if (comparaison) {
+      const classeur = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(classeur, XLSX.utils.aoa_to_sheet([comparaison.entetes, ...comparaison.corps]), "Comparaison");
+      if (comparaison.bilan.cles.length > 0 && comparaison.synthese.length > 0) {
+        const noms = comparaison.synthese[0].parFichier.map((p) => p.nom);
+        const lignes = comparaison.synthese.map((s) => [
+          s.colonne,
+          s.operation === "somme" ? "Somme" : "Moyenne",
+          ...s.parFichier.map((p) => p.valeur ?? ""),
+          ...s.ecarts.map((e) => e.ecart ?? ""),
+        ]);
+        const entetes = ["Indicateur", "Calcul", ...noms, ...noms.map((n) => `Écart ${n} vs ${comparaison.bilan.reference}`)];
+        XLSX.utils.book_append_sheet(classeur, XLSX.utils.aoa_to_sheet([entetes, ...lignes]), "Totaux");
+      }
+      XLSX.writeFile(classeur, "datenza_comparaison.xlsx");
+      return;
+    }
     if (!resultat) return;
     const donneeAOA = [resultat.entetes, ...resultat.corps];
     const feuille = XLSX.utils.aoa_to_sheet(donneeAOA);
@@ -162,6 +231,44 @@ export default function FusionNettoyagePage() {
     const nomFeuille = modeAssemblage === "jointure" ? `Jointure_${typeJointure}` : "Données Consolidées";
     XLSX.utils.book_append_sheet(classeur, feuille, nomFeuille);
     XLSX.writeFile(classeur, `datenza_${nomFeuille.toLowerCase()}.xlsx`);
+  };
+
+  const analyserComparaison = () => {
+    if (!comparaison) return;
+    const { bilan } = comparaison;
+    const analyseStat = analyserColonnes(comparaison.entetes, comparaison.corps, comparaison.entetes);
+    const rapportDynamique: BlocRapport[] = [
+      {
+        type: "intro",
+        texte: bilan.cles.length
+          ? `Comparaison de ${bilan.nbFichiers} fichiers sur la clé « ${bilan.cles.join(" + ")} » : ${bilan.nbCles.toLocaleString("fr-FR")} valeur(s) rapprochée(s), référence « ${bilan.reference} ».`
+          : `Comparaison des totaux de ${bilan.nbFichiers} fichiers sur ${bilan.nbCles} colonne(s) numérique(s), référence « ${bilan.reference} ».`,
+      },
+    ];
+    if (bilan.cles.length) {
+      rapportDynamique.push({
+        type: "qualite",
+        texte: `Bilan : ${bilan.identiques} identique(s), ${bilan.avecEcarts} avec écarts de valeurs, ${bilan.incompletes} absente(s) d'au moins un fichier.`,
+      });
+    }
+    comparaison.synthese.forEach((s) => {
+      const autres = s.ecarts.filter((e) => e.nom !== bilan.reference && e.ecart !== null);
+      if (!autres.length) return;
+      rapportDynamique.push({
+        type: "numerique",
+        texte: `« ${s.colonne} » (${s.operation}) : ${s.parFichier.map((p) => `${p.nom} ${fmtNombre(p.valeur)}`).join(", ")} — ${autres
+          .map((e) => `${e.nom} ${e.ecart! >= 0 ? "+" : ""}${fmtNombre(e.ecart)}${e.variationPct !== null ? ` (${e.variationPct >= 0 ? "+" : ""}${fmtNombre(e.variationPct)} %)` : ""}`)
+          .join(", ")} vs ${bilan.reference}.`,
+      });
+    });
+    chargerDonnees(
+      `Comparaison (${fichiersBruts.map((f) => nomCourt(f.nom)).join(" vs ")})`,
+      comparaison.entetes,
+      comparaison.corps,
+      analyseStat,
+      rapportDynamique
+    );
+    router.push("/analyse");
   };
 
   // Bascule vers l'analyse unifiée
@@ -250,6 +357,7 @@ export default function FusionNettoyagePage() {
   const supprimerFichier = (index: number) => {
     setFichiersBruts((prev) => prev.filter((_, i) => i !== index));
     setResultat(null);
+    setComparaison(null);
   };
 
   return (
@@ -265,7 +373,7 @@ export default function FusionNettoyagePage() {
             Fusion, Réconciliation & Audit des Données
           </h1>
           <p className="text-xs md:text-sm text-slate-300 max-w-2xl leading-relaxed">
-            Combinez vos tableaux Excel et CSV par empilement vertical ou réalisez des jointures relationnelles (Inter, Anti-gauche, Anti-droite) pour traquer les écarts et les correspondances.
+            Combinez vos tableaux Excel et CSV par empilement vertical, réalisez des jointures relationnelles (Inter, Anti-gauche, Anti-droite) ou comparez 2 fichiers et plus, colonne par colonne, nombres et dates compris.
           </p>
         </div>
       </section>
@@ -350,7 +458,7 @@ export default function FusionNettoyagePage() {
             </h3>
 
             {/* Sélecteur de Mode : Empilement vs Jointure */}
-            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold">
+            <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-[11px] sm:text-xs font-bold">
               <button
                 type="button"
                 onClick={() => setModeAssemblage("empilement")}
@@ -374,9 +482,90 @@ export default function FusionNettoyagePage() {
                 }`}
               >
                 <GitMerge className="w-3.5 h-3.5" />
-                Jointure relationnelle
+                Jointure
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setModeAssemblage("comparaison")}
+                className={`py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 transition ${
+                  modeAssemblage === "comparaison"
+                    ? "bg-white dark:bg-slate-900 text-purple-600 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                }`}
+              >
+                <Scale className="w-3.5 h-3.5" />
+                Comparaison
               </button>
             </div>
+
+            {/* CONFIGURATION DE LA COMPARAISON (2 FICHIERS OU PLUS) */}
+            {modeAssemblage === "comparaison" && (
+              <div className="space-y-3.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+                {fichiersBruts.length < 2 ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/60">
+                    Ajoutez au moins 2 fichiers pour les comparer. Vous pouvez en comparer autant que vous voulez.
+                  </p>
+                ) : communesComparaison.length === 0 ? (
+                  <p className="text-[11px] text-rose-600 dark:text-rose-400 p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200/60">
+                    Ces fichiers ne partagent aucune colonne : comparaison impossible.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Les {fichiersBruts.length} fichiers sont comparés sur leurs {communesComparaison.length} colonnes communes :{" "}
+                      {communesComparaison.filter((c) => c.nature === "numerique").length} numérique(s),{" "}
+                      {communesComparaison.filter((c) => c.nature === "date").length} date(s),{" "}
+                      {communesComparaison.filter((c) => c.nature === "texte").length} texte.
+                    </p>
+                    <div>
+                      <label htmlFor="cle-comparaison" className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                        Rapprocher les lignes par
+                      </label>
+                      <select
+                        id="cle-comparaison"
+                        value={cleComparaison || SANS_CLE}
+                        onChange={(e) => setCleComparaisonChoisie(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-bold text-purple-700 dark:text-purple-300"
+                      >
+                        <option value={SANS_CLE}>Aucune clé : comparer les totaux</option>
+                        {communesComparaison.map((c) => (
+                          <option key={c.nom} value={c.nom}>
+                            {c.nom} ({c.nature === "numerique" ? "nombre" : c.nature})
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Un code ou une référence compare ligne à ligne. Une colonne comme « Région » ou « Mois » compare les
+                        totaux par groupe.
+                      </p>
+                    </div>
+                    <div>
+                      <label htmlFor="ref-comparaison" className="block text-[10px] uppercase font-bold text-slate-400 mb-1">
+                        Fichier de référence (base des écarts)
+                      </label>
+                      <select
+                        id="ref-comparaison"
+                        value={indexReference}
+                        onChange={(e) => setReferenceComparaison(Number(e.target.value))}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold"
+                      >
+                        {fichiersBruts.map((f, i) => (
+                          <option key={i} value={i}>
+                            {f.nom}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+                {erreurComparaison && (
+                  <p role="alert" className="text-[11px] text-rose-600 dark:text-rose-400 p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200/60">
+                    {erreurComparaison}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* CONFIGURATION DE LA JOINTURE RELATIONNELLE */}
             {modeAssemblage === "jointure" && (
@@ -387,6 +576,12 @@ export default function FusionNettoyagePage() {
                   </p>
                 ) : (
                   <>
+                    {fichiersBruts.length > 2 && (
+                      <p className="text-[11px] text-slate-500 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700">
+                        Une jointure relie 2 fichiers (A et B). Pour confronter les {fichiersBruts.length} fichiers ensemble,
+                        choisissez le mode « Comparaison ».
+                      </p>
+                    )}
                     {/* Choix des tables et des clés */}
                     <div className="space-y-2">
                       <div>
@@ -561,7 +756,7 @@ export default function FusionNettoyagePage() {
             )}
 
             {/* RÈGLES DE NETTOYAGE MUTUELLES */}
-            <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs">
+            <div className={`space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs ${modeAssemblage === "comparaison" ? "hidden" : ""}`}>
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input
                   type="checkbox"
@@ -658,11 +853,179 @@ export default function FusionNettoyagePage() {
               className="w-full py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
-              {modeAssemblage === "jointure" ? "Lancer la Réconciliation" : "Lancer la Fusion & Nettoyage"}
+              {modeAssemblage === "jointure"
+                ? "Lancer la Réconciliation"
+                : modeAssemblage === "comparaison"
+                ? `Comparer les ${Math.max(fichiersBruts.length, 2)} fichiers`
+                : "Lancer la Fusion & Nettoyage"}
             </button>
           </div>
         </div>
       </div>
+
+      {/* RÉSULTATS DE LA COMPARAISON */}
+      {comparaison && (
+        <section className="space-y-6 pt-4 border-t border-slate-200 dark:border-slate-800">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Fichiers comparés</span>
+              <p className="text-xl font-black text-slate-900 dark:text-white mt-1">{comparaison.bilan.nbFichiers}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Référence : {comparaison.bilan.reference}</p>
+            </div>
+            {comparaison.bilan.cles.length > 0 ? (
+              <>
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase">Identiques</span>
+                  <p className="text-xl font-black text-emerald-700 dark:text-emerald-400 mt-1">
+                    {comparaison.bilan.identiques.toLocaleString("fr-FR")}
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">sur {comparaison.bilan.nbCles.toLocaleString("fr-FR")} « {comparaison.bilan.cles.join(" + ")} »</p>
+                </div>
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+                  <span className="text-[10px] font-bold text-rose-500 uppercase">Écarts de valeurs</span>
+                  <p className="text-xl font-black text-rose-600 dark:text-rose-400 mt-1">
+                    {comparaison.bilan.avecEcarts.toLocaleString("fr-FR")}
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Présents partout, valeurs différentes</p>
+                </div>
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+                  <span className="text-[10px] font-bold text-amber-500 uppercase">Absences</span>
+                  <p className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1">
+                    {comparaison.bilan.incompletes.toLocaleString("fr-FR")}
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {comparaison.bilan.parFichier
+                      .filter((p) => p.absentes > 0)
+                      .map((p) => `${p.absentes} absente(s) de ${p.nom}`)
+                      .join(" · ") || "Aucune"}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <div className="col-span-1 sm:col-span-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+                <span className="text-[10px] font-bold text-indigo-500 uppercase">Colonnes numériques comparées</span>
+                <p className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">{comparaison.bilan.nbCles}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {comparaison.bilan.avecEcarts} présentent un écart entre fichiers
+                </p>
+              </div>
+            )}
+          </div>
+
+          {comparaison.bilan.lignesRegroupees > 0 && (
+            <p className="text-[11px] text-slate-500 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+              {comparaison.bilan.lignesRegroupees.toLocaleString("fr-FR")} ligne(s) partageant la même valeur de « {comparaison.bilan.cles.join(" + ")} » dans
+              un même fichier ont été regroupées : montants et quantités additionnés, prix et taux moyennés.
+            </p>
+          )}
+          {comparaison.bilan.colonnesIgnorees.length > 0 && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/60">
+              Colonnes absentes d&apos;au moins un fichier, non comparées : {comparaison.bilan.colonnesIgnorees.join(", ")}.
+            </p>
+          )}
+
+          {/* Totaux par fichier pour chaque colonne numérique */}
+          {comparaison.bilan.cles.length > 0 && comparaison.synthese.length > 0 && (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
+                <span className="font-bold text-xs text-slate-700 dark:text-slate-300">Totaux par fichier (colonnes numériques)</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-300">
+                      <th className="p-3 whitespace-nowrap">Colonne</th>
+                      {comparaison.synthese[0].parFichier.map((p) => (
+                        <th key={p.nom} className="p-3 whitespace-nowrap text-right">{p.nom}</th>
+                      ))}
+                      {comparaison.synthese[0].ecarts
+                        .filter((e) => e.nom !== comparaison.bilan.reference)
+                        .map((e) => (
+                          <th key={e.nom} className="p-3 whitespace-nowrap text-right">Écart {e.nom}</th>
+                        ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono text-[11px]">
+                    {comparaison.synthese.map((s) => (
+                      <tr key={s.colonne}>
+                        <td className="p-3 whitespace-nowrap font-sans font-semibold text-slate-800 dark:text-slate-200">
+                          {s.colonne} <span className="text-slate-400 font-normal">({s.operation})</span>
+                        </td>
+                        {s.parFichier.map((p) => (
+                          <td key={p.nom} className="p-3 whitespace-nowrap text-right">{fmtNombre(p.valeur)}</td>
+                        ))}
+                        {s.ecarts
+                          .filter((e) => e.nom !== comparaison.bilan.reference)
+                          .map((e) => (
+                            <td
+                              key={e.nom}
+                              className={`p-3 whitespace-nowrap text-right ${
+                                !e.ecart ? "text-slate-500" : e.ecart > 0 ? "text-emerald-600" : "text-rose-600"
+                              }`}
+                            >
+                              {e.ecart !== null && e.ecart > 0 ? "+" : ""}
+                              {fmtNombre(e.ecart)}
+                              {e.variationPct !== null ? ` (${e.variationPct > 0 ? "+" : ""}${fmtNombre(e.variationPct)} %)` : ""}
+                            </td>
+                          ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+            <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center gap-2 bg-slate-50/50 dark:bg-slate-800/40">
+              <span className="font-bold text-xs text-slate-700 dark:text-slate-300">
+                {comparaison.bilan.cles.length ? "Aperçu : écarts et absences en premier" : "Comparaison des totaux"}
+              </span>
+              <span className="text-[11px] text-slate-400">Total : {comparaison.corps.length.toLocaleString("fr-FR")} lignes</span>
+            </div>
+            <div className="overflow-x-auto max-h-96">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-300">
+                    {comparaison.entetes.map((h, i) => (
+                      <th key={i} className="p-3 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono text-[11px]">
+                  {comparaison.corps.slice(0, 50).map((row, rIdx) => (
+                    <tr key={rIdx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                      {row.map((cell, cIdx) => (
+                        <td key={cIdx} className="p-3 whitespace-nowrap text-slate-700 dark:text-slate-300">
+                          {typeof cell === "number" ? fmtNombre(cell) : String(cell ?? "") || "—"}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
+            <button
+              onClick={telechargerExcelConsolide}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-700 shadow transition cursor-pointer"
+            >
+              <Download className="w-4 h-4 text-emerald-400" />
+              Télécharger la comparaison (.xlsx)
+            </button>
+            <button
+              onClick={analyserComparaison}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-lg hover:shadow-purple-500/25 transition cursor-pointer"
+            >
+              <BarChart2 className="w-4 h-4" />
+              Analyser la comparaison
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* RÉSULTATS DU TRAITEMENT & SORTIES */}
       {resultat && (
